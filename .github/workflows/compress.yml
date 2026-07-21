@@ -31,12 +31,17 @@ jobs:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
         run: |
-          # 🔥 هذا السطر هو الحل: يحذف أي بروكسي قديم
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
-          echo "بدء تحميل الفيديو..."
+          # مسح كامل لجميع متغيرات البروكسي
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
+          export http_proxy=""
+          export https_proxy=""
+          export HTTP_PROXY=""
+          export HTTPS_PROXY=""
+          echo "بدء تحميل الفيديو بدون بروكسي..."
           yt-dlp -f "bestvideo[height<=${RESOLUTION}]+bestaudio/best" \
             --merge-output-format mp4 \
             -o input.mp4 \
+            --no-proxy \
             --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
             --verbose \
             "$VIDEO_URL" || {
@@ -96,4 +101,4 @@ jobs:
                   await bot.send_document(chat_id=CHAT_ID, document=f, caption="✅ تم الضغط بنجاح!")
 
           asyncio.run(main())
-          EOF
+          EOF       
