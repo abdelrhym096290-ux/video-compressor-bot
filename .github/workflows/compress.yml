@@ -31,7 +31,6 @@ jobs:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
         run: |
-          echo "بدء تحميل الفيديو..."
           yt-dlp -f "bestvideo[height<=${RESOLUTION}]+bestaudio/best" \
             --merge-output-format mp4 \
             -o input.mp4 \
