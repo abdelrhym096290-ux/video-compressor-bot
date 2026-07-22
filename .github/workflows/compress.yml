@@ -31,22 +31,14 @@ jobs:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
         run: |
-          # تعطيل أي بروكسي قديم
           unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
           yt-dlp -f "bestvideo[height<=${RESOLUTION}]+bestaudio/best" \
             --merge-output-format mp4 \
             -o input.mp4 \
-            --no-proxy \
             --user-agent "Mozilla/5.0" \
             --verbose \
-            "$VIDEO_URL" || {
-              echo "❌ فشل التحميل"
-              exit 1
-            }
-          if [ ! -f input.mp4 ]; then
-            echo "❌ الملف لم يُنشأ"
-            exit 1
-          fi
+            "$VIDEO_URL" || { echo "❌ فشل التحميل"; exit 1; }
+          if [ ! -f input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
           echo "✅ تم التحميل بنجاح"
 
       - name: ضغط الفيديو
@@ -54,29 +46,14 @@ jobs:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
         run: |
-          if [ "$CODEC" = "av1" ]; then
-            CODEC_LIB="libsvtav1"
-            PRESET="10"
-          elif [ "$CODEC" = "h265" ]; then
-            CODEC_LIB="libx265"
-            PRESET="ultrafast"
-          elif [ "$CODEC" = "h266" ]; then
-            CODEC_LIB="libvvenc"
-            PRESET="faster"
-          else
-            echo "كوديك غير مدعوم"
-            exit 1
-          fi
-
+          if [ "$CODEC" = "av1" ]; then CODEC_LIB="libsvtav1"; PRESET="10"
+          elif [ "$CODEC" = "h265" ]; then CODEC_LIB="libx265"; PRESET="ultrafast"
+          elif [ "$CODEC" = "h266" ]; then CODEC_LIB="libvvenc"; PRESET="faster"
+          else echo "كوديك غير مدعوم"; exit 1; fi
           ffmpeg -i input.mp4 \
             -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-            -c:v $CODEC_LIB \
-            -crf 40 \
-            -preset $PRESET \
-            -c:a libopus \
-            -b:a 16k \
-            -ar 48000 \
-            -y output.mkv
+            -c:v $CODEC_LIB -crf 40 -preset $PRESET \
+            -c:a libopus -b:a 16k -ar 48000 -y output.mkv
 
       - name: إرسال الفيديو للمستخدم
         env:
@@ -86,14 +63,11 @@ jobs:
           python3 << 'EOF'
           import os, asyncio
           from telegram import Bot
-
           BOT_TOKEN = os.environ["BOT_TOKEN"]
           CHAT_ID = os.environ["CHAT_ID"]
-
           async def main():
               bot = Bot(token=BOT_TOKEN)
               with open("output.mkv", "rb") as f:
                   await bot.send_document(chat_id=CHAT_ID, document=f, caption="✅ تم الضغط بنجاح!")
-
           asyncio.run(main())
           EOF
