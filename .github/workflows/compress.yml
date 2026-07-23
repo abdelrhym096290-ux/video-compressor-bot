@@ -32,7 +32,7 @@ jobs:
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: تحميل الفيديو (مع الكوكيز)
+      - name: تحميل الفيديو (مع الكوكيز ومرونة وتشخيص)
         env:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -40,13 +40,14 @@ jobs:
         run: |
           unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
           echo "$YT_COOKIES" > cookies.txt
-          yt-dlp -f "bestvideo[height<=${RESOLUTION}]+bestaudio/best" \
+          yt-dlp -f "bv*[height<=${RESOLUTION}]+ba/b[height<=${RESOLUTION}]/bv*+ba/b" \
+            --extractor-args "youtube:player_client=android" \
             --merge-output-format mp4 \
             -o input.mp4 \
             --cookies cookies.txt \
             --user-agent "Mozilla/5.0" \
             --verbose \
-            "$VIDEO_URL" || { echo "❌ فشل التحميل"; exit 1; }
+            "$VIDEO_URL" 2>&1 | tee ytdlp_log.txt || { echo "❌ فشل التحميل"; exit 1; }
           rm -f cookies.txt
           if [ ! -f input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
           echo "✅ تم التحميل بنجاح"
@@ -93,7 +94,7 @@ jobs:
           asyncio.run(main())
           EOF
 
-      - name: إشعار المستخدم عند أي فشل
+      - name: إرسال سجل التشخيص عند الفشل
         if: failure()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -104,9 +105,12 @@ jobs:
           from telegram import Bot
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
-              await bot.send_message(
-                  chat_id=os.environ["CHAT_ID"],
-                  text="❌ فشلت العملية (تحميل أو ضغط). جرب رابطاً أو دقة أخرى، أو أعد المحاولة لاحقاً."
-              )
+              try:
+                  with open("ytdlp_log.txt") as f:
+                      lines = f.readlines()[-15:]
+                  text = "🔍 آخر سطور من سجل التحميل:\n" + "".join(lines)[-3500:]
+              except FileNotFoundError:
+                  text = "❌ فشل قبل بدء التحميل (ربما مشكلة كوكيز أو اتصال)."
+              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
           asyncio.run(main())
           EOF
