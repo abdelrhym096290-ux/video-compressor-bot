@@ -10,7 +10,7 @@ on:
         description: 'الدقة (مثلاً 720)'
         required: true
       codec:
-        description: 'الكوديك (av1, h265, h266)'
+        description: 'الكوديك (av1, h265)'
         required: true
       chat_id:
         description: 'معرف الدردشة'
@@ -19,6 +19,7 @@ on:
 jobs:
   compress:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: تجهيز البيئة
         run: |
@@ -26,18 +27,22 @@ jobs:
           sudo apt install -y ffmpeg
           pip install --upgrade yt-dlp python-telegram-bot
 
-      - name: تحميل الفيديو
+      - name: تحميل الفيديو (مع الكوكيز)
         env:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
           unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
+          echo "$YT_COOKIES" > cookies.txt
           yt-dlp -f "bestvideo[height<=${RESOLUTION}]+bestaudio/best" \
             --merge-output-format mp4 \
             -o input.mp4 \
+            --cookies cookies.txt \
             --user-agent "Mozilla/5.0" \
             --verbose \
             "$VIDEO_URL" || { echo "❌ فشل التحميل"; exit 1; }
+          rm -f cookies.txt
           if [ ! -f input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
           echo "✅ تم التحميل بنجاح"
 
@@ -48,14 +53,43 @@ jobs:
         run: |
           if [ "$CODEC" = "av1" ]; then CODEC_LIB="libsvtav1"; PRESET="10"
           elif [ "$CODEC" = "h265" ]; then CODEC_LIB="libx265"; PRESET="ultrafast"
-          elif [ "$CODEC" = "h266" ]; then CODEC_LIB="libvvenc"; PRESET="faster"
           else echo "كوديك غير مدعوم"; exit 1; fi
           ffmpeg -i input.mp4 \
             -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -c:v $CODEC_LIB -crf 40 -preset $PRESET \
             -c:a libopus -b:a 16k -ar 48000 -y output.mkv
 
-      - name: إرسال الفيديو للمستخدم
+      - name: فحص الحجم والإرسال
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
+        run: |
+          if [ ! -f output.mkv ]; then echo "❌ الملف غير موجود"; exit 1; fi
+          SIZE_BYTES=$(stat -c%s output.mkv)
+          SIZE_MB=$((SIZE_BYTES / 1048576))
+          if [ $SIZE_BYTES -gt 52428800 ]; then
+            python3 << 'EOF'
+          import os, asyncio
+          from telegram import Bot
+          async def main():
+              bot = Bot(token=os.environ["BOT_TOKEN"])
+              await bot.send_message(chat_id=os.environ["CHAT_ID"], text='❌ الملف الناتج أكبر من 50MB. جرب دقة أقل.')
+          asyncio.run(main())
+          EOF
+            exit 1
+          fi
+          python3 << 'EOF'
+          import os, asyncio
+          from telegram import Bot
+          async def main():
+              bot = Bot(token=os.environ["BOT_TOKEN"])
+              with open('output.mkv', 'rb') as f:
+                  await bot.send_document(chat_id=os.environ["CHAT_ID"], document=f, caption='✅ تم الضغط بنجاح!')
+          asyncio.run(main())
+          EOF
+
+      - name: إشعار المستخدم عند أي فشل
+        if: failure()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
@@ -63,11 +97,11 @@ jobs:
           python3 << 'EOF'
           import os, asyncio
           from telegram import Bot
-          BOT_TOKEN = os.environ["BOT_TOKEN"]
-          CHAT_ID = os.environ["CHAT_ID"]
           async def main():
-              bot = Bot(token=BOT_TOKEN)
-              with open("output.mkv", "rb") as f:
-                  await bot.send_document(chat_id=CHAT_ID, document=f, caption="✅ تم الضغط بنجاح!")
+              bot = Bot(token=os.environ["BOT_TOKEN"])
+              await bot.send_message(
+                  chat_id=os.environ["CHAT_ID"],
+                  text="❌ فشلت العملية (تحميل أو ضغط). جرب رابطاً أو دقة أخرى، أو أعد المحاولة لاحقاً."
+              )
           asyncio.run(main())
           EOF
