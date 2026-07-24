@@ -35,6 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: استنساخ المستودع (ضروري لأوامر gh)
+        uses: actions/checkout@v4
+
       - name: تجهيز البيئة
         run: |
           sudo apt update
