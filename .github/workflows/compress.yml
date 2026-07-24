@@ -113,9 +113,9 @@ jobs:
           gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الإنشاء تلقائياً"
           URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
           if [ "$PRIVATE" == "true" ]; then
-            TEXT="✅ تم الضغط!\n📥 الرابط:\n$URL\n\n🔑 كلمة المرور: $PASSWORD"
+            export TEXT="✅ تم الضغط!\n📥 الرابط:\n$URL\n\n🔑 كلمة المرور: $PASSWORD"
           else
-            TEXT="✅ تم الضغط!\n📥 رابط التحميل المباشر:\n$URL"
+            export TEXT="✅ تم الضغط!\n📥 رابط التحميل المباشر:\n$URL"
           fi
           python3 << EOF
           import os, asyncio
