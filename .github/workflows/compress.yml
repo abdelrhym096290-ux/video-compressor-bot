@@ -41,12 +41,12 @@ jobs:
           sudo apt install -y ffmpeg p7zip-full
           pip install --upgrade yt-dlp python-telegram-bot
 
-      - name: تثبيت Deno (لحل تحديات JS الخاصة بيوتيوب)
+      - name: تثبيت Deno
         run: |
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: تحميل الفيديو (مع الكوكيز ومرونة وتشخيص)
+      - name: تحميل الفيديو (أمر مرن)
         env:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -54,7 +54,7 @@ jobs:
         run: |
           unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
           echo "$YT_COOKIES" > cookies.txt
-          yt-dlp -f "bv*[height<=${RESOLUTION}]+ba/b[height<=${RESOLUTION}]/bv*+ba/b" \
+          yt-dlp -f "bv*[height<=${RESOLUTION}]+ba/b[height<=${RESOLUTION}]/best[height<=${RESOLUTION}]/bv*+ba/best" \
             --extractor-args "youtube:player_client=android" \
             --merge-output-format mp4 \
             -o input.mp4 \
@@ -66,7 +66,7 @@ jobs:
           if [ ! -f input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
           echo "✅ تم التحميل بنجاح"
 
-      - name: ضغط الفيديو (سريع – مرور واحد)
+      - name: ضغط الفيديو
         env:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
