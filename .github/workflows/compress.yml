@@ -15,6 +15,20 @@ on:
       chat_id:
         description: 'معرف الدردشة'
         required: true
+      private:
+        description: 'خصوصي (true/false)'
+        required: true
+      filename:
+        description: 'اسم الملف المطلوب'
+        required: false
+        default: ''
+
+concurrency:
+  group: video-compression
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
   compress:
@@ -24,7 +38,7 @@ jobs:
       - name: تجهيز البيئة
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg
+          sudo apt install -y ffmpeg p7zip-full
           pip install --upgrade yt-dlp python-telegram-bot
 
       - name: تثبيت Deno (لحل تحديات JS الخاصة بيوتيوب)
@@ -52,7 +66,7 @@ jobs:
           if [ ! -f input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
           echo "✅ تم التحميل بنجاح"
 
-      - name: ضغط الفيديو
+      - name: ضغط الفيديو (سريع – مرور واحد)
         env:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -65,32 +79,47 @@ jobs:
             -c:v $CODEC_LIB -crf 40 -preset $PRESET \
             -c:a libopus -b:a 16k -ar 48000 -y output.mkv
 
-      - name: فحص الحجم والإرسال
+      - name: تشفير الفيديو (فقط لو خاص)
+        if: github.event.inputs.private == 'true'
+        id: encrypt
+        run: |
+          PASSWORD=$(openssl rand -base64 12)
+          echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
+          7z a -p"$PASSWORD" -mhe=on output.7z output.mkv
+
+      - name: رفع الملف وإرسال رابط التحميل
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
+          PRIVATE: ${{ github.event.inputs.private }}
+          PASSWORD: ${{ steps.encrypt.outputs.password }}
+          FILENAME: ${{ github.event.inputs.filename }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ ! -f output.mkv ]; then echo "❌ الملف غير موجود"; exit 1; fi
-          SIZE_BYTES=$(stat -c%s output.mkv)
-          SIZE_MB=$((SIZE_BYTES / 1048576))
-          if [ $SIZE_BYTES -gt 52428800 ]; then
-            python3 << 'EOF'
-          import os, asyncio
-          from telegram import Bot
-          async def main():
-              bot = Bot(token=os.environ["BOT_TOKEN"])
-              await bot.send_message(chat_id=os.environ["CHAT_ID"], text='❌ الملف الناتج أكبر من 50MB. جرب دقة أقل.')
-          asyncio.run(main())
-          EOF
-            exit 1
+          TAG="video-${{ github.run_id }}"
+          if [ "$PRIVATE" == "true" ]; then
+            ASSET="output.7z"
+          else
+            ASSET="output.mkv"
           fi
-          python3 << 'EOF'
+          if [ -n "$FILENAME" ]; then
+            EXT="${ASSET##*.}"
+            mv "$ASSET" "${FILENAME}.${EXT}"
+            ASSET="${FILENAME}.${EXT}"
+          fi
+          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الإنشاء تلقائياً"
+          URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
+          if [ "$PRIVATE" == "true" ]; then
+            TEXT="✅ تم الضغط!\n📥 الرابط:\n$URL\n\n🔑 كلمة المرور: $PASSWORD"
+          else
+            TEXT="✅ تم الضغط!\n📥 رابط التحميل المباشر:\n$URL"
+          fi
+          python3 << EOF
           import os, asyncio
           from telegram import Bot
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
-              with open('output.mkv', 'rb') as f:
-                  await bot.send_document(chat_id=os.environ["CHAT_ID"], document=f, caption='✅ تم الضغط بنجاح!')
+              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=os.environ["TEXT"])
           asyncio.run(main())
           EOF
 
