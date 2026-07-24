@@ -46,7 +46,7 @@ jobs:
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: تحميل الفيديو (مع تحديات JS)
+      - name: تحميل الفيديو (الحل النهائي - بدون --user-agent)
         env:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -60,7 +60,6 @@ jobs:
             --merge-output-format mp4 \
             -o input.mp4 \
             --cookies cookies.txt \
-            --user-agent "Mozilla/5.0" \
             --verbose \
             "$VIDEO_URL" 2>&1 | tee ytdlp_log.txt || { echo "❌ فشل التحميل"; exit 1; }
           rm -f cookies.txt
@@ -132,7 +131,7 @@ jobs:
           path: ytdlp_log.txt
           if-no-files-found: warn
 
-      - name: إرسال إشعار الفشل
+      - name: إرسال سجل التشخيص كملف نصي
         if: failure()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -143,8 +142,16 @@ jobs:
           from telegram import Bot
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
-              run_url = "https://github.com/abdelrhym096290-ux/video-compressor-bot/actions/runs/${{ github.run_id }}"
-              text = f"❌ فشل التحميل.\n📋 افتح صفحة الـ Run لتحميل سجل ytdlp_log.txt كاملاً:\n{run_url}"
-              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+              chat_id = os.environ["CHAT_ID"]
+              if os.path.exists("ytdlp_log.txt"):
+                  with open("ytdlp_log.txt", "rb") as f:
+                      await bot.send_document(
+                          chat_id=chat_id,
+                          document=f,
+                          filename="ytdlp_log.txt",
+                          caption="❌ فشل التحميل. مرفق سجل التشخيص الكامل."
+                      )
+              else:
+                  await bot.send_message(chat_id=chat_id, text="❌ فشل قبل بدء التحميل (لا يوجد سجل).")
           asyncio.run(main())
           EOF
