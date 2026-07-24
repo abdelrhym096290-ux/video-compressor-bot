@@ -46,7 +46,7 @@ jobs:
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: تحميل الفيديو (مع تحديثات SABR وترتيب العملاء المُحسَّن)
+      - name: تحميل الفيديو (مع تحديات JS)
         env:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -56,6 +56,7 @@ jobs:
           echo "$YT_COOKIES" > cookies.txt
           yt-dlp -f "bv*[height<=${RESOLUTION}]+ba/b[height<=${RESOLUTION}]/best[height<=${RESOLUTION}]/bv*+ba/best" \
             --extractor-args "youtube:player_client=android,tv,web;formats=missing_pot" \
+            --remote-components ejs:github \
             --merge-output-format mp4 \
             -o input.mp4 \
             --cookies cookies.txt \
@@ -123,7 +124,15 @@ jobs:
           asyncio.run(main())
           EOF
 
-      - name: إرسال سجل التشخيص عند الفشل
+      - name: رفع سجل التشخيص كـ Artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ytdlp-log-${{ github.run_id }}
+          path: ytdlp_log.txt
+          if-no-files-found: warn
+
+      - name: إرسال إشعار الفشل
         if: failure()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -134,12 +143,8 @@ jobs:
           from telegram import Bot
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
-              try:
-                  with open("ytdlp_log.txt") as f:
-                      lines = f.readlines()[-15:]
-                  text = "🔍 آخر سطور من سجل التحميل:\n" + "".join(lines)[-3500:]
-              except FileNotFoundError:
-                  text = "❌ فشل قبل بدء التحميل (ربما مشكلة كوكيز أو اتصال)."
+              run_url = "https://github.com/abdelrhym096290-ux/video-compressor-bot/actions/runs/${{ github.run_id }}"
+              text = f"❌ فشل التحميل.\n📋 افتح صفحة الـ Run لتحميل سجل ytdlp_log.txt كاملاً:\n{run_url}"
               await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
           asyncio.run(main())
           EOF
