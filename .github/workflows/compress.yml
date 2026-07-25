@@ -1,4 +1,4 @@
-name: ضغط الفيديو
+name: ضغط الفيديو (متوازي للفيديوهات الطويلة)
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ on:
         description: 'خصوصي (true/false)'
         required: true
       content_type:
-        description: 'نوع المحتوى (real, animation, auto)'
+        description: 'نوع المحتوى (real, animation, animation_ultra, auto)'
         required: false
         default: 'auto'
       filename:
@@ -35,67 +35,128 @@ permissions:
   contents: write
 
 jobs:
-  compress:
+  # -------------------------------------------------------------
+  # المرحلة الأولى: تحميل الفيديو وتقطيعه (لو طويل) أو تجهيزه كاملًا
+  # -------------------------------------------------------------
+  split-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 60
+    outputs:
+      chunks: ${{ steps.segment.outputs.chunks }}
     steps:
-      - name: استنساخ المستودع (ضروري لأوامر gh)
+      - name: استنساخ المستودع
         uses: actions/checkout@v4
 
-      - name: تجهيز البيئة
+      - name: تجهيز أدوات التحميل والتقطيع
         run: |
-          echo "تجهيز البيئة" > stage.txt
+          echo "تحميل وتقطيع الفيديو" > stage.txt
           sudo apt update
-          sudo apt install -y ffmpeg p7zip-full
-          pip install --upgrade --pre yt-dlp python-telegram-bot
+          sudo apt install -y ffmpeg jq
+          pip install --upgrade --pre yt-dlp
 
       - name: تثبيت Deno
         run: |
-          echo "تثبيت Deno" > stage.txt
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: تحميل الفيديو (الحل النهائي - بدون --user-agent)
+      - name: تحميل الفيديو المصدر
         env:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
           YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
-          echo "تحميل الفيديو" > stage.txt
           unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
           echo "$YT_COOKIES" > cookies.txt
           yt-dlp -f "bv*[height<=${RESOLUTION}]+ba/b[height<=${RESOLUTION}]/best[height<=${RESOLUTION}]/bv*+ba/best" \
             --extractor-args "youtube:player_client=android,tv,web;formats=missing_pot" \
             --remote-components ejs:github \
             --merge-output-format mp4 \
-            -o input.mp4 \
+            -o raw_input.mp4 \
             --cookies cookies.txt \
             --verbose \
             "$VIDEO_URL" 2>&1 | tee ytdlp_log.txt || { echo "❌ فشل التحميل"; exit 1; }
           rm -f cookies.txt
-          if [ ! -f input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
-          echo "✅ تم التحميل بنجاح"
+          if [ ! -f raw_input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
 
-      - name: ضغط الفيديو (أقصى ضغط - Preset 6 / 10-bit / Tuned)
+      - name: تقطيع الفيديو (فقط لو أطول من 20 دقيقة)
+        id: segment
+        run: |
+          mkdir -p chunks_raw
+          DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 raw_input.mp4 | cut -d. -f1)
+          echo "⏱️ مدة الفيديو: ${DURATION} ثانية"
+
+          if [ "$DURATION" -gt 1200 ]; then
+            echo "📦 الفيديو طويل، سيتم تقطيعه للمعالجة المتوازية"
+            ffmpeg -i raw_input.mp4 -c copy -f segment -segment_time 600 -reset_timestamps 1 "chunks_raw/chunk_%03d.mp4"
+          else
+            echo "📄 الفيديو قصير، سيُعالج كجزء واحد فقط (لأفضل حجم ممكن)"
+            cp raw_input.mp4 "chunks_raw/chunk_000.mp4"
+          fi
+
+          CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | jq -R . | jq -s -c .)
+          echo "chunks=$CHUNKS_JSON" >> "$GITHUB_OUTPUT"
+          echo "الأجزاء: $CHUNKS_JSON"
+
+      - name: رفع الأجزاء الخام كـ Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-chunks
+          path: chunks_raw/
+          retention-days: 1
+
+  # -------------------------------------------------------------
+  # المرحلة الثانية: ضغط الأجزاء (بالتوازي إن وجد أكثر من جزء)
+  # -------------------------------------------------------------
+  encode-chunks:
+    needs: split-video
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      matrix:
+        chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
+      max-parallel: 10
+    steps:
+      - name: تجهيز بيئة FFmpeg
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg
+
+      - name: تنزيل الجزء المخصص لهذا السيرفر
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-chunks
+          path: chunks_raw
+
+      - name: ضغط الجزء (${{ matrix.chunk }})
         env:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
+          CHUNK_ID: ${{ matrix.chunk }}
         run: |
-          echo "ضغط الفيديو" > stage.txt
-
           TUNE_ARG=""
           PROFILE_ARG=""
           SVT_PARAMS=""
+          RATE_ARGS=""
+          DENOISE="hqdn3d=1.2:1.2:3:3"
 
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
-            PRESET="6"
-            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1"
+            PRESET="4"
+            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:keyint=240"
+
             case "$CONTENT_TYPE" in
-              real) CRF=34 ;;
-              animation) CRF=40 ;;
-              *) CRF=38 ;;
+              real)
+                CRF=34; RATE_ARGS="-maxrate 450k -bufsize 900k"
+                DENOISE="hqdn3d=1.0:1.0:2:2" ;;
+              animation)
+                CRF=38; RATE_ARGS="-maxrate 330k -bufsize 660k"
+                DENOISE="hqdn3d=1.5:1.5:4:4" ;;
+              animation_ultra)
+                CRF=41; RATE_ARGS="-maxrate 260k -bufsize 520k"
+                DENOISE="hqdn3d=1.5:1.5:4:4" ;;
+              *)
+                CRF=36; RATE_ARGS="-maxrate 380k -bufsize 760k" ;;
             esac
 
           elif [ "$CODEC" = "h265" ]; then
@@ -103,33 +164,73 @@ jobs:
             PRESET="slow"
             PROFILE_ARG="-profile:v main10"
             case "$CONTENT_TYPE" in
-              real) CRF=27; TUNE_ARG="-tune grain" ;;
-              animation) CRF=32; TUNE_ARG="-tune animation" ;;
-              *) CRF=29 ;;
+              real) CRF=26; TUNE_ARG="-tune grain" ;;
+              animation|animation_ultra) CRF=30; TUNE_ARG="-tune animation" ;;
+              *) CRF=28 ;;
             esac
 
           else
             echo "كوديك غير مدعوم"; exit 1
           fi
 
-          echo "🎛️ الكوديك: $CODEC | Preset: $PRESET | CRF: $CRF | 10-bit مفعّل"
+          echo "🎛️ الكوديك: $CODEC | نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: ${RATE_ARGS:-بدون}"
 
-          ffmpeg -i input.mp4 \
-            -vf "hqdn3d=1.2:1.2:3:3,scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+          mkdir -p chunks_encoded
+          ffmpeg -i "chunks_raw/chunk_${CHUNK_ID}.mp4" \
+            -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -pix_fmt yuv420p10le \
-            -c:v $CODEC_LIB -crf $CRF -preset $PRESET $SVT_PARAMS $TUNE_ARG $PROFILE_ARG \
-            -c:a libopus -b:a 24k -ar 48000 -y output.mkv 2>&1 | tee ffmpeg_log.txt
+            -c:v $CODEC_LIB -crf $CRF -preset $PRESET $SVT_PARAMS $TUNE_ARG $PROFILE_ARG $RATE_ARGS \
+            -c:a libopus -b:a 20k -ac 2 -ar 48000 -y "chunks_encoded/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
+
+      - name: رفع الجزء المضغوط
+        uses: actions/upload-artifact@v4
+        with:
+          name: encoded-${{ matrix.chunk }}
+          path: chunks_encoded/encoded_${{ matrix.chunk }}.mkv
+          retention-days: 1
+
+  # -------------------------------------------------------------
+  # المرحلة الثالثة: دمج الأجزاء ورفع الملف النهائي
+  # -------------------------------------------------------------
+  merge-and-send:
+    needs: [split-video, encode-chunks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: استنساخ المستودع
+        uses: actions/checkout@v4
+
+      - name: تجهيز أدوات الدمج
+        run: |
+          echo "دمج الأجزاء ورفع الملف" > stage.txt
+          sudo apt update
+          sudo apt install -y ffmpeg p7zip-full
+          pip install python-telegram-bot
+
+      - name: تنزيل جميع الأجزاء المضغوطة
+        uses: actions/download-artifact@v4
+        with:
+          pattern: encoded-*
+          path: all_encoded
+          merge-multiple: true
+
+      - name: دمج الأجزاء في فيديو واحد
+        run: |
+          cd all_encoded
+          for f in $(ls encoded_*.mkv | sort); do echo "file '$f'" >> concat_list.txt; done
+          ffmpeg -f concat -safe 0 -i concat_list.txt -c copy ../output.mkv
+          cd ..
+          if [ ! -f output.mkv ]; then echo "❌ فشل الدمج"; exit 1; fi
 
       - name: تشفير الفيديو (فقط لو خاص)
         if: github.event.inputs.private == 'true'
         id: encrypt
         run: |
-          echo "تشفير الفيديو" > stage.txt
           PASSWORD=$(openssl rand -base64 12)
           echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
           7z a -p"$PASSWORD" -mhe=on output.7z output.mkv
 
-      - name: رفع الملف وإرسال رابط التحميل
+      - name: رفع الملف النهائي وإرسال رابط التليجرام
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
@@ -138,7 +239,6 @@ jobs:
           FILENAME: ${{ github.event.inputs.filename }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "رفع الملف وإرسال الرابط" > stage.txt
           TAG="video-${{ github.run_id }}"
           if [ "$PRIVATE" == "true" ]; then
             ASSET="output.7z"
@@ -150,7 +250,7 @@ jobs:
             mv "$ASSET" "${FILENAME}.${EXT}"
             ASSET="${FILENAME}.${EXT}"
           fi
-          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الإنشاء تلقائياً" 2>&1 | tee upload_log.txt
+          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح" 2>&1 | tee upload_log.txt
           URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
           export DOWNLOAD_URL="$URL"
 
@@ -165,31 +265,22 @@ jobs:
               password = os.environ.get("PASSWORD", "")
 
               if private == "true":
-                  text = "✅ تم الضغط!\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
+                  text = "✅ تم الضغط بنجاح!\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
               else:
-                  text = "✅ تم الضغط!\n\n📥 رابط التحميل المباشر:\n" + url
+                  text = "✅ تم الضغط بنجاح!\n\n📥 رابط التحميل المباشر:\n" + url
 
               await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
 
           asyncio.run(main())
           EOF
 
-      - name: رفع سجلات التشخيص كـ Artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs-${{ github.run_id }}
-          path: |
-            ytdlp_log.txt
-            ffmpeg_log.txt
-            upload_log.txt
-          if-no-files-found: warn
-
-      - name: إرسال إشعار الفشل مع تفاصيل الخطأ إلى البوت
+      - name: إرسال إشعار الفشل مع التفاصيل لو حدث خطأ
         if: failure()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           python3 << 'EOF'
           import os, asyncio
@@ -198,31 +289,22 @@ jobs:
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
               chat_id = os.environ["CHAT_ID"]
-              run_url = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
+              repo = os.environ.get("GITHUB_REPOSITORY", "")
+              run_id = os.environ.get("GITHUB_RUN_ID", "")
+              run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
 
               stage = "غير معروفة"
               if os.path.exists("stage.txt"):
                   with open("stage.txt", encoding="utf-8") as f:
                       stage = f.read().strip()
 
-              lines = []
-              for log_file in ["ffmpeg_log.txt", "ytdlp_log.txt", "upload_log.txt"]:
-                  if os.path.exists(log_file):
-                      with open(log_file, encoding="utf-8", errors="ignore") as f:
-                          content = f.readlines()[-25:]
-                      if content:
-                          lines.append(f"📌 [آخر تفاصيل من {log_file}]:\n" + "".join(content))
-
-              details = "\n\n".join(lines)[-3500:] if lines else "لا توجد تفاصيل سجلات محدودة."
-
               text = (
-                  "❌ **حدث خطأ أثناء تنفيذ العملية!**\n\n"
-                  f"🔎 **المرحلة التي فشلت:** {stage}\n\n"
-                  f"📄 **تفاصيل الخطأ:**\n```\n{details}\n```\n\n"
-                  f"📋 **صفحة التشغيل الكاملة:**\n{run_url}"
+                  "❌ فشلت العملية.\n\n"
+                  f"🔎 المرحلة المتأثرة: {stage}\n\n"
+                  f"📋 صفحة التفاصيل والتشخيص:\n{run_url}"
               )
 
-              await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+              await bot.send_message(chat_id=chat_id, text=text)
 
           asyncio.run(main())
           EOF
