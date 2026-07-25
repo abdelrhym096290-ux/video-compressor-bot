@@ -76,7 +76,7 @@ jobs:
           if [ ! -f input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
           echo "✅ تم التحميل بنجاح"
 
-      - name: ضغط الفيديو (أقصى ضغط - Preset 6 / 10-bit)
+      - name: ضغط الفيديو (أقصى ضغط - Preset 6 / 10-bit / Tuned)
         env:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -86,14 +86,16 @@ jobs:
 
           TUNE_ARG=""
           PROFILE_ARG=""
+          SVT_PARAMS=""
 
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
             PRESET="6"
+            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1"
             case "$CONTENT_TYPE" in
-              real) CRF=32 ;;
-              animation) CRF=38 ;;
-              *) CRF=35 ;;
+              real) CRF=34 ;;
+              animation) CRF=40 ;;
+              *) CRF=38 ;;
             esac
 
           elif [ "$CODEC" = "h265" ]; then
@@ -101,9 +103,9 @@ jobs:
             PRESET="slow"
             PROFILE_ARG="-profile:v main10"
             case "$CONTENT_TYPE" in
-              real) CRF=26; TUNE_ARG="-tune grain" ;;
-              animation) CRF=30; TUNE_ARG="-tune animation" ;;
-              *) CRF=28 ;;
+              real) CRF=27; TUNE_ARG="-tune grain" ;;
+              animation) CRF=32; TUNE_ARG="-tune animation" ;;
+              *) CRF=29 ;;
             esac
 
           else
@@ -113,10 +115,10 @@ jobs:
           echo "🎛️ الكوديك: $CODEC | Preset: $PRESET | CRF: $CRF | 10-bit مفعّل"
 
           ffmpeg -i input.mp4 \
-            -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+            -vf "hqdn3d=1.2:1.2:3:3,scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -pix_fmt yuv420p10le \
-            -c:v $CODEC_LIB -crf $CRF -preset $PRESET $TUNE_ARG $PROFILE_ARG \
-            -c:a libopus -b:a 24k -ar 48000 -y output.mkv
+            -c:v $CODEC_LIB -crf $CRF -preset $PRESET $SVT_PARAMS $TUNE_ARG $PROFILE_ARG \
+            -c:a libopus -b:a 24k -ar 48000 -y output.mkv 2>&1 | tee ffmpeg_log.txt
 
       - name: تشفير الفيديو (فقط لو خاص)
         if: github.event.inputs.private == 'true'
@@ -148,7 +150,7 @@ jobs:
             mv "$ASSET" "${FILENAME}.${EXT}"
             ASSET="${FILENAME}.${EXT}"
           fi
-          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الإنشاء تلقائياً"
+          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الإنشاء تلقائياً" 2>&1 | tee upload_log.txt
           URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
           export DOWNLOAD_URL="$URL"
 
@@ -179,10 +181,11 @@ jobs:
           name: logs-${{ github.run_id }}
           path: |
             ytdlp_log.txt
+            ffmpeg_log.txt
             upload_log.txt
           if-no-files-found: warn
 
-      - name: إرسال إشعار الفشل مع تفاصيل المرحلة
+      - name: إرسال إشعار الفشل مع تفاصيل الخطأ إلى البوت
         if: failure()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -195,7 +198,7 @@ jobs:
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
               chat_id = os.environ["CHAT_ID"]
-              run_url = "https://github.com/abdelrhym096290-ux/video-compressor-bot/actions/runs/${{ github.run_id }}"
+              run_url = f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
 
               stage = "غير معروفة"
               if os.path.exists("stage.txt"):
@@ -203,23 +206,23 @@ jobs:
                       stage = f.read().strip()
 
               lines = []
-              for log_file in ["upload_log.txt", "ytdlp_log.txt"]:
+              for log_file in ["ffmpeg_log.txt", "ytdlp_log.txt", "upload_log.txt"]:
                   if os.path.exists(log_file):
                       with open(log_file, encoding="utf-8", errors="ignore") as f:
-                          content = f.readlines()[-20:]
+                          content = f.readlines()[-25:]
                       if content:
-                          lines.append(f"--- آخر أسطر من {log_file} ---\n" + "".join(content))
+                          lines.append(f"📌 [آخر تفاصيل من {log_file}]:\n" + "".join(content))
 
-              details = "\n\n".join(lines)[-3000:] if lines else "لا يوجد سجل متاح."
+              details = "\n\n".join(lines)[-3500:] if lines else "لا توجد تفاصيل سجلات محدودة."
 
               text = (
-                  "❌ فشلت العملية.\n\n"
-                  f"🔎 المرحلة التي فشلت فيها: {stage}\n\n"
-                  f"📋 صفحة التشغيل الكاملة:\n{run_url}\n\n"
-                  f"📄 آخر تفاصيل من السجل:\n{details}"
+                  "❌ **حدث خطأ أثناء تنفيذ العملية!**\n\n"
+                  f"🔎 **المرحلة التي فشلت:** {stage}\n\n"
+                  f"📄 **تفاصيل الخطأ:**\n```\n{details}\n```\n\n"
+                  f"📋 **صفحة التشغيل الكاملة:**\n{run_url}"
               )
 
-              await bot.send_message(chat_id=chat_id, text=text)
+              await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
 
           asyncio.run(main())
           EOF
