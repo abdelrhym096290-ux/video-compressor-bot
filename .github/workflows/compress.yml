@@ -76,7 +76,7 @@ jobs:
           if [ ! -f input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
           echo "✅ تم التحميل بنجاح"
 
-      - name: ضغط الفيديو (متوازن بين الحجم والسرعة)
+      - name: ضغط الفيديو (أقصى ضغط - Preset 6 / 10-bit)
         env:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -85,10 +85,11 @@ jobs:
           echo "ضغط الفيديو" > stage.txt
 
           TUNE_ARG=""
+          PROFILE_ARG=""
 
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
-            PRESET="8"
+            PRESET="6"
             case "$CONTENT_TYPE" in
               real) CRF=32 ;;
               animation) CRF=38 ;;
@@ -97,7 +98,8 @@ jobs:
 
           elif [ "$CODEC" = "h265" ]; then
             CODEC_LIB="libx265"
-            PRESET="medium"
+            PRESET="slow"
+            PROFILE_ARG="-profile:v main10"
             case "$CONTENT_TYPE" in
               real) CRF=26; TUNE_ARG="-tune grain" ;;
               animation) CRF=30; TUNE_ARG="-tune animation" ;;
@@ -108,11 +110,12 @@ jobs:
             echo "كوديك غير مدعوم"; exit 1
           fi
 
-          echo "🎛️ الكوديك: $CODEC | Preset: $PRESET | CRF: $CRF | Tune: ${TUNE_ARG:-افتراضي}"
+          echo "🎛️ الكوديك: $CODEC | Preset: $PRESET | CRF: $CRF | 10-bit مفعّل"
 
           ffmpeg -i input.mp4 \
             -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-            -c:v $CODEC_LIB -crf $CRF -preset $PRESET $TUNE_ARG \
+            -pix_fmt yuv420p10le \
+            -c:v $CODEC_LIB -crf $CRF -preset $PRESET $TUNE_ARG $PROFILE_ARG \
             -c:a libopus -b:a 24k -ar 48000 -y output.mkv
 
       - name: تشفير الفيديو (فقط لو خاص)
