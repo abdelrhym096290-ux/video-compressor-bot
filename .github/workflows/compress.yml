@@ -18,6 +18,10 @@ on:
       private:
         description: 'خصوصي (true/false)'
         required: true
+      content_type:
+        description: 'نوع المحتوى (real, animation, auto)'
+        required: false
+        default: 'auto'
       filename:
         description: 'اسم الملف المطلوب'
         required: false
@@ -35,26 +39,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: استنساخ المستودع
+      - name: استنساخ المستودع (ضروري لأوامر gh)
         uses: actions/checkout@v4
 
       - name: تجهيز البيئة
         run: |
+          echo "تجهيز البيئة" > stage.txt
           sudo apt update
           sudo apt install -y ffmpeg p7zip-full
           pip install --upgrade --pre yt-dlp python-telegram-bot
 
       - name: تثبيت Deno
         run: |
+          echo "تثبيت Deno" > stage.txt
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: تحميل الفيديو
+      - name: تحميل الفيديو (الحل النهائي - بدون --user-agent)
         env:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
           YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
+          echo "تحميل الفيديو" > stage.txt
           unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
           echo "$YT_COOKIES" > cookies.txt
           yt-dlp -f "bv*[height<=${RESOLUTION}]+ba/b[height<=${RESOLUTION}]/best[height<=${RESOLUTION}]/bv*+ba/best" \
@@ -73,19 +80,31 @@ jobs:
         env:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
+          CONTENT_TYPE: ${{ github.event.inputs.content_type }}
         run: |
+          echo "ضغط الفيديو" > stage.txt
           if [ "$CODEC" = "av1" ]; then CODEC_LIB="libsvtav1"; PRESET="10"
           elif [ "$CODEC" = "h265" ]; then CODEC_LIB="libx265"; PRESET="ultrafast"
           else echo "كوديك غير مدعوم"; exit 1; fi
+
+          if [ "$CONTENT_TYPE" = "real" ]; then
+            CRF=35
+          elif [ "$CONTENT_TYPE" = "animation" ]; then
+            CRF=40
+          else
+            CRF=40
+          fi
+
           ffmpeg -i input.mp4 \
             -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-            -c:v $CODEC_LIB -crf 40 -preset $PRESET \
+            -c:v $CODEC_LIB -crf $CRF -preset $PRESET \
             -c:a libopus -b:a 16k -ar 48000 -y output.mkv
 
       - name: تشفير الفيديو (فقط لو خاص)
         if: github.event.inputs.private == 'true'
         id: encrypt
         run: |
+          echo "تشفير الفيديو" > stage.txt
           PASSWORD=$(openssl rand -base64 12)
           echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
           7z a -p"$PASSWORD" -mhe=on output.7z output.mkv
@@ -99,6 +118,7 @@ jobs:
           FILENAME: ${{ github.event.inputs.filename }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "رفع الملف وإرسال الرابط" > stage.txt
           TAG="video-${{ github.run_id }}"
           if [ "$PRIVATE" == "true" ]; then
             ASSET="output.7z"
@@ -112,19 +132,37 @@ jobs:
           fi
           gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الإنشاء تلقائياً"
           URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
-          if [ "$PRIVATE" == "true" ]; then
-            export TEXT="✅ تم الضغط!\n📥 الرابط:\n$URL\n\n🔑 كلمة المرور: $PASSWORD"
-          else
-            export TEXT="✅ تم الضغط!\n📥 رابط التحميل المباشر:\n$URL"
-          fi
-          python3 << EOF
+          export DOWNLOAD_URL="$URL"
+
+          python3 << 'EOF'
           import os, asyncio
           from telegram import Bot
+
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
-              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=os.environ["TEXT"])
+              url = os.environ["DOWNLOAD_URL"]
+              private = os.environ["PRIVATE"]
+              password = os.environ.get("PASSWORD", "")
+
+              if private == "true":
+                  text = "✅ تم الضغط!\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
+              else:
+                  text = "✅ تم الضغط!\n\n📥 رابط التحميل المباشر:\n" + url
+
+              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+
           asyncio.run(main())
           EOF
+
+      - name: رفع سجلات التشخيص كـ Artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_id }}
+          path: |
+            ytdlp_log.txt
+            upload_log.txt
+          if-no-files-found: warn
 
       - name: إرسال إشعار الفشل مع تفاصيل المرحلة
         if: failure()
@@ -135,10 +173,35 @@ jobs:
           python3 << 'EOF'
           import os, asyncio
           from telegram import Bot
+
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
+              chat_id = os.environ["CHAT_ID"]
               run_url = "https://github.com/abdelrhym096290-ux/video-compressor-bot/actions/runs/${{ github.run_id }}"
-              text = f"❌ فشلت العملية.\n📋 صفحة التشغيل الكاملة:\n{run_url}"
-              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+
+              stage = "غير معروفة"
+              if os.path.exists("stage.txt"):
+                  with open("stage.txt", encoding="utf-8") as f:
+                      stage = f.read().strip()
+
+              lines = []
+              for log_file in ["upload_log.txt", "ytdlp_log.txt"]:
+                  if os.path.exists(log_file):
+                      with open(log_file, encoding="utf-8", errors="ignore") as f:
+                          content = f.readlines()[-20:]
+                      if content:
+                          lines.append(f"--- آخر أسطر من {log_file} ---\n" + "".join(content))
+
+              details = "\n\n".join(lines)[-3000:] if lines else "لا يوجد سجل متاح."
+
+              text = (
+                  "❌ فشلت العملية.\n\n"
+                  f"🔎 المرحلة التي فشلت فيها: {stage}\n\n"
+                  f"📋 صفحة التشغيل الكاملة:\n{run_url}\n\n"
+                  f"📄 آخر تفاصيل من السجل:\n{details}"
+              )
+
+              await bot.send_message(chat_id=chat_id, text=text)
+
           asyncio.run(main())
           EOF
