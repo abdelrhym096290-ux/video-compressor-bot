@@ -37,7 +37,7 @@ permissions:
 jobs:
   compress:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
     steps:
       - name: استنساخ المستودع (ضروري لأوامر gh)
         uses: actions/checkout@v4
@@ -76,7 +76,7 @@ jobs:
           if [ ! -f input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
           echo "✅ تم التحميل بنجاح"
 
-      - name: ضغط الفيديو (إعدادات محسّنة لأصغر حجم)
+      - name: ضغط الفيديو (متوازن بين الحجم والسرعة)
         env:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -88,7 +88,7 @@ jobs:
 
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
-            PRESET="6"
+            PRESET="8"
             case "$CONTENT_TYPE" in
               real) CRF=32 ;;
               animation) CRF=38 ;;
@@ -97,7 +97,7 @@ jobs:
 
           elif [ "$CODEC" = "h265" ]; then
             CODEC_LIB="libx265"
-            PRESET="slow"
+            PRESET="medium"
             case "$CONTENT_TYPE" in
               real) CRF=26; TUNE_ARG="-tune grain" ;;
               animation) CRF=30; TUNE_ARG="-tune animation" ;;
