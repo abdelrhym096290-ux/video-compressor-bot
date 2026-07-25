@@ -37,7 +37,7 @@ permissions:
 jobs:
   compress:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: استنساخ المستودع (ضروري لأوامر gh)
         uses: actions/checkout@v4
@@ -76,29 +76,44 @@ jobs:
           if [ ! -f input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
           echo "✅ تم التحميل بنجاح"
 
-      - name: ضغط الفيديو
+      - name: ضغط الفيديو (إعدادات محسّنة لأصغر حجم)
         env:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
         run: |
           echo "ضغط الفيديو" > stage.txt
-          if [ "$CODEC" = "av1" ]; then CODEC_LIB="libsvtav1"; PRESET="10"
-          elif [ "$CODEC" = "h265" ]; then CODEC_LIB="libx265"; PRESET="ultrafast"
-          else echo "كوديك غير مدعوم"; exit 1; fi
 
-          if [ "$CONTENT_TYPE" = "real" ]; then
-            CRF=35
-          elif [ "$CONTENT_TYPE" = "animation" ]; then
-            CRF=40
+          TUNE_ARG=""
+
+          if [ "$CODEC" = "av1" ]; then
+            CODEC_LIB="libsvtav1"
+            PRESET="6"
+            case "$CONTENT_TYPE" in
+              real) CRF=32 ;;
+              animation) CRF=38 ;;
+              *) CRF=35 ;;
+            esac
+
+          elif [ "$CODEC" = "h265" ]; then
+            CODEC_LIB="libx265"
+            PRESET="slow"
+            case "$CONTENT_TYPE" in
+              real) CRF=26; TUNE_ARG="-tune grain" ;;
+              animation) CRF=30; TUNE_ARG="-tune animation" ;;
+              *) CRF=28 ;;
+            esac
+
           else
-            CRF=40
+            echo "كوديك غير مدعوم"; exit 1
           fi
+
+          echo "🎛️ الكوديك: $CODEC | Preset: $PRESET | CRF: $CRF | Tune: ${TUNE_ARG:-افتراضي}"
 
           ffmpeg -i input.mp4 \
             -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-            -c:v $CODEC_LIB -crf $CRF -preset $PRESET \
-            -c:a libopus -b:a 16k -ar 48000 -y output.mkv
+            -c:v $CODEC_LIB -crf $CRF -preset $PRESET $TUNE_ARG \
+            -c:a libopus -b:a 24k -ar 48000 -y output.mkv
 
       - name: تشفير الفيديو (فقط لو خاص)
         if: github.event.inputs.private == 'true'
