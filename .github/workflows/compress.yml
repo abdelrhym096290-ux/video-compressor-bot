@@ -167,7 +167,7 @@ jobs:
 
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
-            PRESET="4"
+            PRESET="6"
             SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:keyint=240"
 
             case "$CONTENT_TYPE" in
