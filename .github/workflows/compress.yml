@@ -1,4 +1,4 @@
-name: ضغط الفيديو (متوازي للفيديوهات الطويلة)
+name: ضغط الفيديو (متوازي - تمريرين للدقة)
 
 on:
   workflow_dispatch:
@@ -18,6 +18,10 @@ on:
       private:
         description: 'خصوصي (true/false)'
         required: true
+      password:
+        description: 'كلمة المرور (فقط لو خاص)'
+        required: false
+        default: ''
       content_type:
         description: 'نوع المحتوى (real, animation, animation_ultra, auto)'
         required: false
@@ -30,19 +34,21 @@ on:
 concurrency:
   group: video-compression
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: write
 
 jobs:
   # -------------------------------------------------------------
-  # المرحلة الأولى: تحميل الفيديو وتقطيعه (لو طويل) أو تجهيزه كاملًا
+  # المرحلة الأولى: تحميل الفيديو، استخراج عنوانه، وتقطيعه إن لزم
   # -------------------------------------------------------------
   split-video:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
       chunks: ${{ steps.segment.outputs.chunks }}
+      video_title: ${{ steps.title.outputs.video_title }}
     steps:
       - name: استنساخ المستودع
         uses: actions/checkout@v4
@@ -59,7 +65,7 @@ jobs:
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: تحميل الفيديو المصدر
+      - name: تحميل الفيديو المصدر واستخراج العنوان
         env:
           VIDEO_URL: ${{ github.event.inputs.url }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -73,10 +79,27 @@ jobs:
             --merge-output-format mp4 \
             -o raw_input.mp4 \
             --cookies cookies.txt \
+            --print-to-file "%(title)s" video_title_raw.txt \
             --verbose \
             "$VIDEO_URL" 2>&1 | tee ytdlp_log.txt || { echo "❌ فشل التحميل"; exit 1; }
           rm -f cookies.txt
           if [ ! -f raw_input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
+
+      - name: استخراج وتنظيف اسم الفيديو الأصلي
+        id: title
+        run: |
+          if [ -f video_title_raw.txt ]; then
+            RAW_TITLE=$(head -n 1 video_title_raw.txt)
+          else
+            RAW_TITLE="video"
+          fi
+          CLEAN_TITLE=$(echo "$RAW_TITLE" | sed 's/[\/\\:*?"<>|]//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+          if [ -z "$CLEAN_TITLE" ]; then
+            CLEAN_TITLE="video"
+          fi
+          CLEAN_TITLE=$(echo "$CLEAN_TITLE" | cut -c1-100)
+          echo "video_title=$CLEAN_TITLE" >> "$GITHUB_OUTPUT"
+          echo "📝 العنوان المستخرج: $CLEAN_TITLE"
 
       - name: تقطيع الفيديو (فقط لو أطول من 20 دقيقة)
         id: segment
@@ -89,7 +112,7 @@ jobs:
             echo "📦 الفيديو طويل، سيتم تقطيعه للمعالجة المتوازية"
             ffmpeg -i raw_input.mp4 -c copy -f segment -segment_time 600 -reset_timestamps 1 "chunks_raw/chunk_%03d.mp4"
           else
-            echo "📄 الفيديو قصير، سيُعالج كجزء واحد فقط (لأفضل حجم ممكن)"
+            echo "📄 الفيديو قصير، سيُعالج كجزء واحد فقط"
             cp raw_input.mp4 "chunks_raw/chunk_000.mp4"
           fi
 
@@ -105,12 +128,12 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء (بالتوازي إن وجد أكثر من جزء)
+  # المرحلة الثانية: ضغط الأجزاء بتمريرين (2-Pass) بالتوازي
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
     strategy:
       matrix:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
@@ -127,7 +150,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }})
+      - name: ضغط الجزء بتمريرين (${{ matrix.chunk }})
         env:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -137,8 +160,10 @@ jobs:
           TUNE_ARG=""
           PROFILE_ARG=""
           SVT_PARAMS=""
-          RATE_ARGS=""
           DENOISE="hqdn3d=1.2:1.2:3:3"
+          IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
+          OUT_DIR="chunks_encoded"
+          mkdir -p "$OUT_DIR"
 
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
@@ -146,41 +171,65 @@ jobs:
             SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:keyint=240"
 
             case "$CONTENT_TYPE" in
-              real)
-                CRF=34; RATE_ARGS="-maxrate 450k -bufsize 900k"
-                DENOISE="hqdn3d=1.0:1.0:2:2" ;;
-              animation)
-                CRF=38; RATE_ARGS="-maxrate 330k -bufsize 660k"
-                DENOISE="hqdn3d=1.5:1.5:4:4" ;;
-              animation_ultra)
-                CRF=41; RATE_ARGS="-maxrate 260k -bufsize 520k"
-                DENOISE="hqdn3d=1.5:1.5:4:4" ;;
-              *)
-                CRF=36; RATE_ARGS="-maxrate 380k -bufsize 760k" ;;
+              real) BITRATE="450k"; DENOISE="hqdn3d=1.0:1.0:2:2" ;;
+              animation) BITRATE="330k"; DENOISE="hqdn3d=1.5:1.5:4:4" ;;
+              animation_ultra) BITRATE="245k"; DENOISE="hqdn3d=1.5:1.5:4:4" ;;
+              *) BITRATE="380k" ;;
             esac
+
+            echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | البت-ريت المستهدف: $BITRATE (تمريرين)"
+
+            LOG="pass_log_${CHUNK_ID}"
+
+            ffmpeg -y -i "$IN" \
+              -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+              -pix_fmt yuv420p10le \
+              -c:v $CODEC_LIB -b:v $BITRATE -preset $PRESET $SVT_PARAMS \
+              -pass 1 -passlogfile "$LOG" -an \
+              -f null /dev/null
+
+            ffmpeg -y -i "$IN" \
+              -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+              -pix_fmt yuv420p10le \
+              -c:v $CODEC_LIB -b:v $BITRATE -preset $PRESET $SVT_PARAMS \
+              -pass 2 -passlogfile "$LOG" \
+              -c:a libopus -b:a 20k -ac 2 -ar 48000 \
+              -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           elif [ "$CODEC" = "h265" ]; then
             CODEC_LIB="libx265"
             PRESET="slow"
             PROFILE_ARG="-profile:v main10"
+
             case "$CONTENT_TYPE" in
-              real) CRF=26; TUNE_ARG="-tune grain" ;;
-              animation|animation_ultra) CRF=30; TUNE_ARG="-tune animation" ;;
-              *) CRF=28 ;;
+              real) BITRATE="650k"; TUNE_ARG="-tune grain" ;;
+              animation) BITRATE="480k"; TUNE_ARG="-tune animation" ;;
+              animation_ultra) BITRATE="380k"; TUNE_ARG="-tune animation" ;;
+              *) BITRATE="550k" ;;
             esac
+
+            echo "🎛️ H.265 - نوع المحتوى: $CONTENT_TYPE | البت-ريت المستهدف: $BITRATE (تمريرين)"
+
+            LOG="x265_pass_${CHUNK_ID}.log"
+
+            ffmpeg -y -i "$IN" \
+              -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+              -pix_fmt yuv420p10le \
+              -c:v $CODEC_LIB -b:v $BITRATE -preset $PRESET $TUNE_ARG $PROFILE_ARG \
+              -x265-params "pass=1:stats=${LOG}" -an \
+              -f null /dev/null
+
+            ffmpeg -y -i "$IN" \
+              -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+              -pix_fmt yuv420p10le \
+              -c:v $CODEC_LIB -b:v $BITRATE -preset $PRESET $TUNE_ARG $PROFILE_ARG \
+              -x265-params "pass=2:stats=${LOG}" \
+              -c:a libopus -b:a 20k -ac 2 -ar 48000 \
+              -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           else
             echo "كوديك غير مدعوم"; exit 1
           fi
-
-          echo "🎛️ الكوديك: $CODEC | نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: ${RATE_ARGS:-بدون}"
-
-          mkdir -p chunks_encoded
-          ffmpeg -i "chunks_raw/chunk_${CHUNK_ID}.mp4" \
-            -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-            -pix_fmt yuv420p10le \
-            -c:v $CODEC_LIB -crf $CRF -preset $PRESET $SVT_PARAMS $TUNE_ARG $PROFILE_ARG $RATE_ARGS \
-            -c:a libopus -b:a 20k -ac 2 -ar 48000 -y "chunks_encoded/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
       - name: رفع الجزء المضغوط
         uses: actions/upload-artifact@v4
@@ -190,7 +239,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثالثة: دمج الأجزاء ورفع الملف النهائي
+  # المرحلة الثالثة: دمج الأجزاء، التشفير، ورفع الملف النهائي
   # -------------------------------------------------------------
   merge-and-send:
     needs: [split-video, encode-chunks]
@@ -222,34 +271,47 @@ jobs:
           cd ..
           if [ ! -f output.mkv ]; then echo "❌ فشل الدمج"; exit 1; fi
 
-      - name: تشفير الفيديو (فقط لو خاص)
+      - name: تشفير الفيديو (فقط لو خاص - بكلمة مرور المستخدم)
         if: github.event.inputs.private == 'true'
-        id: encrypt
+        env:
+          USER_PASSWORD: ${{ github.event.inputs.password }}
         run: |
-          PASSWORD=$(openssl rand -base64 12)
-          echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
-          7z a -p"$PASSWORD" -mhe=on output.7z output.mkv
+          echo "تشفير الفيديو" > stage.txt
+          if [ -z "$USER_PASSWORD" ]; then
+            echo "❌ لم يتم توفير كلمة مرور للفيديو الخاص"; exit 1
+          fi
+          7z a -p"$USER_PASSWORD" -mhe=on output.7z output.mkv
 
       - name: رفع الملف النهائي وإرسال رابط التليجرام
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
           PRIVATE: ${{ github.event.inputs.private }}
-          PASSWORD: ${{ steps.encrypt.outputs.password }}
+          USER_PASSWORD: ${{ github.event.inputs.password }}
           FILENAME: ${{ github.event.inputs.filename }}
+          ORIGINAL_TITLE: ${{ needs.split-video.outputs.video_title }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "رفع الملف وإرسال الرابط" > stage.txt
           TAG="video-${{ github.run_id }}"
           if [ "$PRIVATE" == "true" ]; then
             ASSET="output.7z"
           else
             ASSET="output.mkv"
           fi
+
           if [ -n "$FILENAME" ]; then
-            EXT="${ASSET##*.}"
-            mv "$ASSET" "${FILENAME}.${EXT}"
-            ASSET="${FILENAME}.${EXT}"
+            BASE_NAME="$FILENAME"
+          elif [ -n "$ORIGINAL_TITLE" ]; then
+            BASE_NAME="$ORIGINAL_TITLE"
+          else
+            BASE_NAME="video"
           fi
+
+          EXT="${ASSET##*.}"
+          mv "$ASSET" "${BASE_NAME}.${EXT}"
+          ASSET="${BASE_NAME}.${EXT}"
+
           gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح" 2>&1 | tee upload_log.txt
           URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
           export DOWNLOAD_URL="$URL"
@@ -262,7 +324,7 @@ jobs:
               bot = Bot(token=os.environ["BOT_TOKEN"])
               url = os.environ["DOWNLOAD_URL"]
               private = os.environ["PRIVATE"]
-              password = os.environ.get("PASSWORD", "")
+              password = os.environ.get("USER_PASSWORD", "")
 
               if private == "true":
                   text = "✅ تم الضغط بنجاح!\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
