@@ -90,7 +90,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء بالتوازي (Parallel Matrix)
+  # المرحلة الثانية: ضغط الأجزاء بالتوازي (Capped CRF)
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
@@ -132,37 +132,32 @@ jobs:
             CODEC_LIB="libsvtav1"
             PRESET="6"
             
-            # الخلطة الأساسية المستقرة لكوديك AV1
-            BASE_SVT="tune=0:enable-qm=1:hierarchical-levels=5:keyint=240"
+            BASE_SVT="tune=0:enable-qm=1:keyint=240"
 
             case "$CONTENT_TYPE" in
               real)
-                # إعدادات احترافية للواقعي: حماية المشاهد المظلمة + ملامح الوجوه + نويز سينمائي
                 CRF=30; RATE_ARGS="-maxrate 450k -bufsize 900k"
-                SVT_PARAMS="-svtav1-params ${BASE_SVT}:film-grain-denoise=1:film-grain=10:sharpness=1:variance-boost-strength=2:qm-min=0:qm-max=15"
-                VF_CHAIN="hqdn3d=0.5:0.5:1.5:1.5,scale=trunc(oh*a/2)*2:${RESOLUTION}:flags=lanczos"
+                SVT_PARAMS="-svtav1-params ${BASE_SVT}:qm-min=0:qm-max=15:film-grain=8"
+                VF_CHAIN="hqdn3d=0.5:0.5:1.5:1.5,scale=-2:${RESOLUTION}"
                 ;;
               animation)
-                # إعدادات الأنمي القياسية
                 CRF=32; RATE_ARGS="-maxrate 330k -bufsize 660k"
                 SVT_PARAMS="-svtav1-params ${BASE_SVT}:qm-min=0:qm-max=15"
-                VF_CHAIN="hqdn3d=1.0:1.0:2:2,deband=1:16:16:0,scale=trunc(oh*a/2)*2:${RESOLUTION}:flags=lanczos"
+                VF_CHAIN="hqdn3d=1.0:1.0:2:2,scale=-2:${RESOLUTION}"
                 ;;
               animation_ultra)
-                # إعدادات الأنمي فائقة الضغط
                 CRF=36; RATE_ARGS="-maxrate 260k -bufsize 520k"
                 SVT_PARAMS="-svtav1-params ${BASE_SVT}:qm-min=0:qm-max=15"
-                VF_CHAIN="hqdn3d=1.5:1.5:4:4,deband=1:16:16:0,scale=trunc(oh*a/2)*2:${RESOLUTION}:flags=lanczos"
+                VF_CHAIN="hqdn3d=1.5:1.5:4:4,scale=-2:${RESOLUTION}"
                 ;;
               *)
-                # الإعداد الافتراضي
                 CRF=31; RATE_ARGS="-maxrate 380k -bufsize 760k"
                 SVT_PARAMS="-svtav1-params ${BASE_SVT}"
-                VF_CHAIN="hqdn3d=0.8:0.8:2:2,scale=trunc(oh*a/2)*2:${RESOLUTION}:flags=lanczos"
+                VF_CHAIN="hqdn3d=0.8:0.8:2:2,scale=-2:${RESOLUTION}"
                 ;;
             esac
 
-            echo "🎛️ AV1 الشامل - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
+            echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
 
             ffmpeg -y -i "$IN" \
               -vf "$VF_CHAIN" \
@@ -179,19 +174,19 @@ jobs:
             case "$CONTENT_TYPE" in
               real) 
                 CRF=24; TUNE_ARG="-tune grain"; RATE_ARGS="-maxrate 900k -bufsize 1800k"
-                VF_CHAIN="hqdn3d=0.5:0.5:1.5:1.5,scale=trunc(oh*a/2)*2:${RESOLUTION}:flags=lanczos" ;;
+                VF_CHAIN="hqdn3d=0.5:0.5:1.5:1.5,scale=-2:${RESOLUTION}" ;;
               animation) 
                 CRF=26; TUNE_ARG="-tune animation"; RATE_ARGS="-maxrate 650k -bufsize 1300k"
-                VF_CHAIN="hqdn3d=1.0:1.0:2:2,deband=1:16:16:0,scale=trunc(oh*a/2)*2:${RESOLUTION}:flags=lanczos" ;;
+                VF_CHAIN="hqdn3d=1.0:1.0:2:2,scale=-2:${RESOLUTION}" ;;
               animation_ultra) 
                 CRF=30; TUNE_ARG="-tune animation"; RATE_ARGS="-maxrate 500k -bufsize 1000k"
-                VF_CHAIN="hqdn3d=1.5:1.5:4:4,deband=1:16:16:0,scale=trunc(oh*a/2)*2:${RESOLUTION}:flags=lanczos" ;;
+                VF_CHAIN="hqdn3d=1.5:1.5:4:4,scale=-2:${RESOLUTION}" ;;
               *) 
                 CRF=25; RATE_ARGS="-maxrate 750k -bufsize 1500k"
-                VF_CHAIN="hqdn3d=0.8:0.8:2:2,scale=trunc(oh*a/2)*2:${RESOLUTION}:flags=lanczos" ;;
+                VF_CHAIN="hqdn3d=0.8:0.8:2:2,scale=-2:${RESOLUTION}" ;;
             esac
 
-            echo "🎛️ H.265 الشامل - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
+            echo "🎛️ H.265 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
 
             ffmpeg -y -i "$IN" \
               -vf "$VF_CHAIN" \
@@ -247,7 +242,7 @@ jobs:
         run: |
           FINAL_FILE="final_output/compressed_video.mkv"
           if [ "$IS_PRIVATE" = "true" ] && [ -n "$PASSWORD" ]; then
-            echo "🔐 جاري تشفير الملف باستخدام 7z وحماية أسماء الملفات (-mhe=on)..."
+            echo "🔐 جاري تشفير الملف باستخدام 7z..."
             7z a -p"$PASSWORD" -mhe=on final_output/protected_video.7z "$FINAL_FILE"
             echo "FILE_TO_UPLOAD=final_output/protected_video.7z" >> $GITHUB_ENV
           else
@@ -262,7 +257,6 @@ jobs:
           TAG_NAME="release-$(date +'%Y%m%d-%H%M%S')"
           gh release create "$TAG_NAME" "$FILE_TO_UPLOAD" --title "الفيديو المضغوط $TAG_NAME" --notes "تم الضغط بنجاح عبر نظام الضغط المتقدم."
           
-          # استخراج رابط التحميل المباشر
           RELEASE_URL=$(gh release view "$TAG_NAME" --json assets --jq '.assets[0].url')
           echo "DOWNLOAD_URL=$RELEASE_URL" >> $GITHUB_ENV
 
