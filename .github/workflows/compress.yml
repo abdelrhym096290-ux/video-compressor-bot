@@ -3,9 +3,13 @@ name: Video Compression Workflow
 on:
   workflow_dispatch:
     inputs:
-      video_url:
+      url:
         description: 'رابط الفيديو (مباشر أو عبر yt-dlp)'
         required: true
+        type: string
+      filename:
+        description: 'اسم الملف الأصلي/المستهدف'
+        required: false
         type: string
       codec:
         description: 'الكوديك المستهدف'
@@ -32,7 +36,7 @@ on:
         description: 'معرف الشات في تلجرام (Telegram Chat ID)'
         required: false
         type: string
-      is_private:
+      private:
         description: 'تشفير الملف بكلمة سر (7z)'
         required: false
         type: boolean
@@ -61,7 +65,7 @@ jobs:
       - name: تحميل الفيديو الأصلي
         run: |
           mkdir -p raw_input
-          yt-dlp -f "bestvideo+bestaudio/best" --merge-output-format mp4 "${{ github.event.inputs.video_url }}" -o "raw_input/input.mp4"
+          yt-dlp -f "bestvideo+bestaudio/best" --merge-output-format mp4 "${{ github.event.inputs.url }}" -o "raw_input/input.mp4"
 
       - name: تحليل وتفكيك الفيديو
         id: split
@@ -71,14 +75,12 @@ jobs:
           
           mkdir -p chunks_raw
           
-          # تقطيع الفيديو إذا تجاوز 20 دقيقة (1200 ثانية) بدون إعادة ضغط
           if [ "$DURATION" -gt 1200 ]; then
             ffmpeg -i raw_input/input.mp4 -c copy -map 0 -segment_time 600 -f segment -reset_timestamps 1 chunks_raw/chunk_%03d.mp4
           else
             cp raw_input/input.mp4 chunks_raw/chunk_000.mp4
           fi
 
-          # تحويل قائمة الأجزاء لصيغة JSON لماتريكس التنفيذ المتوازي
           CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | jq -R . | jq -s -c .)
           echo "chunks=${CHUNKS_JSON}" >> $GITHUB_OUTPUT
 
@@ -237,7 +239,7 @@ jobs:
       - name: التشفير بكلمة سر (في حال طلب الوضع الخاص)
         id: package
         env:
-          IS_PRIVATE: ${{ github.event.inputs.is_private }}
+          IS_PRIVATE: ${{ github.event.inputs.private }}
           PASSWORD: ${{ github.event.inputs.password }}
         run: |
           FINAL_FILE="final_output/compressed_video.mkv"
