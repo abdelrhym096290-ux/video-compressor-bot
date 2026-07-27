@@ -1,4 +1,4 @@
-name: ضغط الفيديو (متوازي - تمريرين للدقة)
+name: ضغط الفيديو (متوازي للفيديوهات الطويلة)
 
 on:
   workflow_dispatch:
@@ -128,12 +128,12 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء بتمريرين (2-Pass) بالتوازي
+  # المرحلة الثانية: ضغط الأجزاء (CRF - جودة ثابتة) بالتوازي
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 180
     strategy:
       matrix:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
@@ -150,7 +150,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء بتمريرين (${{ matrix.chunk }})
+      - name: ضغط الجزء (${{ matrix.chunk }})
         env:
           CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
@@ -160,7 +160,7 @@ jobs:
           TUNE_ARG=""
           PROFILE_ARG=""
           SVT_PARAMS=""
-          DENOISE="hqdn3d=1.2:1.2:3:3"
+          DENOISE="hqdn3d=1.0:1.0:2:2"
           IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
           OUT_DIR="chunks_encoded"
           mkdir -p "$OUT_DIR"
@@ -168,32 +168,22 @@ jobs:
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
             PRESET="6"
-            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:keyint=240"
+            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15"
 
             case "$CONTENT_TYPE" in
-              real) BITRATE="450k"; DENOISE="hqdn3d=1.0:1.0:2:2" ;;
-              animation) BITRATE="330k"; DENOISE="hqdn3d=1.5:1.5:4:4" ;;
-              animation_ultra) BITRATE="245k"; DENOISE="hqdn3d=1.5:1.5:4:4" ;;
-              *) BITRATE="380k" ;;
+              real) CRF=28; DENOISE="hqdn3d=0.8:0.8:2:2" ;;
+              animation) CRF=30; DENOISE="hqdn3d=1.2:1.2:3:3" ;;
+              animation_ultra) CRF=34; DENOISE="hqdn3d=1.5:1.5:4:4" ;;
+              *) CRF=29 ;;
             esac
 
-            echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | البت-ريت المستهدف: $BITRATE (تمريرين)"
-
-            LOG="pass_log_${CHUNK_ID}"
+            echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | Preset: $PRESET"
 
             ffmpeg -y -i "$IN" \
               -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
               -pix_fmt yuv420p10le \
-              -c:v $CODEC_LIB -b:v $BITRATE -preset $PRESET $SVT_PARAMS \
-              -pass 1 -passlogfile "$LOG" -an \
-              -f null /dev/null
-
-            ffmpeg -y -i "$IN" \
-              -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-              -pix_fmt yuv420p10le \
-              -c:v $CODEC_LIB -b:v $BITRATE -preset $PRESET $SVT_PARAMS \
-              -pass 2 -passlogfile "$LOG" \
-              -c:a libopus -b:a 20k -ac 2 -ar 48000 \
+              -c:v $CODEC_LIB -crf $CRF -preset $PRESET $SVT_PARAMS \
+              -c:a libopus -b:a 24k -ac 2 -ar 48000 \
               -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           elif [ "$CODEC" = "h265" ]; then
@@ -202,29 +192,19 @@ jobs:
             PROFILE_ARG="-profile:v main10"
 
             case "$CONTENT_TYPE" in
-              real) BITRATE="650k"; TUNE_ARG="-tune grain" ;;
-              animation) BITRATE="480k"; TUNE_ARG="-tune animation" ;;
-              animation_ultra) BITRATE="380k"; TUNE_ARG="-tune animation" ;;
-              *) BITRATE="550k" ;;
+              real) CRF=22; TUNE_ARG="-tune grain" ;;
+              animation) CRF=24; TUNE_ARG="-tune animation" ;;
+              animation_ultra) CRF=28; TUNE_ARG="-tune animation" ;;
+              *) CRF=23 ;;
             esac
 
-            echo "🎛️ H.265 - نوع المحتوى: $CONTENT_TYPE | البت-ريت المستهدف: $BITRATE (تمريرين)"
-
-            LOG="x265_pass_${CHUNK_ID}.log"
+            echo "🎛️ H.265 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF"
 
             ffmpeg -y -i "$IN" \
               -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
               -pix_fmt yuv420p10le \
-              -c:v $CODEC_LIB -b:v $BITRATE -preset $PRESET $TUNE_ARG $PROFILE_ARG \
-              -x265-params "pass=1:stats=${LOG}" -an \
-              -f null /dev/null
-
-            ffmpeg -y -i "$IN" \
-              -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-              -pix_fmt yuv420p10le \
-              -c:v $CODEC_LIB -b:v $BITRATE -preset $PRESET $TUNE_ARG $PROFILE_ARG \
-              -x265-params "pass=2:stats=${LOG}" \
-              -c:a libopus -b:a 20k -ac 2 -ar 48000 \
+              -c:v $CODEC_LIB -crf $CRF -preset $PRESET $TUNE_ARG $PROFILE_ARG \
+              -c:a libopus -b:a 24k -ac 2 -ar 48000 \
               -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           else
