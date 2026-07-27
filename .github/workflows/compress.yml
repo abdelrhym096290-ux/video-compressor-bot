@@ -92,7 +92,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء بالتوازي (Capped CRF)
+  # المرحلة الثانية: ضغط الأجزاء بالتوازي (Preset 7 السريع)
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
@@ -132,7 +132,7 @@ jobs:
 
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
-            PRESET="6"
+            PRESET="7"  # تم التعديل إلى Preset 7 لأداء أسرع بكثير
             
             BASE_SVT="tune=0:enable-qm=1:keyint=240"
 
@@ -159,7 +159,7 @@ jobs:
                 ;;
             esac
 
-            echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
+            echo "🎛️ AV1 (Preset 7) - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
 
             ffmpeg -y -i "$IN" \
               -vf "$VF_CHAIN" \
@@ -231,12 +231,10 @@ jobs:
         run: |
           mkdir -p final_output
           
-          # استخراج وتصحيح اسم الملف
           RAW_NAME="${{ github.event.inputs.filename }}"
           if [ -z "$RAW_NAME" ]; then
             BASE_NAME="compressed_video"
           else
-            # إزالة الامتداد المكرر والأحرف الممنوعة من المسار
             BASE_NAME=$(echo "$RAW_NAME" | sed 's/\.[^.]*$//' | tr -d '/\"'\''\\')
             if [ -z "$BASE_NAME" ]; then BASE_NAME="compressed_video"; fi
           fi
@@ -261,7 +259,6 @@ jobs:
           FINAL_MKV="${{ env.FINAL_MKV_PATH }}"
           BASE_NAME="${{ env.BASE_NAME }}"
 
-          # 1. استخراج مقاييس ومعلومات الفيديو
           FILE_SIZE=$(du -h "$FINAL_MKV" | cut -f1)
           
           DUR_SEC=$(ffprobe -v error -show_entries format=duration -of default=noprintwrappers=1:nokey=1 "$FINAL_MKV" | cut -d. -f1)
@@ -269,7 +266,6 @@ jobs:
           
           RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$FINAL_MKV")
 
-          # 2. التشفير بـ 7z إذا تم طلب الوضع الخاص
           if [ "$IS_PRIVATE" = "true" ] && [ -n "$PASSWORD" ]; then
             echo "🔐 جاري تشفير الملف..."
             ZIP_PATH="final_output/${BASE_NAME}.7z"
@@ -279,7 +275,6 @@ jobs:
             echo "FILE_TO_UPLOAD=$FINAL_MKV" >> $GITHUB_ENV
           fi
 
-          # حفظ المتغيرات لإرسالها للتلجرام
           echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
           echo "DUR_FORMATTED=$DUR_FORMATTED" >> $GITHUB_ENV
           echo "RES=$RES" >> $GITHUB_ENV
