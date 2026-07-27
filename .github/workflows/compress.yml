@@ -209,7 +209,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثالثة: تجميع الفيديو النهائي والرفع
+  # المرحلة الثالثة: دمج الأجزاء، استخراج البيانات، والرفع
   # -------------------------------------------------------------
   merge-and-release:
     needs: [split-video, encode-chunks]
@@ -227,29 +227,62 @@ jobs:
           path: all_encoded
           merge-multiple: true
 
-      - name: دمج الأجزاء بدون إعادة ضغط (-c copy)
+      - name: تحديد اسم الملف والدمج
         run: |
           mkdir -p final_output
+          
+          # استخراج وتصحيح اسم الملف
+          RAW_NAME="${{ github.event.inputs.filename }}"
+          if [ -z "$RAW_NAME" ]; then
+            BASE_NAME="compressed_video"
+          else
+            # إزالة الامتداد المكرر والأحرف الممنوعة من المسار
+            BASE_NAME=$(echo "$RAW_NAME" | sed 's/\.[^.]*$//' | tr -d '/\"'\''\\')
+            if [ -z "$BASE_NAME" ]; then BASE_NAME="compressed_video"; fi
+          fi
+
+          FINAL_MKV="final_output/${BASE_NAME}.mkv"
+          
           for f in $(ls all_encoded/encoded_*.mkv | sort); do
             echo "file '$f'" >> concat_list.txt
           done
           
-          ffmpeg -f concat -safe 0 -i concat_list.txt -c copy final_output/compressed_video.mkv
+          ffmpeg -f concat -safe 0 -i concat_list.txt -c copy "$FINAL_MKV"
+          
+          echo "FINAL_MKV_PATH=$FINAL_MKV" >> $GITHUB_ENV
+          echo "BASE_NAME=$BASE_NAME" >> $GITHUB_ENV
 
-      - name: التشفير بكلمة سر (في حال طلب الوضع الخاص)
+      - name: التشفير واستخراج بيانات التلجرام
         id: package
         env:
           IS_PRIVATE: ${{ github.event.inputs.private }}
           PASSWORD: ${{ github.event.inputs.password }}
         run: |
-          FINAL_FILE="final_output/compressed_video.mkv"
+          FINAL_MKV="${{ env.FINAL_MKV_PATH }}"
+          BASE_NAME="${{ env.BASE_NAME }}"
+
+          # 1. استخراج مقاييس ومعلومات الفيديو
+          FILE_SIZE=$(du -h "$FINAL_MKV" | cut -f1)
+          
+          DUR_SEC=$(ffprobe -v error -show_entries format=duration -of default=noprintwrappers=1:nokey=1 "$FINAL_MKV" | cut -d. -f1)
+          DUR_FORMATTED=$(printf '%02d:%02d:%02d' $(($DUR_SEC/3600)) $(($DUR_SEC%3600/60)) $(($DUR_SEC%60)))
+          
+          RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$FINAL_MKV")
+
+          # 2. التشفير بـ 7z إذا تم طلب الوضع الخاص
           if [ "$IS_PRIVATE" = "true" ] && [ -n "$PASSWORD" ]; then
-            echo "🔐 جاري تشفير الملف باستخدام 7z..."
-            7z a -p"$PASSWORD" -mhe=on final_output/protected_video.7z "$FINAL_FILE"
-            echo "FILE_TO_UPLOAD=final_output/protected_video.7z" >> $GITHUB_ENV
+            echo "🔐 جاري تشفير الملف..."
+            ZIP_PATH="final_output/${BASE_NAME}.7z"
+            7z a -p"$PASSWORD" -mhe=on "$ZIP_PATH" "$FINAL_MKV"
+            echo "FILE_TO_UPLOAD=$ZIP_PATH" >> $GITHUB_ENV
           else
-            echo "FILE_TO_UPLOAD=$FINAL_FILE" >> $GITHUB_ENV
+            echo "FILE_TO_UPLOAD=$FINAL_MKV" >> $GITHUB_ENV
           fi
+
+          # حفظ المتغيرات لإرسالها للتلجرام
+          echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
+          echo "DUR_FORMATTED=$DUR_FORMATTED" >> $GITHUB_ENV
+          echo "RES=$RES" >> $GITHUB_ENV
 
       - name: إنشاء GitHub Release ورفع الملف
         id: create_release
@@ -262,14 +295,31 @@ jobs:
           RELEASE_URL=$(gh release view "$TAG_NAME" --json assets --jq '.assets[0].url')
           echo "DOWNLOAD_URL=$RELEASE_URL" >> $GITHUB_ENV
 
-      - name: إرسال الرابط المباشر إلى تلجرام
+      - name: إرسال تقرير النجاح المفصل إلى تلجرام
         if: ${{ github.event.inputs.chat_id != '' }}
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
+          FILE_NAME: ${{ env.BASE_NAME }}
+          FILE_SIZE: ${{ env.FILE_SIZE }}
+          RES: ${{ env.RES }}
+          DURATION: ${{ env.DUR_FORMATTED }}
+          DOWNLOAD_URL: ${{ env.DOWNLOAD_URL }}
         run: |
-          MESSAGE="✅ *تم ضغط الفيديو بنجاح!*%0A%0A📌 *رابط التحميل المباشر:*%0A${DOWNLOAD_URL}"
+          MSG_TEXT=$(cat <<EOF
+          🎬 *تم ضغط الفيديو بنجاح!*
+
+          📂 *اسم الملف:* \`${FILE_NAME}\`
+          📏 *الحجم النهائي:* \`${FILE_SIZE}\`
+          📺 *الدقة:* \`${RES}\`
+          ⏱️ *المدة:* \`${DURATION}\`
+
+          📌 *رابط التحميل المباشر:*
+          ${DOWNLOAD_URL}
+          EOF
+          )
+
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d "chat_id=${CHAT_ID}" \
-            -d "text=${MESSAGE}" \
+            --data-urlencode "text=${MSG_TEXT}" \
             -d "parse_mode=Markdown"
