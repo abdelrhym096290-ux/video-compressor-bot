@@ -387,37 +387,109 @@ jobs:
           asyncio.run(main())
           EOF
 
-      - name: إرسال إشعار الفشل مع التفاصيل لو حدث خطأ
-        if: failure()
+      - name: رفع الملف النهائي وإرسال رابط التليجرام
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+          PRIVATE: ${{ github.event.inputs.private }}
+          USER_PASSWORD: ${{ github.event.inputs.password }}
+          FILENAME: ${{ github.event.inputs.filename }}
+          ORIGINAL_TITLE: ${{ needs.split-video.outputs.video_title }}
+          DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
+          ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          echo "رفع الملف وإرسال الرابط" > stage.txt
+          TAG="video-${{ github.run_id }}"
+          if [ "$PRIVATE" == "true" ]; then
+            ASSET="output.7z"
+          else
+            ASSET="output.mkv"
+          fi
+
+          if [ -n "$FILENAME" ]; then
+            BASE_NAME="$FILENAME"
+          elif [ -n "$ORIGINAL_TITLE" ]; then
+            BASE_NAME="$ORIGINAL_TITLE"
+          else
+            BASE_NAME="video"
+          fi
+
+          # اسم آمن لرفع الملف نفسه (حروف/أرقام إنجليزية فقط، لتفادي مشاكل الترميز والحروف الخفية)
+          SAFE_NAME=$(echo "$BASE_NAME" | LC_ALL=C tr -cd '[:alnum:] ._-' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+          if [ -z "$SAFE_NAME" ]; then
+            SAFE_NAME="video_${{ github.run_id }}"
+          fi
+          echo "📝 اسم العرض: $BASE_NAME | اسم الملف الآمن: $SAFE_NAME"
+
+          EXT="${ASSET##*.}"
+          mv "$ASSET" "${SAFE_NAME}.${EXT}"
+          ASSET="${SAFE_NAME}.${EXT}"
+
+          if [ ! -f "$ASSET" ]; then
+            echo "❌ ملف الإخراج غير موجود: $ASSET"
+            exit 1
+          fi
+
+          SIZE_BYTES=$(stat -c%s "$ASSET")
+          SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $SIZE_BYTES/1048576}")
+          echo "📦 حجم الملف: ${SIZE_MB}MB"
+
+          echo "🚀 إنشاء الـ Release..."
+          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح"
+          echo "✅ تم إنشاء الـ Release بنجاح"
+
+          URL=""
+          for i in 1 2 3 4 5; do
+            URL=$(gh release view "$TAG" --json assets -q '.assets[0].browser_download_url' || true)
+            if [ -n "$URL" ] && [ "$URL" != "null" ]; then
+              break
+            fi
+            echo "⏳ الرابط غير جاهز بعد، إعادة المحاولة ($i)..."
+            sleep 5
+          done
+
+          if [ -z "$URL" ] || [ "$URL" == "null" ]; then
+            echo "❌ فشل الحصول على رابط التحميل بعد عدة محاولات"
+            echo "🔍 محتوى الـ Release كاملاً للتشخيص:"
+            gh release view "$TAG" --json assets
+            exit 1
+          fi
+
+          echo "🔗 الرابط: $URL"
+
+          export DOWNLOAD_URL="$URL"
+          export VIDEO_NAME="$BASE_NAME"
+          export SIZE_MB="$SIZE_MB"
+
           python3 << 'EOF'
-          import os, asyncio
+          import os, asyncio, sys
           from telegram import Bot
 
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
-              chat_id = os.environ["CHAT_ID"]
-              repo = os.environ.get("GITHUB_REPOSITORY", "")
-              run_id = os.environ.get("GITHUB_RUN_ID", "")
-              run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
+              url = os.environ["DOWNLOAD_URL"]
+              private = os.environ["PRIVATE"]
+              password = os.environ.get("USER_PASSWORD", "")
+              name = os.environ.get("VIDEO_NAME", "")
+              size_mb = os.environ.get("SIZE_MB", "")
+              duration = os.environ.get("DURATION_FMT", "")
+              resolution = os.environ.get("ACTUAL_RES", "")
 
-              stage = "غير معروفة"
-              if os.path.exists("stage.txt"):
-                  with open("stage.txt", encoding="utf-8") as f:
-                      stage = f.read().strip()
+              info_lines = f"🎬 الاسم: {name}\n📦 الحجم: {size_mb} MB\n📐 الدقة: {resolution}\n⏱️ المدة: {duration}"
 
-              text = (
-                  "❌ فشلت العملية.\n\n"
-                  f"🔎 المرحلة المتأثرة: {stage}\n\n"
-                  f"📋 صفحة التفاصيل والتشخيص:\n{run_url}"
-              )
+              if private == "true":
+                  text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
+              else:
+                  text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل المباشر:\n" + url
 
-              await bot.send_message(chat_id=chat_id, text=text)
+              try:
+                  await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+                  print("✅ تم إرسال الرسالة بنجاح إلى تيليجرام")
+              except Exception as e:
+                  print(f"❌ فشل إرسال الرسالة: {e}", file=sys.stderr)
+                  raise
 
           asyncio.run(main())
           EOF
