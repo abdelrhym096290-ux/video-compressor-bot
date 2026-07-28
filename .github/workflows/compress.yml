@@ -440,56 +440,41 @@ jobs:
           gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح"
           echo "✅ تم إنشاء الـ Release بنجاح"
 
-          URL=""
-          for i in 1 2 3 4 5; do
-            URL=$(gh release view "$TAG" --json assets -q '.assets[0].browser_download_url' || true)
-            if [ -n "$URL" ] && [ "$URL" != "null" ]; then
-              break
-            fi
-            echo "⏳ الرابط غير جاهز بعد، إعادة المحاولة ($i)..."
-            sleep 5
-          done
+       # استخراج الرابط المباشر للملف المرفوع
 
-          if [ -z "$URL" ] || [ "$URL" == "null" ]; then
-            echo "❌ فشل الحصول على رابط التحميل بعد عدة محاولات"
-            echo "🔍 محتوى الـ Release كاملاً للتشخيص:"
-            gh release view "$TAG" --json assets
-            exit 1
-          fi
+DIRECT_URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
+echo "🔗 الرابط المباشر: $DIRECT_URL"
+export DOWNLOAD_URL="$DIRECT_URL"
+export VIDEO_NAME="$BASE_NAME"
+export SIZE_MB="$SIZE_MB"
 
-          echo "🔗 الرابط: $URL"
+python3 << 'EOF'
+import os, asyncio, sys
+from telegram import Bot
 
-          export DOWNLOAD_URL="$URL"
-          export VIDEO_NAME="$BASE_NAME"
-          export SIZE_MB="$SIZE_MB"
+async def main():
+    bot = Bot(token=os.environ["BOT_TOKEN"])
+    url = os.environ["DOWNLOAD_URL"]
+    private = os.environ["PRIVATE"]
+    password = os.environ.get("USER_PASSWORD", "")
+    name = os.environ.get("VIDEO_NAME", "")
+    size_mb = os.environ.get("SIZE_MB", "")
+    duration = os.environ.get("DURATION_FMT", "")
+    resolution = os.environ.get("ACTUAL_RES", "")
 
-          python3 << 'EOF'
-          import os, asyncio, sys
-          from telegram import Bot
+    info_lines = f"🎬 الاسم: {name}\n📦 الحجم: {size_mb} MB\n📐 الدقة: {resolution}\n⏱️ المدة: {duration}"
 
-          async def main():
-              bot = Bot(token=os.environ["BOT_TOKEN"])
-              url = os.environ["DOWNLOAD_URL"]
-              private = os.environ["PRIVATE"]
-              password = os.environ.get("USER_PASSWORD", "")
-              name = os.environ.get("VIDEO_NAME", "")
-              size_mb = os.environ.get("SIZE_MB", "")
-              duration = os.environ.get("DURATION_FMT", "")
-              resolution = os.environ.get("ACTUAL_RES", "")
+    if private == "true":
+        text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
+    else:
+        text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل المباشر:\n" + url
 
-              info_lines = f"🎬 الاسم: {name}\n📦 الحجم: {size_mb} MB\n📐 الدقة: {resolution}\n⏱️ المدة: {duration}"
+    try:
+        await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+        print("✅ تم إرسال الرسالة بنجاح إلى تيليجرام")
+    except Exception as e:
+        print(f"❌ فشل إرسال الرسالة: {e}", file=sys.stderr)
+        raise
 
-              if private == "true":
-                  text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
-              else:
-                  text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل المباشر:\n" + url
-
-              try:
-                  await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
-                  print("✅ تم إرسال الرسالة بنجاح إلى تيليجرام")
-              except Exception as e:
-                  print(f"❌ فشل إرسال الرسالة: {e}", file=sys.stderr)
-                  raise
-
-          asyncio.run(main())
-          EOF
+asyncio.run(main())
+EOF
