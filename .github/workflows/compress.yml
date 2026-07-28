@@ -1,4 +1,4 @@
-name: Video Compressor Factory
+name: ضغط الفيديو (متوازي للفيديوهات الطويلة)
 
 on:
   workflow_dispatch:
@@ -7,200 +7,387 @@ on:
         description: 'رابط الفيديو'
         required: true
       resolution:
-        description: 'الجودة المطلوبة'
+        description: 'الدقة (مثلاً 720)'
         required: true
-        default: '720'
       codec:
-        description: 'الكوديك (av1 أو h265)'
+        description: 'الكوديك (av1, h265)'
         required: true
-        default: 'av1'
       chat_id:
-        description: 'معرف الشات في تلجرام'
+        description: 'معرف الدردشة'
         required: true
       private:
-        description: 'هل الفيديو تشفير خاص'
-        required: false
-        default: 'false'
+        description: 'خصوصي (true/false)'
+        required: true
       password:
-        description: 'كلمة مرور التشفير'
+        description: 'كلمة المرور (فقط لو خاص)'
         required: false
         default: ''
       content_type:
-        description: 'نوع المحتوى'
+        description: 'نوع المحتوى (real, animation, animation_ultra, auto)'
         required: false
         default: 'auto'
       filename:
-        description: 'اسم الملف المخصص'
+        description: 'اسم الملف المطلوب'
         required: false
         default: ''
 
-jobs:
-  compress:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+concurrency:
+  group: video-compression
+  cancel-in-progress: false
+  queue: max
 
+permissions:
+  contents: write
+
+jobs:
+  # -------------------------------------------------------------
+  # المرحلة الأولى: تحميل الفيديو، استخراج عنوانه، وتقطيعه إن لزم
+  # -------------------------------------------------------------
+  split-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      chunks: ${{ steps.segment.outputs.chunks }}
+      video_title: ${{ steps.title.outputs.video_title }}
     steps:
       - name: استنساخ المستودع
         uses: actions/checkout@v4
 
-      - name: تثبيت الأدوات المطلوبة (FFmpeg & yt-dlp & 7z)
+      - name: تجهيز أدوات التحميل والتقطيع
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg p7zip-full
-          sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-          sudo chmod a+rx /usr/local/bin/yt-dlp
+          echo "تحميل وتقطيع الفيديو" > stage.txt
+          sudo apt update
+          sudo apt install -y ffmpeg jq
+          pip install --upgrade --pre yt-dlp
 
-      - name: تنزيل الفيديو
+      - name: تثبيت Deno
         run: |
-          mkdir -p input_video
-          cd input_video
-          yt-dlp -f "bestvideo+bestaudio/best" --no-playlist -o "input.%(ext)s" "${{ github.event.inputs.url }}"
-          INPUT_FILE=$(ls input.* | head -n 1)
-          echo "INPUT_FILE_PATH=input_video/$INPUT_FILE" >> $GITHUB_ENV
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: تحديد اسم الملف ومسار المخرجات
-        run: |
-          CUSTOM_NAME="${{ github.event.inputs.filename }}"
-          if [ -n "$CUSTOM_NAME" ]; then
-            BASE_NAME="$CUSTOM_NAME"
-          else
-            BASE_NAME="video_$(date +%s)"
-          fi
-          
-          mkdir -p final_output
-          echo "BASE_NAME=$BASE_NAME" >> $GITHUB_ENV
-          echo "FINAL_MKV_PATH=final_output/${BASE_NAME}.mkv" >> $GITHUB_ENV
-
-      - name: ضغط الفيديو باستخدام FFmpeg
-        run: |
-          INPUT="${{ env.INPUT_FILE_PATH }}"
-          OUTPUT="${{ env.FINAL_MKV_PATH }}"
-          RES="${{ github.event.inputs.resolution }}"
-          CODEC="${{ github.event.inputs.codec }}"
-          CONTENT_TYPE="${{ github.event.inputs.content_type }}"
-
-          # إعدادات الكوديك
-          preset="6"
-          crf="32"
-          vcodec="libsvtav1"
-
-          if [ "$CODEC" = "h265" ]; then
-            preset="medium"
-            crf="28"
-            vcodec="libx265"
-          fi
-
-          # إعدادات تحسين نوع المحتوى
-          TUNE_OPTS=""
-          if [ "$CONTENT_TYPE" = "animation" ] || [ "$CONTENT_TYPE" = "animation_ultra" ]; then
-            if [ "$CODEC" = "av1" ]; then TUNE_OPTS="-svtav1-params tune=0"; fi
-            if [ "$CODEC" = "h265" ]; then TUNE_OPTS="-tune animation"; fi
-          fi
-
-          ffmpeg -i "$INPUT" \
-            -vf "scale=-2:${RES}" \
-            -c:v $vcodec $TUNE_OPTS -preset $preset -crf $crf \
-            -c:a libopus -b:a 96k \
-            "$OUTPUT"
-
-      - name: التشفير واستخراج بيانات التلجرام
-        id: package
+      - name: تحميل الفيديو المصدر واستخراج العنوان
         env:
-          IS_PRIVATE: ${{ github.event.inputs.private }}
-          PASSWORD: ${{ github.event.inputs.password }}
+          VIDEO_URL: ${{ github.event.inputs.url }}
+          RESOLUTION: ${{ github.event.inputs.resolution }}
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
-          FINAL_MKV="${{ env.FINAL_MKV_PATH }}"
-          BASE_NAME="${{ env.BASE_NAME }}"
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
+          echo "$YT_COOKIES" > cookies.txt
+          yt-dlp -f "bv*[height<=${RESOLUTION}]+ba/b[height<=${RESOLUTION}]/best[height<=${RESOLUTION}]/bv*+ba/best" \
+            --extractor-args "youtube:player_client=android,tv,web;formats=missing_pot" \
+            --remote-components ejs:github \
+            --merge-output-format mp4 \
+            -o raw_input.mp4 \
+            --cookies cookies.txt \
+            --print-to-file "%(title)s" video_title_raw.txt \
+            --verbose \
+            "$VIDEO_URL" 2>&1 | tee ytdlp_log.txt || { echo "❌ فشل التحميل"; exit 1; }
+          rm -f cookies.txt
+          if [ ! -f raw_input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
 
-          FILE_SIZE=$(du -h "$FINAL_MKV" | cut -f1)
-          
-          # تصحيح noprint_wrappers وإضافة قيمة افتراضية لحماية السكربت من التوقف
-          DUR_SEC=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$FINAL_MKV" | cut -d. -f1)
-          DUR_SEC=${DUR_SEC:-0}
-          
-          DUR_FORMATTED=$(printf '%02d:%02d:%02d' $(($DUR_SEC/3600)) $(($DUR_SEC%3600/60)) $(($DUR_SEC%60)))
-          
-          RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$FINAL_MKV")
-
-          if [ "$IS_PRIVATE" = "true" ] && [ -n "$PASSWORD" ]; then
-            echo "🔐 جاري تشفير الملف..."
-            ZIP_PATH="final_output/${BASE_NAME}.7z"
-            7z a -p"$PASSWORD" -mhe=on "$ZIP_PATH" "$FINAL_MKV"
-            echo "FILE_TO_UPLOAD=$ZIP_PATH" >> $GITHUB_ENV
+      - name: استخراج وتنظيف اسم الفيديو الأصلي
+        id: title
+        run: |
+          if [ -f video_title_raw.txt ]; then
+            RAW_TITLE=$(head -n 1 video_title_raw.txt)
           else
-            echo "FILE_TO_UPLOAD=$FINAL_MKV" >> $GITHUB_ENV
+            RAW_TITLE="video"
+          fi
+          CLEAN_TITLE=$(echo "$RAW_TITLE" | sed 's/[\/\\:*?"<>|]//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+          if [ -z "$CLEAN_TITLE" ]; then
+            CLEAN_TITLE="video"
+          fi
+          CLEAN_TITLE=$(echo "$CLEAN_TITLE" | cut -c1-100)
+          echo "video_title=$CLEAN_TITLE" >> "$GITHUB_OUTPUT"
+          echo "📝 العنوان المستخرج: $CLEAN_TITLE"
+
+      - name: تقطيع الفيديو (فقط لو أطول من 20 دقيقة)
+        id: segment
+        run: |
+          mkdir -p chunks_raw
+          DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 raw_input.mp4 | cut -d. -f1)
+          echo "⏱️ مدة الفيديو: ${DURATION} ثانية"
+
+          if [ "$DURATION" -gt 1200 ]; then
+            echo "📦 الفيديو طويل، سيتم تقطيعه للمعالجة المتوازية"
+            ffmpeg -i raw_input.mp4 -c copy -f segment -segment_time 600 -reset_timestamps 1 "chunks_raw/chunk_%03d.mp4"
+          else
+            echo "📄 الفيديو قصير، سيُعالج كجزء واحد فقط"
+            cp raw_input.mp4 "chunks_raw/chunk_000.mp4"
           fi
 
-          echo "FILE_SIZE=$FILE_SIZE" >> $GITHUB_ENV
-          echo "DUR_FORMATTED=$DUR_FORMATTED" >> $GITHUB_ENV
-          echo "RES=$RES" >> $GITHUB_ENV
+          CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | jq -R . | jq -s -c .)
+          echo "chunks=$CHUNKS_JSON" >> "$GITHUB_OUTPUT"
+          echo "الأجزاء: $CHUNKS_JSON"
 
-      - name: إنشاء GitHub Release ورفع الملف
-        id: create_release
-        uses: softprops/action-gh-release@v2
+      - name: رفع الأجزاء الخام كـ Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: "release-${{ github.run_id }}"
-          name: "فيديو مضغوط: ${{ env.BASE_NAME }}"
-          files: ${{ env.FILE_TO_UPLOAD }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: raw-chunks
+          path: chunks_raw/
+          retention-days: 1
 
-      - name: إرسال النتيجة إلى التلجرام
-        if: always()
-        env:
-          BASE_NAME: ${{ env.BASE_NAME }}
-          RES: ${{ env.RES }}
-          DUR_FORMATTED: ${{ env.DUR_FORMATTED }}
-          FILE_SIZE: ${{ env.FILE_SIZE }}
-          FILE_TO_UPLOAD: ${{ env.FILE_TO_UPLOAD }}
+  # -------------------------------------------------------------
+  # المرحلة الثانية: ضغط الأجزاء (CRF + سقف بت-ريت) بالتوازي
+  # -------------------------------------------------------------
+  encode-chunks:
+    needs: split-video
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      matrix:
+        chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
+      max-parallel: 10
+    steps:
+      - name: تجهيز بيئة FFmpeg
         run: |
-          python3 -c '
-          import os, urllib.parse, urllib.request, json
+          sudo apt update
+          sudo apt install -y ffmpeg
 
-          chat_id = "${{ github.event.inputs.chat_id }}"
-          bot_token = "${{ secrets.TELEGRAM_BOT_TOKEN }}"
-          base_name = os.environ.get("BASE_NAME", "")
-          res = os.environ.get("RES", "")
-          dur = os.environ.get("DUR_FORMATTED", "")
-          size = os.environ.get("FILE_SIZE", "")
-          file_to_upload = os.environ.get("FILE_TO_UPLOAD", "")
-          repo = "${{ github.repository }}"
-          run_id = "${{ github.run_id }}"
+      - name: تنزيل الجزء المخصص لهذا السيرفر
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-chunks
+          path: chunks_raw
 
-          if not bot_token or not chat_id:
-              print("❌ خطأ: TELEGRAM_BOT_TOKEN غير موجود في Secrets أو chat_id فارغ!")
-              exit(1)
+      - name: ضغط الجزء (${{ matrix.chunk }})
+        env:
+          CODEC: ${{ github.event.inputs.codec }}
+          RESOLUTION: ${{ github.event.inputs.resolution }}
+          CONTENT_TYPE: ${{ github.event.inputs.content_type }}
+          CHUNK_ID: ${{ matrix.chunk }}
+        run: |
+          TUNE_ARG=""
+          PROFILE_ARG=""
+          SVT_PARAMS=""
+          RATE_ARGS=""
+          DENOISE="hqdn3d=0.6:0.6:1.5:1.5"
+          IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
+          OUT_DIR="chunks_encoded"
+          mkdir -p "$OUT_DIR"
 
-          file_name = os.path.basename(file_to_upload)
-          encoded_file_name = urllib.parse.quote(file_name)
-          release_url = f"https://github.com/{repo}/releases/download/release-{run_id}/{encoded_file_name}"
+          if [ "$CODEC" = "av1" ]; then
+            CODEC_LIB="libsvtav1"
+            PRESET="7"
+            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15"
 
-          msg = f"""🎬 <b>تم ضغط الفيديو بنجاح!</b>
+            case "$CONTENT_TYPE" in
+              real)
+                CRF=26; RATE_ARGS="-maxrate 600k -bufsize 1200k"
+                DENOISE="hqdn3d=0.4:0.4:1:1" ;;
+              animation)
+                CRF=33; RATE_ARGS="-maxrate 270k -bufsize 540k"
+                DENOISE="hqdn3d=1.2:1.2:3:3" ;;
+              animation_ultra)
+                CRF=35; RATE_ARGS="-maxrate 250k -bufsize 500k"
+                DENOISE="hqdn3d=1.5:1.5:4:4" ;;
+              *)
+                CRF=29; RATE_ARGS="-maxrate 400k -bufsize 800k" ;;
+            esac
 
-          📌 <b>الاسم:</b> <code>{base_name}</code>
-          📐 <b>الأبعاد:</b> <code>{res}</code>
-          ⏱️ <b>المدة:</b> <code>{dur}</code>
-          📦 <b>الحجم النهائي:</b> <code>{size}</code>
+            echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
 
-          ⬇️ <a href="{release_url}">اضغط هنا لتحميل الملف مباشرة</a>"""
+            ffmpeg -y -i "$IN" \
+              -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+              -pix_fmt yuv420p10le \
+              -c:v $CODEC_LIB -crf $CRF -preset $PRESET $SVT_PARAMS $RATE_ARGS \
+              -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+              -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
-          url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-          payload = json.dumps({
-              "chat_id": chat_id,
-              "text": msg,
-              "parse_mode": "HTML",
-              "disable_web_page_preview": True
-          }).encode("utf-8")
+          elif [ "$CODEC" = "h265" ]; then
+            CODEC_LIB="libx265"
+            PRESET="slow"
+            PROFILE_ARG="-profile:v main10"
 
-          req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
-          
-          try:
-              with urllib.request.urlopen(req) as resp:
-                  print("✅ تم الإرسال بنجاح إلى تلجرام:", resp.read().decode())
-          except Exception as e:
-              print("❌ فشل الإرسال من تلجرام:", e)
-              exit(1)
-          '
+            case "$CONTENT_TYPE" in
+              real) CRF=21; TUNE_ARG="-tune grain"; RATE_ARGS="-maxrate 1100k -bufsize 2200k" ;;
+              animation) CRF=27; TUNE_ARG="-tune animation"; RATE_ARGS="-maxrate 550k -bufsize 1100k" ;;
+              animation_ultra) CRF=29; TUNE_ARG="-tune animation"; RATE_ARGS="-maxrate 480k -bufsize 960k" ;;
+              *) CRF=23; RATE_ARGS="-maxrate 800k -bufsize 1600k" ;;
+            esac
+
+            echo "🎛️ H.265 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
+
+            ffmpeg -y -i "$IN" \
+              -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+              -pix_fmt yuv420p10le \
+              -c:v $CODEC_LIB -crf $CRF -preset $PRESET $TUNE_ARG $PROFILE_ARG $RATE_ARGS \
+              -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+              -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
+
+          else
+            echo "كوديك غير مدعوم"; exit 1
+          fi
+
+      - name: رفع الجزء المضغوط
+        uses: actions/upload-artifact@v4
+        with:
+          name: encoded-${{ matrix.chunk }}
+          path: chunks_encoded/encoded_${{ matrix.chunk }}.mkv
+          retention-days: 1
+
+  # -------------------------------------------------------------
+  # المرحلة الثالثة: دمج الأجزاء (بإعادة ترميز الصوت لمنع الخشخشة)،
+  # التشفير، جمع المعلومات، ورفع الملف النهائي
+  # -------------------------------------------------------------
+  merge-and-send:
+    needs: [split-video, encode-chunks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: استنساخ المستودع
+        uses: actions/checkout@v4
+
+      - name: تجهيز أدوات الدمج
+        run: |
+          echo "دمج الأجزاء ورفع الملف" > stage.txt
+          sudo apt update
+          sudo apt install -y ffmpeg p7zip-full
+          pip install python-telegram-bot
+
+      - name: تنزيل جميع الأجزاء المضغوطة
+        uses: actions/download-artifact@v4
+        with:
+          pattern: encoded-*
+          path: all_encoded
+          merge-multiple: true
+
+      - name: دمج الأجزاء (فيديو نسخ مباشر + صوت معاد ترميزه لمنع الخشخشة)
+        run: |
+          cd all_encoded
+          for f in $(ls encoded_*.mkv | sort); do echo "file '$f'" >> concat_list.txt; done
+          ffmpeg -f concat -safe 0 -i concat_list.txt \
+            -c:v copy \
+            -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -y ../output.mkv
+          cd ..
+          if [ ! -f output.mkv ]; then echo "❌ فشل الدمج"; exit 1; fi
+
+      - name: استخراج معلومات الفيديو (المدة والدقة الفعلية)
+        id: videoinfo
+        run: |
+          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
+          H=$((DURATION_SEC / 3600))
+          M=$(((DURATION_SEC % 3600) / 60))
+          S=$((DURATION_SEC % 60))
+          DURATION_FMT=$(printf "%02d:%02d:%02d" $H $M $S)
+
+          ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.mkv)
+
+          echo "duration_fmt=$DURATION_FMT" >> "$GITHUB_OUTPUT"
+          echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
+          echo "⏱️ المدة: $DURATION_FMT | 📐 الدقة الفعلية: $ACTUAL_RES"
+
+      - name: تشفير الفيديو (فقط لو خاص - بكلمة مرور المستخدم)
+        if: github.event.inputs.private == 'true'
+        env:
+          USER_PASSWORD: ${{ github.event.inputs.password }}
+        run: |
+          echo "تشفير الفيديو" > stage.txt
+          if [ -z "$USER_PASSWORD" ]; then
+            echo "❌ لم يتم توفير كلمة مرور للفيديو الخاص"; exit 1
+          fi
+          7z a -p"$USER_PASSWORD" -mhe=on output.7z output.mkv
+
+      - name: رفع الملف النهائي وإرسال رابط التليجرام
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
+          PRIVATE: ${{ github.event.inputs.private }}
+          USER_PASSWORD: ${{ github.event.inputs.password }}
+          FILENAME: ${{ github.event.inputs.filename }}
+          ORIGINAL_TITLE: ${{ needs.split-video.outputs.video_title }}
+          DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
+          ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "رفع الملف وإرسال الرابط" > stage.txt
+          TAG="video-${{ github.run_id }}"
+          if [ "$PRIVATE" == "true" ]; then
+            ASSET="output.7z"
+          else
+            ASSET="output.mkv"
+          fi
+
+          if [ -n "$FILENAME" ]; then
+            BASE_NAME="$FILENAME"
+          elif [ -n "$ORIGINAL_TITLE" ]; then
+            BASE_NAME="$ORIGINAL_TITLE"
+          else
+            BASE_NAME="video"
+          fi
+
+          EXT="${ASSET##*.}"
+          mv "$ASSET" "${BASE_NAME}.${EXT}"
+          ASSET="${BASE_NAME}.${EXT}"
+
+          SIZE_BYTES=$(stat -c%s "$ASSET")
+          SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $SIZE_BYTES/1048576}")
+
+          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح" 2>&1 | tee upload_log.txt
+          URL=$(gh release view "$TAG" --json assets -q '.assets[0].browser_download_url')
+
+          export DOWNLOAD_URL="$URL"
+          export VIDEO_NAME="$BASE_NAME"
+          export SIZE_MB="$SIZE_MB"
+
+          python3 << 'EOF'
+          import os, asyncio
+          from telegram import Bot
+
+          async def main():
+              bot = Bot(token=os.environ["BOT_TOKEN"])
+              url = os.environ["DOWNLOAD_URL"]
+              private = os.environ["PRIVATE"]
+              password = os.environ.get("USER_PASSWORD", "")
+              name = os.environ.get("VIDEO_NAME", "")
+              size_mb = os.environ.get("SIZE_MB", "")
+              duration = os.environ.get("DURATION_FMT", "")
+              resolution = os.environ.get("ACTUAL_RES", "")
+
+              info_lines = f"🎬 الاسم: {name}\n📦 الحجم: {size_mb} MB\n📐 الدقة: {resolution}\n⏱️ المدة: {duration}"
+
+              if private == "true":
+                  text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
+              else:
+                  text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل المباشر:\n" + url
+
+              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+
+          asyncio.run(main())
+          EOF
+
+      - name: إرسال إشعار الفشل مع التفاصيل لو حدث خطأ
+        if: failure()
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 << 'EOF'
+          import os, asyncio
+          from telegram import Bot
+
+          async def main():
+              bot = Bot(token=os.environ["BOT_TOKEN"])
+              chat_id = os.environ["CHAT_ID"]
+              repo = os.environ.get("GITHUB_REPOSITORY", "")
+              run_id = os.environ.get("GITHUB_RUN_ID", "")
+              run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
+
+              stage = "غير معروفة"
+              if os.path.exists("stage.txt"):
+                  with open("stage.txt", encoding="utf-8") as f:
+                      stage = f.read().strip()
+
+              text = (
+                  "❌ فشلت العملية.\n\n"
+                  f"🔎 المرحلة المتأثرة: {stage}\n\n"
+                  f"📋 صفحة التفاصيل والتشخيص:\n{run_url}"
+              )
+
+              await bot.send_message(chat_id=chat_id, text=text)
+
+          asyncio.run(main())
+          EOF
