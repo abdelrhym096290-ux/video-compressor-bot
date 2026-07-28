@@ -45,7 +45,7 @@ jobs:
   # -------------------------------------------------------------
   split-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 360  # <-- تم التمديد إلى 6 ساعات
     outputs:
       chunks: ${{ steps.segment.outputs.chunks }}
       video_title: ${{ steps.title.outputs.video_title }}
@@ -133,7 +133,7 @@ jobs:
   encode-chunks:
     needs: split-video
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360  # <-- تم التمديد إلى 6 ساعات
     strategy:
       matrix:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
@@ -168,8 +168,8 @@ jobs:
 
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
-            PRESET="7"
-            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15"
+            PRESET="5"
+            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.6"  # <-- تم إضافة qcomp
 
             case "$CONTENT_TYPE" in
               real)
@@ -198,6 +198,7 @@ jobs:
             CODEC_LIB="libx265"
             PRESET="slow"
             PROFILE_ARG="-profile:v main10"
+            X265_PARAMS="-x265-params qcomp=0.6"  # <-- تم إضافة qcomp
 
             case "$CONTENT_TYPE" in
               real) CRF=21; TUNE_ARG="-tune grain"; RATE_ARGS="-maxrate 1100k -bufsize 2200k" ;;
@@ -211,7 +212,7 @@ jobs:
             ffmpeg -y -i "$IN" \
               -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
               -pix_fmt yuv420p10le \
-              -c:v $CODEC_LIB -crf $CRF -preset $PRESET $TUNE_ARG $PROFILE_ARG $RATE_ARGS \
+              -c:v $CODEC_LIB -crf $CRF -preset $PRESET $TUNE_ARG $PROFILE_ARG $RATE_ARGS $X265_PARAMS \
               -c:a libopus -b:a 32k -ac 2 -ar 48000 \
               -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
@@ -233,7 +234,7 @@ jobs:
   merge-and-send:
     needs: [split-video, encode-chunks]
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360  # <-- تم التمديد إلى 6 ساعات
     steps:
       - name: استنساخ المستودع
         uses: actions/checkout@v4
