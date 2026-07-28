@@ -233,7 +233,7 @@ jobs:
   merge-and-send:
     needs: [split-video, encode-chunks]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - name: استنساخ المستودع
         uses: actions/checkout@v4
@@ -301,6 +301,7 @@ jobs:
           ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           echo "رفع الملف وإرسال الرابط" > stage.txt
           TAG="video-${{ github.run_id }}"
           if [ "$PRIVATE" == "true" ]; then
@@ -321,18 +322,42 @@ jobs:
           mv "$ASSET" "${BASE_NAME}.${EXT}"
           ASSET="${BASE_NAME}.${EXT}"
 
+          if [ ! -f "$ASSET" ]; then
+            echo "❌ ملف الإخراج غير موجود: $ASSET"
+            exit 1
+          fi
+
           SIZE_BYTES=$(stat -c%s "$ASSET")
           SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $SIZE_BYTES/1048576}")
+          echo "📦 حجم الملف: ${SIZE_MB}MB"
 
-          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح" 2>&1 | tee upload_log.txt
-          URL=$(gh release view "$TAG" --json assets -q '.assets[0].browser_download_url')
+          echo "🚀 إنشاء الـ Release..."
+          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح"
+          echo "✅ تم إنشاء الـ Release بنجاح"
+
+          URL=""
+          for i in 1 2 3; do
+            URL=$(gh release view "$TAG" --json assets -q '.assets[0].browser_download_url' || true)
+            if [ -n "$URL" ]; then
+              break
+            fi
+            echo "⏳ الرابط غير جاهز بعد، إعادة المحاولة ($i)..."
+            sleep 5
+          done
+
+          if [ -z "$URL" ]; then
+            echo "❌ فشل الحصول على رابط التحميل بعد عدة محاولات"
+            exit 1
+          fi
+
+          echo "🔗 الرابط: $URL"
 
           export DOWNLOAD_URL="$URL"
           export VIDEO_NAME="$BASE_NAME"
           export SIZE_MB="$SIZE_MB"
 
           python3 << 'EOF'
-          import os, asyncio
+          import os, asyncio, sys
           from telegram import Bot
 
           async def main():
@@ -352,7 +377,12 @@ jobs:
               else:
                   text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل المباشر:\n" + url
 
-              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+              try:
+                  await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+                  print("✅ تم إرسال الرسالة بنجاح إلى تيليجرام")
+              except Exception as e:
+                  print(f"❌ فشل إرسال الرسالة: {e}", file=sys.stderr)
+                  raise
 
           asyncio.run(main())
           EOF
