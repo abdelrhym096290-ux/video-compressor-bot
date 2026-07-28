@@ -173,16 +173,16 @@ jobs:
 
             case "$CONTENT_TYPE" in
               real)
-                CRF=26; RATE_ARGS="-maxrate 600k -bufsize 1200k"
+                CRF=26; RATE_ARGS="-maxrate 800k -bufsize 1600k"
                 DENOISE="hqdn3d=0.4:0.4:1:1" ;;
               animation)
-                CRF=33; RATE_ARGS="-maxrate 270k -bufsize 540k"
+                CRF=33; RATE_ARGS="-maxrate 350k -bufsize 700k"
                 DENOISE="hqdn3d=1.2:1.2:3:3" ;;
               animation_ultra)
-                CRF=35; RATE_ARGS="-maxrate 250k -bufsize 500k"
+                CRF=35; RATE_ARGS="-maxrate 330k -bufsize 660k"
                 DENOISE="hqdn3d=1.5:1.5:4:4" ;;
               *)
-                CRF=29; RATE_ARGS="-maxrate 400k -bufsize 800k" ;;
+                CRF=29; RATE_ARGS="-maxrate 500k -bufsize 1000k" ;;
             esac
 
             echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
