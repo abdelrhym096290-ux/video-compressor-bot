@@ -248,14 +248,40 @@ jobs:
 
       - name: دمج الأجزاء (فيديو نسخ مباشر + صوت معاد ترميزه لمنع الخشخشة)
         run: |
+          echo "دمج الأجزاء" > stage.txt
+
+          # التأكد من وجود المجلد والملفات
+          if [ ! -d all_encoded ] || [ -z "$(ls -A all_encoded)" ]; then
+            echo "❌ مجلد all_encoded فارغ أو غير موجود"
+            exit 1
+          fi
+
           cd all_encoded
-          for f in $(ls encoded_*.mkv | sort); do echo "file '$f'" >> concat_list.txt; done
+
+          # إنشاء قائمة الملفات
+          for f in $(ls encoded_*.mkv | sort); do
+            echo "file '$f'" >> concat_list.txt
+          done
+
+          if [ ! -s concat_list.txt ]; then
+            echo "❌ لا توجد ملفات للدمج"
+            exit 1
+          fi
+
+          echo "📋 الملفات التي سيتم دمجها:"
+          cat concat_list.txt
+
           ffmpeg -f concat -safe 0 -i concat_list.txt \
             -c:v copy \
             -c:a libopus -b:a 32k -ac 2 -ar 48000 \
             -y ../output.mkv
+
           cd ..
-          if [ ! -f output.mkv ]; then echo "❌ فشل الدمج"; exit 1; fi
+          if [ ! -f output.mkv ]; then
+            echo "❌ فشل الدمج"
+            exit 1
+          fi
+          echo "✅ تم الدمج بنجاح"
 
       - name: استخراج معلومات الفيديو (المدة والدقة الفعلية)
         id: videoinfo
