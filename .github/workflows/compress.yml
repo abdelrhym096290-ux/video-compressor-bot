@@ -140,13 +140,13 @@ jobs:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
       max-parallel: 10
     steps:
-      # ⚠️ تم تغيير مفتاح الكاش (v6) لإجبار إعادة البناء بعد إصلاح النسخة المتضررة
+      # ⚠️ تم تغيير مفتاح الكاش (v7) لإجبار إعادة البناء
       - name: استعادة بناء SVT-AV1 و FFmpeg من الكاش (أو بناؤه)
         uses: actions/cache@v4
         id: cache-build
         with:
           path: /usr/local
-          key: svtav1-ffmpeg-4.2.0-stable-${{ runner.os }}-v6
+          key: svtav1-ffmpeg-4.2.0-stable-${{ runner.os }}-v7
 
       - name: بناء SVT-AV1 4.2.0 و FFmpeg (إصدار مستقر) من المصدر
         if: steps.cache-build.outputs.cache-hit != 'true'
@@ -196,7 +196,6 @@ jobs:
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
           set -o pipefail
-          DENOISE="hqdn3d=0.6:0.6:1.5:1.5"
           IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
           OUT_DIR="chunks_encoded"
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
@@ -205,20 +204,21 @@ jobs:
           PRESET="6"
           SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.6"
           RATE_ARGS=""
+          DENOISE="hqdn3d=luma_spatial=0.6:chroma_spatial=0.6:luma_tmp=1.5:chroma_tmp=1.5"
 
           case "$CONTENT_TYPE" in
             real)
               CRF=26; RATE_ARGS="-maxrate 600k -bufsize 1200k"
-              DENOISE="hqdn3d=0.4:0.4:1.0:1.0" ;;
+              DENOISE="hqdn3d=luma_spatial=0.4:chroma_spatial=0.4:luma_tmp=1.0:chroma_tmp=1.0" ;;
             animation)
               CRF=33; RATE_ARGS="-maxrate 270k -bufsize 540k"
-              DENOISE="hqdn3d=1.2:1.2:3.0:3.0" ;;
+              DENOISE="hqdn3d=luma_spatial=1.2:chroma_spatial=1.2:luma_tmp=3.0:chroma_tmp=3.0" ;;
             animation_ultra)
               CRF=35; RATE_ARGS="-maxrate 250k -bufsize 500k"
-              DENOISE="hqdn3d=1.5:1.5:4.0:4.0" ;;
+              DENOISE="hqdn3d=luma_spatial=1.5:chroma_spatial=1.5:luma_tmp=4.0:chroma_tmp=4.0" ;;
             *)
               CRF=29; RATE_ARGS="-maxrate 400k -bufsize 800k"
-              DENOISE="hqdn3d=0.6:0.6:1.5:1.5" ;;
+              DENOISE="hqdn3d=luma_spatial=0.6:chroma_spatial=0.6:luma_tmp=1.5:chroma_tmp=1.5" ;;
           esac
 
           echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
