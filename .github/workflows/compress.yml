@@ -145,13 +145,16 @@ jobs:
         id: cache-build
         with:
           path: /usr/local
-          key: svtav1-ffmpeg-4.2.0-${{ runner.os }}-v2
+          key: svtav1-ffmpeg-4.2.0-${{ runner.os }}-v3
 
       - name: بناء SVT-AV1 4.2.0 و FFmpeg من المصدر (إذا لم يكن مخزناً)
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           sudo apt update
           sudo apt install -y cmake ninja-build yasm libopus-dev libvpx-dev
+
+          # تنظيف البناءات القديمة إن وجدت
+          rm -rf SVT-AV1 FFmpeg
 
           git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
           cd SVT-AV1/Build
@@ -160,7 +163,7 @@ jobs:
           sudo make install
           sudo ldconfig
 
-          git clone --depth 1 --branch n7.1.1 https://github.com/FFmpeg/FFmpeg.git
+          git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git
           cd FFmpeg
           ./configure --enable-libsvtav1 --enable-libopus --enable-libvpx
           make -j$(nproc)
