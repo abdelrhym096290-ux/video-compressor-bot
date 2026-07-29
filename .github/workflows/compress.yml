@@ -169,29 +169,20 @@ jobs:
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
             PRESET="7"
-            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.8"  # <-- تم تغيير qcomp إلى 0.8
+            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.6"  # <-- تم إضافة qcomp
 
             case "$CONTENT_TYPE" in
               real)
-                CRF=26
-                RATE_ARGS="-maxrate 900k -bufsize 1800k"
-                DENOISE="hqdn3d=0.3:0.3:0.8:0.8"
-                ;;
+                CRF=26; RATE_ARGS="-maxrate 600k -bufsize 1200k"
+                DENOISE="hqdn3d=0.4:0.4:1:1" ;;
               animation)
-                CRF=33
-                RATE_ARGS="-maxrate 500k -bufsize 1000k"
-                DENOISE=""
-                ;;
+                CRF=33; RATE_ARGS="-maxrate 270k -bufsize 540k"
+                DENOISE="hqdn3d=1.2:1.2:3:3" ;;
               animation_ultra)
-                CRF=35
-                RATE_ARGS="-maxrate 450k -bufsize 900k"
-                DENOISE=""
-                ;;
+                CRF=35; RATE_ARGS="-maxrate 250k -bufsize 500k"
+                DENOISE="hqdn3d=1.5:1.5:4:4" ;;
               *)
-                CRF=29
-                RATE_ARGS="-maxrate 650k -bufsize 1300k"
-                DENOISE=""
-                ;;
+                CRF=29; RATE_ARGS="-maxrate 400k -bufsize 800k" ;;
             esac
 
             echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
