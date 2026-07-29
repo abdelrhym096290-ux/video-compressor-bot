@@ -145,13 +145,13 @@ jobs:
         id: cache-build
         with:
           path: /usr/local
-          key: svtav1-ffmpeg-4.2.0-${{ runner.os }}-v3
+          key: svtav1-ffmpeg-4.2.0-${{ runner.os }}-v4
 
       - name: بناء SVT-AV1 4.2.0 و FFmpeg من المصدر (إذا لم يكن مخزناً)
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           sudo apt update
-          sudo apt install -y cmake ninja-build yasm libopus-dev libvpx-dev
+          sudo apt install -y cmake ninja-build nasm libopus-dev libvpx-dev
 
           # تنظيف البناءات القديمة إن وجدت
           rm -rf SVT-AV1 FFmpeg
