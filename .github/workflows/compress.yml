@@ -1,23 +1,146 @@
-name: AV1 4.2.0 Test
+name: ضغط الفيديو (AV1 4.2.0)
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'رابط الفيديو'
+        required: true
+      resolution:
+        description: 'الدقة (مثلاً 720)'
+        required: true
+      codec:
+        description: 'الكوديك (av1)'
+        required: true
+        default: 'av1'
+      chat_id:
+        description: 'معرف الدردشة'
+        required: true
+      private:
+        description: 'خصوصي (true/false)'
+        required: true
+      password:
+        description: 'كلمة المرور (فقط لو خاص)'
+        required: false
+        default: ''
+      content_type:
+        description: 'نوع المحتوى (real, animation, animation_ultra, auto)'
+        required: false
+        default: 'auto'
+      filename:
+        description: 'اسم الملف المطلوب'
+        required: false
+        default: ''
+
+concurrency:
+  group: video-compression
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: write
 
 jobs:
-  build-and-encode:
+  split-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 360
+    outputs:
+      chunks: ${{ steps.segment.outputs.chunks }}
+      video_title: ${{ steps.title.outputs.video_title }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: تجهيز أدوات التحميل
+        run: |
+          echo "تجهيز البيئة" > stage.txt
+          sudo apt update
+          sudo apt install -y ffmpeg
+          pip install --upgrade --pre yt-dlp
+
+      - name: تثبيت Deno
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      - name: تحميل الفيديو المصدر واستخراج العنوان
+        env:
+          VIDEO_URL: ${{ github.event.inputs.url }}
+          RESOLUTION: ${{ github.event.inputs.resolution }}
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+        run: |
+          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
+          echo "$YT_COOKIES" > cookies.txt
+          yt-dlp -f "bv*[height<=${RESOLUTION}]+ba/b[height<=${RESOLUTION}]/best[height<=${RESOLUTION}]/bv*+ba/best" \
+            --extractor-args "youtube:player_client=android,tv,web;formats=missing_pot" \
+            --remote-components ejs:github \
+            --merge-output-format mp4 \
+            -o raw_input.mp4 \
+            --cookies cookies.txt \
+            --print-to-file "%(title)s" video_title_raw.txt \
+            --verbose \
+            "$VIDEO_URL" 2>&1 | tee ytdlp_log.txt || { echo "❌ فشل التحميل"; exit 1; }
+          rm -f cookies.txt
+          if [ ! -f raw_input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
+
+      - name: استخراج وتنظيف اسم الفيديو الأصلي
+        id: title
+        run: |
+          if [ -f video_title_raw.txt ]; then
+            RAW_TITLE=$(head -n 1 video_title_raw.txt)
+          else
+            RAW_TITLE="video"
+          fi
+          CLEAN_TITLE=$(echo "$RAW_TITLE" | sed 's/[\/\\:*?"<>|]//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+          if [ -z "$CLEAN_TITLE" ]; then
+            CLEAN_TITLE="video"
+          fi
+          CLEAN_TITLE=$(echo "$CLEAN_TITLE" | cut -c1-100)
+          echo "video_title=$CLEAN_TITLE" >> "$GITHUB_OUTPUT"
+          echo "📝 العنوان المستخرج: $CLEAN_TITLE"
+
+      - name: تقطيع الفيديو
+        id: segment
+        run: |
+          mkdir -p chunks_raw
+          DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 raw_input.mp4 | cut -d. -f1)
+          echo "⏱️ مدة الفيديو: ${DURATION} ثانية"
+
+          if [ "$DURATION" -gt 1200 ]; then
+            echo "📦 الفيديو طويل، سيتم تقطيعه للمعالجة المتوازية"
+            ffmpeg -i raw_input.mp4 -c copy -f segment -segment_time 600 -reset_timestamps 1 "chunks_raw/chunk_%03d.mp4"
+          else
+            echo "📄 الفيديو قصير، سيُعالج كجزء واحد فقط"
+            cp raw_input.mp4 "chunks_raw/chunk_000.mp4"
+          fi
+
+          CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | sed 's/.*/"&"/' | paste -sd, | sed 's/.*/[&]/')
+          echo "chunks=$CHUNKS_JSON" >> "$GITHUB_OUTPUT"
+          echo "الأجزاء: $CHUNKS_JSON"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: raw-chunks
+          path: chunks_raw/
+          retention-days: 1
+
+  encode-chunks:
+    needs: split-video
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      matrix:
+        chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
+      max-parallel: 10
+    steps:
       - name: Cache SVT-AV1 & FFmpeg build
-        id: cache
         uses: actions/cache@v4
+        id: cache-build
         with:
           path: /usr/local
-          key: av1-ffmpeg-420-${{ runner.os }}-v3
+          key: av1-ffmpeg-420-${{ runner.os }}-v-final
 
       - name: Build SVT-AV1 4.2.0 & FFmpeg
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           sudo apt update && sudo apt install -y cmake nasm libopus-dev
           git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
@@ -25,12 +148,237 @@ jobs:
           git clone --depth 1 --branch release/8.0 https://github.com/FFmpeg/FFmpeg.git
           cd FFmpeg && ./configure --enable-libsvtav1 --enable-libopus && make -j$(nproc) && sudo make install && sudo ldconfig && cd ..
 
-      - name: Create test video
+      - name: تنزيل الجزء المخصص
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-chunks
+          path: chunks_raw
+
+      - name: ضغط الجزء (${{ matrix.chunk }})
+        env:
+          RESOLUTION: ${{ github.event.inputs.resolution }}
+          CONTENT_TYPE: ${{ github.event.inputs.content_type }}
+          CHUNK_ID: ${{ matrix.chunk }}
         run: |
-          ffmpeg -f lavfi -i testsrc2=duration=5:size=1280x720:rate=30 -f lavfi -i sine=frequency=1000:duration=5 -c:v libsvtav1 -preset 6 -crf 35 -c:a libopus -b:a 24k test_av1_420.mkv
-          ls -lh test_av1_420.mkv
+          IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
+          OUT_DIR="chunks_encoded"
+          OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
+          mkdir -p "$OUT_DIR"
+
+          PRESET="6"
+          SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.6"
+          RATE_ARGS=""
+          DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.3:1b=0.3"
+
+          case "$CONTENT_TYPE" in
+            real)
+              CRF=26; RATE_ARGS="-maxrate 600k -bufsize 1200k"
+              DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.15:1b=0.15" ;;
+            animation)
+              CRF=33; RATE_ARGS="-maxrate 270k -bufsize 540k"
+              DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.25:1b=0.25" ;;
+            animation_ultra)
+              CRF=35; RATE_ARGS="-maxrate 250k -bufsize 500k"
+              DENOISE="atadenoise=0a=0.15:0b=0.15:1a=0.3:1b=0.3" ;;
+            *)
+              CRF=29; RATE_ARGS="-maxrate 400k -bufsize 800k"
+              DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.3:1b=0.3" ;;
+          esac
+
+          echo "🎛️ AV1 4.2.0 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
+
+          ffmpeg -y -i "$IN" \
+            -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+            -pix_fmt yuv420p10le \
+            -c:v libsvtav1 -crf $CRF -preset $PRESET $SVT_PARAMS $RATE_ARGS \
+            -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
+
+          if [ ! -s "$OUT_FILE" ]; then
+            echo "❌ فشل ترميز الجزء ${CHUNK_ID}"
+            cat "ffmpeg_${CHUNK_ID}.log"
+            exit 1
+          fi
+          echo "✅ تم إنشاء $OUT_FILE بنجاح ($(stat -c%s "$OUT_FILE") بايت)"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: test-video-av1-420
-          path: test_av1_420.mkv
+          name: encoded-${{ matrix.chunk }}
+          path: chunks_encoded/encoded_${{ matrix.chunk }}.mkv
+          retention-days: 1
+
+  merge-and-send:
+    needs: [split-video, encode-chunks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: تجهيز أدوات الدمج
+        run: |
+          echo "دمج الأجزاء ورفع الملف" > stage.txt
+          sudo apt update
+          sudo apt install -y ffmpeg p7zip-full
+          pip install python-telegram-bot
+
+      - name: تنزيل جميع الأجزاء المضغوطة
+        uses: actions/download-artifact@v4
+        with:
+          pattern: encoded-*
+          path: all_encoded
+          merge-multiple: true
+
+      - name: تشخيص ودمج الأجزاء
+        run: |
+          set -euo pipefail
+          echo "دمج الأجزاء" > stage.txt
+
+          if [ ! -d all_encoded ] || [ -z "$(ls -A all_encoded 2>/dev/null)" ]; then
+            echo "❌ مجلد all_encoded فارغ أو غير موجود"
+            exit 1
+          fi
+
+          cd all_encoded
+          rm -f concat_list.txt
+          for f in $(ls encoded_*.mkv 2>/dev/null | sort); do
+            echo "file '$f'" >> concat_list.txt
+          done
+
+          if [ ! -s concat_list.txt ]; then
+            echo "❌ لا توجد ملفات للدمج"
+            exit 1
+          fi
+
+          ffmpeg -f concat -safe 0 -i concat_list.txt \
+            -c:v copy \
+            -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -y ../output.mkv
+
+          cd ..
+          if [ ! -f output.mkv ]; then
+            echo "❌ فشل الدمج"
+            exit 1
+          fi
+          echo "✅ تم الدمج بنجاح"
+
+      - name: استخراج معلومات الفيديو
+        id: videoinfo
+        run: |
+          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
+          H=$((DURATION_SEC / 3600))
+          M=$(((DURATION_SEC % 3600) / 60))
+          S=$((DURATION_SEC % 60))
+          DURATION_FMT=$(printf "%02d:%02d:%02d" $H $M $S)
+
+          ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.mkv)
+
+          echo "duration_fmt=$DURATION_FMT" >> "$GITHUB_OUTPUT"
+          echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
+          echo "⏱️ المدة: $DURATION_FMT | 📐 الدقة الفعلية: $ACTUAL_RES"
+
+      - name: تشفير الفيديو (فقط لو خاص)
+        if: github.event.inputs.private == 'true'
+        env:
+          USER_PASSWORD: ${{ github.event.inputs.password }}
+        run: |
+          if [ -z "$USER_PASSWORD" ]; then
+            echo "❌ لم يتم توفير كلمة مرور"; exit 1
+          fi
+          7z a -p"$USER_PASSWORD" -mhe=on output.7z output.mkv
+
+      - name: رفع الملف النهائي وإرسال رابط التليجرام
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
+          PRIVATE: ${{ github.event.inputs.private }}
+          USER_PASSWORD: ${{ github.event.inputs.password }}
+          FILENAME: ${{ github.event.inputs.filename }}
+          ORIGINAL_TITLE: ${{ needs.split-video.outputs.video_title }}
+          DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
+          ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="video-${{ github.run_id }}"
+          if [ "$PRIVATE" == "true" ]; then
+            ASSET="output.7z"
+          else
+            ASSET="output.mkv"
+          fi
+
+          if [ -n "$FILENAME" ]; then
+            BASE_NAME="$FILENAME"
+          elif [ -n "$ORIGINAL_TITLE" ]; then
+            BASE_NAME="$ORIGINAL_TITLE"
+          else
+            BASE_NAME="video"
+          fi
+
+          EXT="${ASSET##*.}"
+          mv "$ASSET" "${BASE_NAME}.${EXT}"
+          ASSET="${BASE_NAME}.${EXT}"
+
+          if [ ! -f "$ASSET" ]; then
+            echo "❌ ملف الإخراج غير موجود: $ASSET"
+            exit 1
+          fi
+
+          SIZE_BYTES=$(stat -c%s "$ASSET")
+          SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $SIZE_BYTES/1048576}")
+          echo "📦 حجم الملف: ${SIZE_MB}MB"
+
+          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح"
+          DIRECT_URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
+          export DOWNLOAD_URL="$DIRECT_URL"
+
+          python3 << 'EOF'
+import os, asyncio
+from telegram import Bot
+
+async def main():
+    bot = Bot(token=os.environ["BOT_TOKEN"])
+    url = os.environ["DOWNLOAD_URL"]
+    private = os.environ["PRIVATE"]
+    password = os.environ.get("USER_PASSWORD", "")
+    name = os.environ.get("VIDEO_NAME", "")
+    size_mb = os.environ.get("SIZE_MB", "")
+    duration = os.environ.get("DURATION_FMT", "")
+    resolution = os.environ.get("ACTUAL_RES", "")
+
+    info_lines = f"🎬 الاسم: {name}\n📦 الحجم: {size_mb} MB\n📐 الدقة: {resolution}\n⏱️ المدة: {duration}"
+
+    if private == "true":
+        text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
+    else:
+        text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل المباشر:\n" + url
+
+    try:
+        await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+        print("✅ تم إرسال الرسالة بنجاح إلى تيليجرام")
+    except Exception as e:
+        print(f"❌ فشل إرسال الرسالة: {e}")
+        raise
+
+asyncio.run(main())
+EOF
+
+      - name: إرسال إشعار الفشل
+        if: failure()
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 << 'EOF'
+import os, asyncio
+from telegram import Bot
+
+async def main():
+    bot = Bot(token=os.environ["BOT_TOKEN"])
+    chat_id = os.environ["CHAT_ID"]
+    run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+    await bot.send_message(chat_id=chat_id, text=f"❌ فشلت العملية.\n📋 صفحة التفاصيل والتشخيص:\n{run_url}")
+
+asyncio.run(main())
+EOF
