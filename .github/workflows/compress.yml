@@ -45,7 +45,7 @@ jobs:
   # -------------------------------------------------------------
   split-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # <-- تم التمديد إلى 6 ساعات
+    timeout-minutes: 360
     outputs:
       chunks: ${{ steps.segment.outputs.chunks }}
       video_title: ${{ steps.title.outputs.video_title }}
@@ -133,7 +133,7 @@ jobs:
   encode-chunks:
     needs: split-video
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # <-- تم التمديد إلى 6 ساعات
+    timeout-minutes: 360
     strategy:
       matrix:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
@@ -169,20 +169,29 @@ jobs:
           if [ "$CODEC" = "av1" ]; then
             CODEC_LIB="libsvtav1"
             PRESET="7"
-            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.6"  # <-- تم إضافة qcomp
+            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.8"
 
             case "$CONTENT_TYPE" in
               real)
-                CRF=26; RATE_ARGS="-maxrate 600k -bufsize 1200k"
-                DENOISE="hqdn3d=0.4:0.4:1:1" ;;
+                CRF=26
+                RATE_ARGS="-maxrate 900k -bufsize 1800k"
+                DENOISE="hqdn3d=0.3:0.3:0.8:0.8"
+                ;;
               animation)
-                CRF=33; RATE_ARGS="-maxrate 270k -bufsize 540k"
-                DENOISE="hqdn3d=1.2:1.2:3:3" ;;
+                CRF=33
+                RATE_ARGS="-maxrate 500k -bufsize 1000k"
+                DENOISE="hqdn3d=0:0:0:0"
+                ;;
               animation_ultra)
-                CRF=35; RATE_ARGS="-maxrate 250k -bufsize 500k"
-                DENOISE="hqdn3d=1.5:1.5:4:4" ;;
+                CRF=35
+                RATE_ARGS="-maxrate 450k -bufsize 900k"
+                DENOISE="hqdn3d=0:0:0:0"
+                ;;
               *)
-                CRF=29; RATE_ARGS="-maxrate 400k -bufsize 800k" ;;
+                CRF=29
+                RATE_ARGS="-maxrate 650k -bufsize 1300k"
+                DENOISE="hqdn3d=0:0:0:0"
+                ;;
             esac
 
             echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
@@ -198,7 +207,7 @@ jobs:
             CODEC_LIB="libx265"
             PRESET="slow"
             PROFILE_ARG="-profile:v main10"
-            X265_PARAMS="-x265-params qcomp=0.6"  # <-- تم إضافة qcomp
+            X265_PARAMS="-x265-params qcomp=0.6"
 
             case "$CONTENT_TYPE" in
               real) CRF=21; TUNE_ARG="-tune grain"; RATE_ARGS="-maxrate 1100k -bufsize 2200k" ;;
@@ -228,13 +237,12 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثالثة: دمج الأجزاء (بإعادة ترميز الصوت لمنع الخشخشة)،
-  # التشفير، جمع المعلومات، ورفع الملف النهائي
+  # المرحلة الثالثة: دمج الأجزاء
   # -------------------------------------------------------------
   merge-and-send:
     needs: [split-video, encode-chunks]
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # <-- تم التمديد إلى 6 ساعات
+    timeout-minutes: 360
     steps:
       - name: استنساخ المستودع
         uses: actions/checkout@v4
@@ -253,7 +261,7 @@ jobs:
           path: all_encoded
           merge-multiple: true
 
-      - name: دمج الأجزاء (فيديو نسخ مباشر + صوت معاد ترميزه لمنع الخشخشة)
+      - name: دمج الأجزاء (فيديو نسخ مباشر + صوت معاد ترميزه)
         run: |
           cd all_encoded
           for f in $(ls encoded_*.mkv | sort); do echo "file '$f'" >> concat_list.txt; done
@@ -264,7 +272,7 @@ jobs:
           cd ..
           if [ ! -f output.mkv ]; then echo "❌ فشل الدمج"; exit 1; fi
 
-      - name: استخراج معلومات الفيديو (المدة والدقة الفعلية)
+      - name: استخراج معلومات الفيديو
         id: videoinfo
         run: |
           DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
@@ -279,7 +287,7 @@ jobs:
           echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
           echo "⏱️ المدة: $DURATION_FMT | 📐 الدقة الفعلية: $ACTUAL_RES"
 
-      - name: تشفير الفيديو (فقط لو خاص - بكلمة مرور المستخدم)
+      - name: تشفير الفيديو (فقط لو خاص)
         if: github.event.inputs.private == 'true'
         env:
           USER_PASSWORD: ${{ github.event.inputs.password }}
@@ -374,7 +382,7 @@ jobs:
           asyncio.run(main())
           EOF
 
-      - name: إرسال إشعار الفشل مع التفاصيل لو حدث خطأ
+      - name: إرسال إشعار الفشل مع التفاصيل
         if: failure()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
