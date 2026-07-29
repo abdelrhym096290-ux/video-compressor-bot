@@ -14,16 +14,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /usr/local
-          key: av1-ffmpeg-420-${{ runner.os }}-v2
+          key: av1-ffmpeg-420-${{ runner.os }}-v3
 
       - name: Build SVT-AV1 4.2.0 & FFmpeg
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          sudo apt update && sudo apt install -y cmake nasm
+          sudo apt update && sudo apt install -y cmake nasm libopus-dev
           git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
           cd SVT-AV1/Build && cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON && make -j$(nproc) && sudo make install && sudo ldconfig && cd ../..
           git clone --depth 1 --branch release/8.0 https://github.com/FFmpeg/FFmpeg.git
-          cd FFmpeg && ./configure --enable-libsvtav1 && make -j$(nproc) && sudo make install && sudo ldconfig && cd ..
+          cd FFmpeg && ./configure --enable-libsvtav1 --enable-libopus && make -j$(nproc) && sudo make install && sudo ldconfig && cd ..
 
       - name: Create test video
         run: |
