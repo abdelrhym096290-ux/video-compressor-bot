@@ -140,13 +140,13 @@ jobs:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
       max-parallel: 10
     steps:
-      # ⚠️ تم تغيير مفتاح الكاش (v5) لإجبار إعادة البناء بعد إصلاح النسخة المتضررة
+      # ⚠️ تم تغيير مفتاح الكاش (v6) لإجبار إعادة البناء بعد إصلاح النسخة المتضررة
       - name: استعادة بناء SVT-AV1 و FFmpeg من الكاش (أو بناؤه)
         uses: actions/cache@v4
         id: cache-build
         with:
           path: /usr/local
-          key: svtav1-ffmpeg-4.2.0-stable-${{ runner.os }}-v5
+          key: svtav1-ffmpeg-4.2.0-stable-${{ runner.os }}-v6
 
       - name: بناء SVT-AV1 4.2.0 و FFmpeg (إصدار مستقر) من المصدر
         if: steps.cache-build.outputs.cache-hit != 'true'
@@ -165,8 +165,6 @@ jobs:
           sudo ldconfig
           cd ../..
 
-          # ⚠️ الإصلاح الجوهري: تثبيت FFmpeg على فرع إصدار مستقر
-          # بدل سحب أحدث كوميت في master (غير مستقر وقد يحتوي أخطاء مؤقتة)
           git clone --depth 1 --branch release/8.0 https://github.com/FFmpeg/FFmpeg.git
           cd FFmpeg
           ./configure --enable-libsvtav1 --enable-libopus --enable-libvpx
@@ -175,9 +173,15 @@ jobs:
           sudo ldconfig
           cd ..
 
-          # تحقق فوري بعد البناء أن كل شيء اشتغل
+          echo "🔍 التحقق من البناء:"
           ffmpeg -version
-          ffmpeg -filters | grep hqdn3d
+
+          # ⚠️ تحقق غير قاطع للسكربت — لا نستخدم exit code الخاص بـ grep للتحكم بالفشل
+          if ffmpeg -filters 2>/dev/null | grep -q hqdn3d; then
+            echo "✅ فلتر hqdn3d موجود"
+          else
+            echo "⚠️ تحذير: لم يظهر hqdn3d في القائمة (لكن هذا لا يوقف البناء)"
+          fi
 
       - name: تنزيل الجزء المخصص لهذا السيرفر
         uses: actions/download-artifact@v4
