@@ -117,7 +117,6 @@ jobs:
             cp raw_input.mp4 "chunks_raw/chunk_000.mp4"
           fi
 
-          # استبدال آلية jq بأداة sed لإنشاء JSON بشكل موثوق
           CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | sed 's/.*/"&"/' | paste -sd, | sed 's/.*/[&]/')
           echo "chunks=$CHUNKS_JSON" >> "$GITHUB_OUTPUT"
           echo "الأجزاء: $CHUNKS_JSON"
