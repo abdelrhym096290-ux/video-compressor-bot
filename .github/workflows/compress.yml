@@ -58,7 +58,7 @@ jobs:
         run: |
           echo "تجهيز البيئة" > stage.txt
           sudo apt update
-          sudo apt install -y jq ffmpeg
+          sudo apt install -y ffmpeg
           pip install --upgrade --pre yt-dlp
 
       - name: تثبيت Deno
@@ -117,7 +117,8 @@ jobs:
             cp raw_input.mp4 "chunks_raw/chunk_000.mp4"
           fi
 
-          CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | jq -R . | jq -s -c .)
+          # استبدال آلية jq بأداة sed لإنشاء JSON بشكل موثوق
+          CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | sed 's/.*/"&"/' | paste -sd, | sed 's/.*/[&]/')
           echo "chunks=$CHUNKS_JSON" >> "$GITHUB_OUTPUT"
           echo "الأجزاء: $CHUNKS_JSON"
 
@@ -145,7 +146,7 @@ jobs:
         id: cache-build
         with:
           path: /usr/local
-          key: svtav1-ffmpeg-4.2.0-stable-${{ runner.os }}-v10
+          key: svtav1-ffmpeg-4.2.0-stable-${{ runner.os }}-v11
 
       - name: بناء SVT-AV1 4.2.0 و FFmpeg (إصدار مستقر) من المصدر
         if: steps.cache-build.outputs.cache-hit != 'true'
@@ -201,21 +202,21 @@ jobs:
           PRESET="6"
           SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.6"
           RATE_ARGS=""
-          DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.2:1b=0.2"
+          DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.3:1b=0.3"
 
           case "$CONTENT_TYPE" in
             real)
               CRF=26; RATE_ARGS="-maxrate 600k -bufsize 1200k"
-              DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.1:1b=0.1" ;;
+              DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.15:1b=0.15" ;;
             animation)
               CRF=33; RATE_ARGS="-maxrate 270k -bufsize 540k"
-              DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.2:1b=0.2" ;;
+              DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.25:1b=0.25" ;;
             animation_ultra)
               CRF=35; RATE_ARGS="-maxrate 250k -bufsize 500k"
               DENOISE="atadenoise=0a=0.15:0b=0.15:1a=0.3:1b=0.3" ;;
             *)
               CRF=29; RATE_ARGS="-maxrate 400k -bufsize 800k"
-              DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.2:1b=0.2" ;;
+              DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.3:1b=0.3" ;;
           esac
 
           echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
