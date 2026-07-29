@@ -1,4 +1,4 @@
-name: ضغط الفيديو (متوازي للفيديوهات الطويلة)
+name: ضغط الفيديو (AV1 4.2.0 - مبني من المصدر)
 
 on:
   workflow_dispatch:
@@ -10,8 +10,9 @@ on:
         description: 'الدقة (مثلاً 720)'
         required: true
       codec:
-        description: 'الكوديك (av1, h265)'
+        description: 'الكوديك (av1)'
         required: true
+        default: 'av1'
       chat_id:
         description: 'معرف الدردشة'
         required: true
@@ -41,7 +42,7 @@ permissions:
 
 jobs:
   # -------------------------------------------------------------
-  # المرحلة الأولى: تحميل الفيديو، استخراج عنوانه، وتقطيعه إن لزم
+  # المرحلة الأولى: تحميل الفيديو وبناء البيئة
   # -------------------------------------------------------------
   split-video:
     runs-on: ubuntu-latest
@@ -53,11 +54,11 @@ jobs:
       - name: استنساخ المستودع
         uses: actions/checkout@v4
 
-      - name: تجهيز أدوات التحميل والتقطيع
+      - name: تجهيز أدوات التحميل
         run: |
-          echo "تحميل وتقطيع الفيديو" > stage.txt
+          echo "تجهيز البيئة" > stage.txt
           sudo apt update
-          sudo apt install -y ffmpeg jq
+          sudo apt install -y jq
           pip install --upgrade --pre yt-dlp
 
       - name: تثبيت Deno
@@ -128,7 +129,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء (CRF + سقف بت-ريت) بالتوازي
+  # المرحلة الثانية: ضغط الأجزاء باستخدام SVT-AV1 4.2.0 (مبني من المصدر)
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
@@ -139,10 +140,32 @@ jobs:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
       max-parallel: 10
     steps:
-      - name: تجهيز بيئة FFmpeg
+      - name: استعادة بناء SVT-AV1 و FFmpeg من الكاش (أو بناؤه)
+        uses: actions/cache@v4
+        id: cache-build
+        with:
+          path: /usr/local
+          key: svtav1-ffmpeg-4.2.0-${{ runner.os }}-v2
+
+      - name: بناء SVT-AV1 4.2.0 و FFmpeg من المصدر (إذا لم يكن مخزناً)
+        if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg
+          sudo apt install -y cmake ninja-build yasm libopus-dev libvpx-dev
+
+          git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
+          cd SVT-AV1/Build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+
+          git clone --depth 1 --branch n7.1.1 https://github.com/FFmpeg/FFmpeg.git
+          cd FFmpeg
+          ./configure --enable-libsvtav1 --enable-libopus --enable-libvpx
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
 
       - name: تنزيل الجزء المخصص لهذا السيرفر
         uses: actions/download-artifact@v4
@@ -152,82 +175,41 @@ jobs:
 
       - name: ضغط الجزء (${{ matrix.chunk }})
         env:
-          CODEC: ${{ github.event.inputs.codec }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
-          TUNE_ARG=""
-          PROFILE_ARG=""
-          SVT_PARAMS=""
-          RATE_ARGS=""
           DENOISE="hqdn3d=0.6:0.6:1.5:1.5"
           IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
           OUT_DIR="chunks_encoded"
           mkdir -p "$OUT_DIR"
 
-          if [ "$CODEC" = "av1" ]; then
-            CODEC_LIB="libsvtav1"
-            PRESET="5"
-            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.8:aq-mode=2"
+          PRESET="6"
+          SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.6"
+          RATE_ARGS=""
 
-            case "$CONTENT_TYPE" in
-              real)
-                CRF=26
-                RATE_ARGS="-maxrate 900k -bufsize 1800k"
-                DENOISE="hqdn3d=0.3:0.3:0.8:0.8"
-                ;;
-              animation)
-                CRF=33
-                RATE_ARGS="-maxrate 500k -bufsize 1000k"
-                DENOISE="hqdn3d=0:0:0:0"
-                ;;
-              animation_ultra)
-                CRF=35
-                RATE_ARGS="-maxrate 450k -bufsize 900k"
-                DENOISE="hqdn3d=0:0:0:0"
-                ;;
-              *)
-                CRF=29
-                RATE_ARGS="-maxrate 650k -bufsize 1300k"
-                DENOISE="hqdn3d=0:0:0:0"
-                ;;
-            esac
+          case "$CONTENT_TYPE" in
+            real)
+              CRF=26; RATE_ARGS="-maxrate 600k -bufsize 1200k"
+              DENOISE="hqdn3d=0.4:0.4:1:1" ;;
+            animation)
+              CRF=33; RATE_ARGS="-maxrate 270k -bufsize 540k"
+              DENOISE="hqdn3d=1.2:1.2:3:3" ;;
+            animation_ultra)
+              CRF=35; RATE_ARGS="-maxrate 250k -bufsize 500k"
+              DENOISE="hqdn3d=1.5:1.5:4:4" ;;
+            *)
+              CRF=29; RATE_ARGS="-maxrate 400k -bufsize 800k" ;;
+          esac
 
-            echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
+          echo "🎛️ AV1 4.2.0 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
 
-            ffmpeg -y -i "$IN" \
-              -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-              -pix_fmt yuv420p10le \
-              -c:v $CODEC_LIB -crf $CRF -preset $PRESET $SVT_PARAMS $RATE_ARGS \
-              -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-              -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
-
-          elif [ "$CODEC" = "h265" ]; then
-            CODEC_LIB="libx265"
-            PRESET="slow"
-            PROFILE_ARG="-profile:v main10"
-            X265_PARAMS="-x265-params qcomp=0.6"
-
-            case "$CONTENT_TYPE" in
-              real) CRF=21; TUNE_ARG="-tune grain"; RATE_ARGS="-maxrate 1100k -bufsize 2200k" ;;
-              animation) CRF=27; TUNE_ARG="-tune animation"; RATE_ARGS="-maxrate 550k -bufsize 1100k" ;;
-              animation_ultra) CRF=29; TUNE_ARG="-tune animation"; RATE_ARGS="-maxrate 480k -bufsize 960k" ;;
-              *) CRF=23; RATE_ARGS="-maxrate 800k -bufsize 1600k" ;;
-            esac
-
-            echo "🎛️ H.265 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
-
-            ffmpeg -y -i "$IN" \
-              -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-              -pix_fmt yuv420p10le \
-              -c:v $CODEC_LIB -crf $CRF -preset $PRESET $TUNE_ARG $PROFILE_ARG $RATE_ARGS $X265_PARAMS \
-              -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-              -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
-
-          else
-            echo "كوديك غير مدعوم"; exit 1
-          fi
+          ffmpeg -y -i "$IN" \
+            -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+            -pix_fmt yuv420p10le \
+            -c:v libsvtav1 -crf $CRF -preset $PRESET $SVT_PARAMS $RATE_ARGS \
+            -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
       - name: رفع الجزء المضغوط
         uses: actions/upload-artifact@v4
@@ -237,7 +219,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثالثة: دمج الأجزاء
+  # المرحلة الثالثة: دمج الأجزاء والتشفير والرفع
   # -------------------------------------------------------------
   merge-and-send:
     needs: [split-video, encode-chunks]
@@ -261,7 +243,7 @@ jobs:
           path: all_encoded
           merge-multiple: true
 
-      - name: دمج الأجزاء (فيديو نسخ مباشر + صوت معاد ترميزه)
+      - name: دمج الأجزاء (فيديو نسخ مباشر + صوت معاد ترميزه لمنع الخشخشة)
         run: |
           cd all_encoded
           for f in $(ls encoded_*.mkv | sort); do echo "file '$f'" >> concat_list.txt; done
@@ -272,7 +254,7 @@ jobs:
           cd ..
           if [ ! -f output.mkv ]; then echo "❌ فشل الدمج"; exit 1; fi
 
-      - name: استخراج معلومات الفيديو
+      - name: استخراج معلومات الفيديو (المدة والدقة الفعلية)
         id: videoinfo
         run: |
           DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
@@ -287,7 +269,7 @@ jobs:
           echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
           echo "⏱️ المدة: $DURATION_FMT | 📐 الدقة الفعلية: $ACTUAL_RES"
 
-      - name: تشفير الفيديو (فقط لو خاص)
+      - name: تشفير الفيديو (فقط لو خاص - بكلمة مرور المستخدم)
         if: github.event.inputs.private == 'true'
         env:
           USER_PASSWORD: ${{ github.event.inputs.password }}
@@ -308,7 +290,7 @@ jobs:
           ORIGINAL_TITLE: ${{ needs.split-video.outputs.video_title }}
           DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
           ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           set -euo pipefail
           echo "رفع الملف وإرسال الرابط" > stage.txt
@@ -382,7 +364,7 @@ jobs:
           asyncio.run(main())
           EOF
 
-      - name: إرسال إشعار الفشل مع التفاصيل
+      - name: إرسال إشعار الفشل مع التفاصيل لو حدث خطأ
         if: failure()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
