@@ -58,7 +58,7 @@ jobs:
         run: |
           echo "تجهيز البيئة" > stage.txt
           sudo apt update
-          sudo apt install -y jq
+          sudo apt install -y jq ffmpeg
           pip install --upgrade --pre yt-dlp
 
       - name: تثبيت Deno
@@ -129,7 +129,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء باستخدام SVT-AV1 4.2.0 (مبني من المصدر)
+  # المرحلة الثانية: ضغط الأجزاء باستخدام SVT-AV1 4.2.0 + FFmpeg مستقر
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
@@ -140,20 +140,21 @@ jobs:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
       max-parallel: 10
     steps:
+      # ⚠️ تم تغيير مفتاح الكاش (v5) لإجبار إعادة البناء بعد إصلاح النسخة المتضررة
       - name: استعادة بناء SVT-AV1 و FFmpeg من الكاش (أو بناؤه)
         uses: actions/cache@v4
         id: cache-build
         with:
           path: /usr/local
-          key: svtav1-ffmpeg-4.2.0-${{ runner.os }}-v4
+          key: svtav1-ffmpeg-4.2.0-stable-${{ runner.os }}-v5
 
-      - name: بناء SVT-AV1 4.2.0 و FFmpeg من المصدر (إذا لم يكن مخزناً)
+      - name: بناء SVT-AV1 4.2.0 و FFmpeg (إصدار مستقر) من المصدر
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
+          set -euo pipefail
           sudo apt update
           sudo apt install -y cmake ninja-build nasm libopus-dev libvpx-dev
 
-          # تنظيف البناءات القديمة إن وجدت
           rm -rf SVT-AV1 FFmpeg
 
           git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
@@ -162,13 +163,21 @@ jobs:
           make -j$(nproc)
           sudo make install
           sudo ldconfig
+          cd ../..
 
-          git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git
+          # ⚠️ الإصلاح الجوهري: تثبيت FFmpeg على فرع إصدار مستقر
+          # بدل سحب أحدث كوميت في master (غير مستقر وقد يحتوي أخطاء مؤقتة)
+          git clone --depth 1 --branch release/8.0 https://github.com/FFmpeg/FFmpeg.git
           cd FFmpeg
           ./configure --enable-libsvtav1 --enable-libopus --enable-libvpx
           make -j$(nproc)
           sudo make install
           sudo ldconfig
+          cd ..
+
+          # تحقق فوري بعد البناء أن كل شيء اشتغل
+          ffmpeg -version
+          ffmpeg -filters | grep hqdn3d
 
       - name: تنزيل الجزء المخصص لهذا السيرفر
         uses: actions/download-artifact@v4
@@ -182,9 +191,11 @@ jobs:
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
+          set -o pipefail
           DENOISE="hqdn3d=0.6:0.6:1.5:1.5"
           IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
           OUT_DIR="chunks_encoded"
+          OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
 
           PRESET="6"
@@ -194,25 +205,34 @@ jobs:
           case "$CONTENT_TYPE" in
             real)
               CRF=26; RATE_ARGS="-maxrate 600k -bufsize 1200k"
-              DENOISE="hqdn3d=0.4:0.4:1:1" ;;
+              DENOISE="hqdn3d=0.4:0.4:1.0:1.0" ;;
             animation)
               CRF=33; RATE_ARGS="-maxrate 270k -bufsize 540k"
-              DENOISE="hqdn3d=1.2:1.2:3:3" ;;
+              DENOISE="hqdn3d=1.2:1.2:3.0:3.0" ;;
             animation_ultra)
               CRF=35; RATE_ARGS="-maxrate 250k -bufsize 500k"
-              DENOISE="hqdn3d=1.5:1.5:4:4" ;;
+              DENOISE="hqdn3d=1.5:1.5:4.0:4.0" ;;
             *)
-              CRF=29; RATE_ARGS="-maxrate 400k -bufsize 800k" ;;
+              CRF=29; RATE_ARGS="-maxrate 400k -bufsize 800k"
+              DENOISE="hqdn3d=0.6:0.6:1.5:1.5" ;;
           esac
 
-          echo "🎛️ AV1 4.2.0 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
+          echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
 
           ffmpeg -y -i "$IN" \
             -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -pix_fmt yuv420p10le \
             -c:v libsvtav1 -crf $CRF -preset $PRESET $SVT_PARAMS $RATE_ARGS \
             -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-            -y "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
+            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
+
+          # ⚠️ تحقق صريح من نجاح الترميز فعلياً (لا نعتمد على exit code وحده)
+          if [ ! -s "$OUT_FILE" ]; then
+            echo "❌ فشل ترميز الجزء ${CHUNK_ID} - لم يُنشأ ملف الإخراج"
+            cat "ffmpeg_${CHUNK_ID}.log"
+            exit 1
+          fi
+          echo "✅ تم إنشاء $OUT_FILE بنجاح ($(stat -c%s "$OUT_FILE") بايت)"
 
       - name: رفع الجزء المضغوط
         uses: actions/upload-artifact@v4
@@ -246,43 +266,44 @@ jobs:
           path: all_encoded
           merge-multiple: true
 
-      - name: تشخيص وتجهيز ملفات الدمج
+      - name: تشخيص ودمج الأجزاء
         run: |
-          echo "تشخيص الملفات" > stage.txt
-          
-          echo "📂 المحتويات الكاملة لمجلد العمل:"
-          ls -R
-          
-          echo ""
-          echo "🔍 البحث عن الملفات المضغوطة:"
-          find . -name "encoded_*.mkv" -type f | sort > found_files.txt
-          
-          if [ -s found_files.txt ]; then
-            echo "✅ تم العثور على الملفات التالية:"
-            cat found_files.txt
-            
-            # إنشاء ملف concat من الملفات الموجودة
-            while IFS= read -r line; do
-              echo "file '$line'" >> concat_list.txt
-            done < found_files.txt
-            
-            ffmpeg -f concat -safe 0 -i concat_list.txt \
-              -c:v copy \
-              -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-              -y output.mkv
-            
-            if [ ! -f output.mkv ]; then
-              echo "❌ فشل الدمج"
-              exit 1
-            fi
-            echo "✅ تم الدمج بنجاح"
-            
-          else
-            echo "❌ لم يتم العثور على أي ملفات مضغوطة!"
-            echo "هذه هي محتويات مجلد all_encoded (إذا كان موجوداً):"
-            ls -R all_encoded 2>/dev/null || echo "مجلد all_encoded غير موجود"
+          set -euo pipefail
+          echo "دمج الأجزاء" > stage.txt
+
+          echo "📂 محتويات مجلد all_encoded:"
+          ls -la all_encoded/ 2>/dev/null || echo "❌ المجلد غير موجود إطلاقاً"
+
+          if [ ! -d all_encoded ] || [ -z "$(ls -A all_encoded 2>/dev/null)" ]; then
+            echo "❌ مجلد all_encoded فارغ أو غير موجود — على الأغلب فشلت مرحلة الضغط ولم تُرفع أي أجزاء"
             exit 1
           fi
+
+          cd all_encoded
+          rm -f concat_list.txt
+          for f in $(ls encoded_*.mkv 2>/dev/null | sort); do
+            echo "file '$f'" >> concat_list.txt
+          done
+
+          if [ ! -s concat_list.txt ]; then
+            echo "❌ لا توجد ملفات مطابقة للنمط encoded_*.mkv"
+            exit 1
+          fi
+
+          echo "📋 الملفات التي سيتم دمجها:"
+          cat concat_list.txt
+
+          ffmpeg -f concat -safe 0 -i concat_list.txt \
+            -c:v copy \
+            -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -y ../output.mkv
+
+          cd ..
+          if [ ! -f output.mkv ]; then
+            echo "❌ فشل الدمج"
+            exit 1
+          fi
+          echo "✅ تم الدمج بنجاح"
 
       - name: استخراج معلومات الفيديو (المدة والدقة الفعلية)
         id: videoinfo
