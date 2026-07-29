@@ -140,13 +140,13 @@ jobs:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
       max-parallel: 10
     steps:
-      # ⚠️ تم تغيير مفتاح الكاش (v7) لإجبار إعادة البناء
+      # ⚠️ تم تغيير مفتاح الكاش (v8) لإبطال أي نسخ مسمومة
       - name: استعادة بناء SVT-AV1 و FFmpeg من الكاش (أو بناؤه)
         uses: actions/cache@v4
         id: cache-build
         with:
           path: /usr/local
-          key: svtav1-ffmpeg-4.2.0-stable-${{ runner.os }}-v7
+          key: svtav1-ffmpeg-4.2.0-stable-${{ runner.os }}-v8
 
       - name: بناء SVT-AV1 4.2.0 و FFmpeg (إصدار مستقر) من المصدر
         if: steps.cache-build.outputs.cache-hit != 'true'
@@ -173,15 +173,22 @@ jobs:
           sudo ldconfig
           cd ..
 
-          echo "🔍 التحقق من البناء:"
+      # ⚠️ هذه الخطوة تعمل دائماً — سواء بُني حديثاً أو جاء من الكاش
+      - name: التحقق الإلزامي من سلامة البناء (يفشل الـ job فوراً لو معطوب)
+        run: |
+          set -euo pipefail
+          sudo ldconfig
+          echo "🔍 نسخة ffmpeg:"
           ffmpeg -version
 
-          # ⚠️ تحقق غير قاطع للسكربت — لا نستخدم exit code الخاص بـ grep للتحكم بالفشل
-          if ffmpeg -filters 2>/dev/null | grep -q hqdn3d; then
-            echo "✅ فلتر hqdn3d موجود"
-          else
-            echo "⚠️ تحذير: لم يظهر hqdn3d في القائمة (لكن هذا لا يوقف البناء)"
+          echo "🔍 فحص وجود فلتر hqdn3d:"
+          if ! ffmpeg -filters 2>/dev/null | grep -q hqdn3d; then
+            echo "❌ فلتر hqdn3d غير موجود — الكاش/البناء معطوب. أوقف التشغيل فوراً."
+            echo "📋 قائمة الفلاتر الكاملة للتشخيص:"
+            ffmpeg -filters
+            exit 1
           fi
+          echo "✅ الفلتر موجود، البناء سليم"
 
       - name: تنزيل الجزء المخصص لهذا السيرفر
         uses: actions/download-artifact@v4
