@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 4.2.0 - CRF 50 + تحسينات)
+name: ضغط الفيديو (AV1 4.2.0 - CRF 50 + تحسينات مصححة)
 
 on:
   workflow_dispatch:
@@ -172,19 +172,43 @@ jobs:
           make install
           cd ..
 
-          echo "التحقق من وجود الفلاتر الأساسية:"
-          for filter in hqdn3d pp7 atadenoise nlmeans vaguedenoiser unsharp gradfun deblock dedot sab; do
-            if $HOME/av1-build/bin/ffmpeg -filters 2>/dev/null | grep -q "$filter"; then
-              echo "✅ $filter موجود"
-            else
-              echo "❌ $filter مفقود"
-            fi
-          done
-
       - name: تفعيل مسار FFmpeg المخصص
         run: |
           echo "$HOME/av1-build/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$HOME/av1-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      # ⚠️ إصلاح جوهري: هذه الخطوة انتقلت لخارج شرط cache-hit
+      # سابقاً كان التحقق من الفلاتر محصوراً داخل خطوة البناء نفسها، فكان
+      # يُتخطى بالكامل عند استخدام الكاش (نفس ثغرة "hqdn3d غير موجود" اللي
+      # واجهناها سابقاً). الآن يعمل دائماً، ويكتشف أيضاً دعم --sharpness
+      # (باراميتر لسه قيد الدمج لـ mainline وقت كتابة هذا الكود، فقد يكون
+      # موجوداً أو لا حسب توقيت البناء بالضبط)
+      - name: التحقق الإلزامي من الفلاتر والباراميترات (يعمل دائماً)
+        run: |
+          set -euo pipefail
+          echo "🔍 نسخة ffmpeg:"
+          which ffmpeg
+          ffmpeg -version
+
+          echo "🔍 فحص الفلاتر الأساسية:"
+          for filter in hqdn3d pp7 atadenoise nlmeans vaguedenoiser unsharp gradfun deblock dedot sab; do
+            if ffmpeg -filters 2>/dev/null | grep -q "$filter"; then
+              echo "✅ $filter موجود"
+            else
+              echo "❌ $filter مفقود — الكاش/البناء معطوب"
+              ffmpeg -filters
+              exit 1
+            fi
+          done
+
+          echo "🔍 فحص دعم --sharpness في SvtAv1EncApp:"
+          if "$HOME/av1-build/bin/SvtAv1EncApp" --help 2>/dev/null | grep -qi -- "--sharpness"; then
+            echo "✅ --sharpness مدعوم في هذا البناء"
+            echo "SHARPNESS_SUPPORTED=1" >> "$GITHUB_ENV"
+          else
+            echo "⚠️ --sharpness غير مدعوم في mainline هذا الإصدار — سيتم تجاهله تلقائياً"
+            echo "SHARPNESS_SUPPORTED=0" >> "$GITHUB_ENV"
+          fi
 
       - name: تنزيل الجزء المخصص
         uses: actions/download-artifact@v4
@@ -192,7 +216,17 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 50 + variance-boost + sharpness
+      # ⚠️ خطوة تشخيصية اختيارية (لا تؤثر على الترميز): تكشف هل الإطارات
+      # مكررة فعلياً (رسم أبطأ داخل حاوية 60fps) قبل اتخاذ قرار تقليل الإطارات
+      - name: تشخيص معدل الإطارات الفعلي (mpdecimate)
+        env:
+          CHUNK_ID: ${{ matrix.chunk }}
+        run: |
+          IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
+          echo "📊 فحص نسبة الإطارات المكررة فعلياً في هذا الجزء:"
+          ffmpeg -i "$IN" -vf mpdecimate,metadata=print -f null - 2>&1 | grep -c "lavfi.mpdecimate.drop_count" || echo "0 إطارات مكررة مكتشفة"
+
+      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 50 + variance-boost مضبوط
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -209,27 +243,42 @@ jobs:
           MAXRATE=2000
           BUFSIZE=12000
           GRAIN_PARAM="film-grain=8:film-grain-denoise=1"
-          SHARPNESS="sharpness=1"
-          VARBOOST="enable-variance-boost=1"
 
-          # فلتر فيديو خفيف: إزالة ضوضاء رقمية مع الحفاظ على تفاصيل الحركة
+          # ⚠️ variance-boost مضبوط بشكل أدق (بدل القيم الافتراضية):
+          # strength=3 (بدل 2 الافتراضي) يزيد قوة تعزيز المناطق منخفضة التباين
+          # octile=5 (بدل 6 الافتراضي) يخلي الخوارزمية أكثر انتقائية لأي منطقة
+          # ضعيفة التباين، مو فقط المناطق شبه المسطحة بالكامل — يستهدف بدقة
+          # مشكلة "اللقمة" في مشاهد الحركة السريعة
+          VARBOOST="enable-variance-boost=1:variance-boost-strength=3:variance-octile=5"
+
+          # ⚠️ sharpness يُضاف فقط لو مدعوم فعلياً (من خطوة التحقق السابقة)
+          if [ "${SHARPNESS_SUPPORTED:-0}" = "1" ]; then
+            SHARPNESS_PARAM=":sharpness=1"
+          else
+            SHARPNESS_PARAM=""
+          fi
+
           VF_CHAIN="hqdn3d=2:1:2:2,scale=trunc(oh*a/2)*2:${RESOLUTION}"
 
-          # معالجة الصوت: توحيد التنسيق ومعالجة الفجوات لضمان استقرار الصوت
-          AF_CHAIN="aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,aresample=async=1"
+          # ⚠️ إصلاح مشكلة الصوت: حذفنا aresample=async=1 (كان يسبب قطع
+          # سمعي مسموع كل ما يصحح فروقات توقيت طفيفة). الآن نستخدم توحيد
+          # تنسيق بسيط بدون إعادة مزامنة قسرية، مع avoid_negative_ts عند
+          # الإخراج للتعامل مع أي شذوذ في الـ timestamps بشكل نظيف بدل
+          # التلاعب بعينات الصوت نفسها
+          AF_CHAIN="aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
 
-          # دمج جميع معاملات SVT-AV1
-          SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}:${SHARPNESS}:${VARBOOST}"
+          SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}:${VARBOOST}${SHARPNESS_PARAM}"
 
-          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | keyint=2s | variance-boost | sharpness=1"
+          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | keyint=2s | variance-boost(strength=3,octile=5) | sharpness=${SHARPNESS_SUPPORTED:-0}"
 
-          ffmpeg -y -fflags +genpts -i "$IN" \
+          ffmpeg -y -i "$IN" \
             -vf "$VF_CHAIN" \
             -pix_fmt yuv420p10le \
             -c:v libsvtav1 -crf $CRF -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
             -preset $PRESET $SVT_PARAMS \
             -af "$AF_CHAIN" \
             -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -avoid_negative_ts make_zero \
             -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           if [ ! -s "$OUT_FILE" ]; then
