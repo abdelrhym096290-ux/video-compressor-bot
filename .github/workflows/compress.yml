@@ -147,11 +147,19 @@ jobs:
           path: ~/av1-build
           key: av1-ffmpeg-420-${{ runner.os }}-v4
 
+      # ⚠️ إصلاح جوهري: هذه الخطوة تعمل دائماً (بناء جديد أو cache hit)
+      # لأن libopus مطلوبة وقت التشغيل على أي runner، وكل runner نظيف تماماً
+      # سابقاً كان تثبيت libopus محصوراً داخل خطوة البناء نفسها، فكان يُتخطى
+      # كلياً عند استخدام الكاش، فيفشل ffmpeg بخطأ "libopus.so.0 not found"
+      - name: تثبيت متطلبات التشغيل (libopus)
+        run: |
+          sudo apt update
+          sudo apt install -y libopus0
+
       - name: بناء SVT-AV1 4.2.0 و FFmpeg (إصدار مستقر) من المصدر
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          sudo apt update
           sudo apt install -y cmake nasm libopus-dev
 
           rm -rf SVT-AV1 FFmpeg
