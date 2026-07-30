@@ -202,7 +202,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - 2-Pass + Scene Detection + Grain Synthesis
+      - name: ضغط الجزء (${{ matrix.chunk }}) - 2-Pass VBR + Grain Synthesis
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -217,15 +217,7 @@ jobs:
 
           PRESET="6"
 
-          # ⚠️ التغيير الجوهري: بدل CRF + maxrate صارم (يسبب VBV starvation عند
-          # المشاهد المعقدة)، نستخدم الآن 2-pass VBR بمتوسط محسوب لكل نوع محتوى،
-          # مع سقف أمان مرن (2.5x) بدل خنق شبه دائم.
-          #
-          # ⚠️ إضافات جديدة تستهدف مشكلة التشوه عند الانتقالات تحديداً:
-          # - scd=1: يضع keyframe عند الانتقال الفعلي للمشهد (لا يعتمد فقط على GOP ثابت)
-          # - enable-overlays=1: يحسن التعامل مع الإطارات المعقدة
-          # - film-grain=8 + denoise أقوى: نشيل الضجيج الطبيعي عبر الفلتر، والكوديك
-          #   "يصنّع" حبيبات مشابهة بصرياً عند العرض بدل ضغطها فعلياً (توفير كبير بالحجم)
+          # إعدادات البتريت وإزالة الضجيج وفقاً لنوع المحتوى
           case "$CONTENT_TYPE" in
             real)
               AVG_BITRATE=600
@@ -245,18 +237,16 @@ jobs:
               GRAIN_PARAM="film-grain=6:film-grain-denoise=0" ;;
           esac
 
-          MAXRATE=$((AVG_BITRATE * 5 / 2))
-          BUFSIZE=$((MAXRATE * 2))
+          # معاملات SVT-AV1 (بدون maxrate/bufsize، بدون qcomp، مع تفعيل VBR)
+          SVT_PARAMS="-svtav1-params tune=0:rc=1:enable-qm=1:qm-min=0:qm-max=15:enable-overlays=1:keyint=5s:${GRAIN_PARAM}"
 
-          SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.6:scd=1:enable-overlays=1:keyint=5s:${GRAIN_PARAM}"
-
-          echo "🎛️ AV1 2-Pass - نوع المحتوى: $CONTENT_TYPE | متوسط البتريت: ${AVG_BITRATE}k | سقف الأمان: ${MAXRATE}k"
+          echo "🎛️ AV1 2-Pass VBR - نوع المحتوى: $CONTENT_TYPE | متوسط البتريت: ${AVG_BITRATE}k"
 
           echo "📊 المرور الأول: تحليل الفيديو..."
           ffmpeg -y -i "$IN" \
             -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -pix_fmt yuv420p10le \
-            -c:v libsvtav1 -b:v "${AVG_BITRATE}k" -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
+            -c:v libsvtav1 -b:v "${AVG_BITRATE}k" \
             -preset $PRESET $SVT_PARAMS \
             -passlogfile "$PASSLOG" -pass 1 -an -f null /dev/null 2>&1 | tee "ffmpeg_${CHUNK_ID}_pass1.log"
 
@@ -264,7 +254,7 @@ jobs:
           ffmpeg -y -i "$IN" \
             -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -pix_fmt yuv420p10le \
-            -c:v libsvtav1 -b:v "${AVG_BITRATE}k" -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
+            -c:v libsvtav1 -b:v "${AVG_BITRATE}k" \
             -preset $PRESET $SVT_PARAMS \
             -passlogfile "$PASSLOG" -pass 2 \
             -c:a libopus -b:a 32k -ac 2 -ar 48000 \
