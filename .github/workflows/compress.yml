@@ -129,7 +129,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء (2-Pass VBR + Scene Detection + Grain Synthesis)
+  # المرحلة الثانية: ضغط الأجزاء (CRF + maxrate + keyint قصير + Grain Synthesis)
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
@@ -202,7 +202,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - 2-Pass VBR + Grain Synthesis
+      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF + Grain + keyint=2s
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -212,58 +212,54 @@ jobs:
           IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
           OUT_DIR="chunks_encoded"
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
-          PASSLOG="passlog_${CHUNK_ID}"
           mkdir -p "$OUT_DIR"
 
           PRESET="6"
 
-          # إعدادات البتريت وإزالة الضجيج وفقاً لنوع المحتوى
+          # إعدادات CRF و maxrate وفلتر الضجيج حسب نوع المحتوى
           case "$CONTENT_TYPE" in
             real)
-              AVG_BITRATE=600
+              CRF=28
+              MAXRATE=1500
+              BUFSIZE=3000
               DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.15:1b=0.15"
               GRAIN_PARAM="film-grain=6:film-grain-denoise=0" ;;
             animation)
-              AVG_BITRATE=270
+              CRF=30
+              MAXRATE=800
+              BUFSIZE=1600
               DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.25:1b=0.25"
               GRAIN_PARAM="film-grain=8:film-grain-denoise=0" ;;
             animation_ultra)
-              AVG_BITRATE=250
+              CRF=32
+              MAXRATE=700
+              BUFSIZE=1400
               DENOISE="atadenoise=0a=0.15:0b=0.15:1a=0.3:1b=0.3"
               GRAIN_PARAM="film-grain=10:film-grain-denoise=0" ;;
             *)
-              AVG_BITRATE=400
+              CRF=30
+              MAXRATE=1000
+              BUFSIZE=2000
               DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.3:1b=0.3"
               GRAIN_PARAM="film-grain=6:film-grain-denoise=0" ;;
           esac
 
-          # معاملات SVT-AV1 (بدون maxrate/bufsize، بدون qcomp، مع تفعيل VBR)
-          SVT_PARAMS="-svtav1-params tune=0:rc=1:enable-qm=1:qm-min=0:qm-max=15:enable-overlays=1:keyint=5s:${GRAIN_PARAM}"
+          # معاملات SVT-AV1 (بدون scd, مع keyint=2s)
+          SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:keyint=2s:${GRAIN_PARAM}"
 
-          echo "🎛️ AV1 2-Pass VBR - نوع المحتوى: $CONTENT_TYPE | متوسط البتريت: ${AVG_BITRATE}k"
+          echo "🎛️ AV1 CRF=$CRF مع maxrate=${MAXRATE}k | keyint=2s | نوع المحتوى: $CONTENT_TYPE"
 
-          echo "📊 المرور الأول: تحليل الفيديو..."
           ffmpeg -y -i "$IN" \
             -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -pix_fmt yuv420p10le \
-            -c:v libsvtav1 -b:v "${AVG_BITRATE}k" \
+            -c:v libsvtav1 -crf $CRF -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
             -preset $PRESET $SVT_PARAMS \
-            -passlogfile "$PASSLOG" -pass 1 -an -f null /dev/null 2>&1 | tee "ffmpeg_${CHUNK_ID}_pass1.log"
-
-          echo "📊 المرور الثاني: ضغط بتوزيع مثالي للبتات..."
-          ffmpeg -y -i "$IN" \
-            -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-            -pix_fmt yuv420p10le \
-            -c:v libsvtav1 -b:v "${AVG_BITRATE}k" \
-            -preset $PRESET $SVT_PARAMS \
-            -passlogfile "$PASSLOG" -pass 2 \
             -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}_pass2.log"
+            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           if [ ! -s "$OUT_FILE" ]; then
             echo "❌ فشل ترميز الجزء ${CHUNK_ID} - لم يُنشأ ملف الإخراج"
-            echo "--- سجل المرور الأول ---"; cat "ffmpeg_${CHUNK_ID}_pass1.log"
-            echo "--- سجل المرور الثاني ---"; cat "ffmpeg_${CHUNK_ID}_pass2.log"
+            echo "--- سجل الترميز ---"; cat "ffmpeg_${CHUNK_ID}.log"
             exit 1
           fi
           echo "✅ تم إنشاء $OUT_FILE بنجاح ($(stat -c%s "$OUT_FILE") بايت)"
