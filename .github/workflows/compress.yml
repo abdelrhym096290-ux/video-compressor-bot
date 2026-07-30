@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 4.2.0 - CRF 50 + فلاتر خفيفة)
+name: ضغط الفيديو (AV1 4.2.0 - CRF 50 + تحسينات)
 
 on:
   workflow_dispatch:
@@ -192,7 +192,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - SVT-AV1 CRF 50 + فلاتر خفيفة
+      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 50 + variance-boost + sharpness
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -207,23 +207,28 @@ jobs:
           PRESET="6"
           CRF=50
           MAXRATE=2000
-          BUFSIZE=8000
+          BUFSIZE=12000
           GRAIN_PARAM="film-grain=8:film-grain-denoise=1"
+          SHARPNESS="sharpness=1"
+          VARBOOST="enable-variance-boost=1"
 
-          # فلاتر خفيفة جداً:
-          # 1. إزالة ضوضاء رقمية (atadenoise) بقيم ضعيفة للحفاظ على التفاصيل
-          # 2. تحسين الحدة (unsharp) بقيمة 0.3 لتعويض فقدان الوضوح من CRF العالي
-          VF_CHAIN="atadenoise=0a=0.02:0b=0.02:1a=0.03:1b=0.03,unsharp=5:5:0.3,scale=trunc(oh*a/2)*2:${RESOLUTION}"
+          # فلتر فيديو خفيف: إزالة ضوضاء رقمية مع الحفاظ على تفاصيل الحركة
+          VF_CHAIN="hqdn3d=2:1:2:2,scale=trunc(oh*a/2)*2:${RESOLUTION}"
 
-          SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}"
+          # معالجة الصوت: توحيد التنسيق ومعالجة الفجوات لضمان استقرار الصوت
+          AF_CHAIN="aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,aresample=async=1"
 
-          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | فلاتر: $VF_CHAIN | keyint=2s"
+          # دمج جميع معاملات SVT-AV1
+          SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}:${SHARPNESS}:${VARBOOST}"
 
-          ffmpeg -y -i "$IN" \
+          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | keyint=2s | variance-boost | sharpness=1"
+
+          ffmpeg -y -fflags +genpts -i "$IN" \
             -vf "$VF_CHAIN" \
             -pix_fmt yuv420p10le \
             -c:v libsvtav1 -crf $CRF -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
             -preset $PRESET $SVT_PARAMS \
+            -af "$AF_CHAIN" \
             -c:a libopus -b:a 32k -ac 2 -ar 48000 \
             -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
