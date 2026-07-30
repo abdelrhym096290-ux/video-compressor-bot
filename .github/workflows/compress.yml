@@ -129,7 +129,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء (CRF + VBV 3000k + Grain)
+  # المرحلة الثانية: ضغط الأجزاء (CRF 40 + VBV 3000k/12000k)
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
@@ -200,7 +200,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF + VBV 3000k
+      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 40 + VBV 3000k/12000k
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -216,31 +216,30 @@ jobs:
 
           case "$CONTENT_TYPE" in
             real)
-              CRF=28
+              CRF=38
               MAXRATE=4000
-              BUFSIZE=8000
+              BUFSIZE=16000
               GRAIN_PARAM="film-grain=6:film-grain-denoise=1" ;;
             animation)
-              CRF=30
+              CRF=40
               MAXRATE=3000
-              BUFSIZE=6000
+              BUFSIZE=12000
               GRAIN_PARAM="film-grain=8:film-grain-denoise=1" ;;
             animation_ultra)
-              CRF=32
+              CRF=42
               MAXRATE=2500
-              BUFSIZE=5000
+              BUFSIZE=10000
               GRAIN_PARAM="film-grain=10:film-grain-denoise=1" ;;
             *)
-              CRF=30
+              CRF=40
               MAXRATE=3000
-              BUFSIZE=6000
+              BUFSIZE=12000
               GRAIN_PARAM="film-grain=8:film-grain-denoise=1" ;;
           esac
 
-          # بدون أي فلتر خارجي، فقط grain synthesis الداخلي
           SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}"
 
-          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | keyint=2s | بدون فلاتر خارجية | $CONTENT_TYPE"
+          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | bufsize=${BUFSIZE}k | keyint=2s | $CONTENT_TYPE"
 
           ffmpeg -y -i "$IN" \
             -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
