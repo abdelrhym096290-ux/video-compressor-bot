@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 - بناء متماسك بمشفرين)
+name: ضغط الفيديو (AV1 4.2.0 - CRF 50 + فلاتر خفيفة)
 
 on:
   workflow_dispatch:
@@ -10,9 +10,9 @@ on:
         description: 'الدقة (مثلاً 720)'
         required: true
       codec:
-        description: 'اختر المشفر (svtav1 أو aom)'
+        description: 'الكوديك (av1)'
         required: true
-        default: 'aom'
+        default: 'av1'
       chat_id:
         description: 'معرف الدردشة'
         required: true
@@ -132,26 +132,25 @@ jobs:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
       max-parallel: 10
     steps:
-      - name: استعادة بناء SVT-AV1 و FFmpeg + libaom من الكاش (أو بناؤه)
+      - name: استعادة بناء SVT-AV1 و FFmpeg من الكاش (أو بناؤه)
         uses: actions/cache@v4
         id: cache-build
         with:
           path: ~/av1-build
-          key: av1-ffmpeg-full-aom-420-${{ runner.os }}-v2
+          key: av1-ffmpeg-full-420-${{ runner.os }}-v2
 
       - name: تثبيت متطلبات التشغيل الأساسية
         run: |
           sudo apt update
-          sudo apt install -y libopus0 cmake nasm
+          sudo apt install -y libopus0
 
-      - name: بناء مكتبات AV1 و FFmpeg (بناء متماسك كامل)
+      - name: بناء SVT-AV1 4.2.0 و FFmpeg (بناء كامل)
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           sudo apt install -y cmake nasm libopus-dev
+          rm -rf SVT-AV1 FFmpeg
 
-          # 1. بناء SVT-AV1 4.2.0
-          rm -rf SVT-AV1
           git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
           cd SVT-AV1/Build
           cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$HOME/av1-build"
@@ -159,18 +158,6 @@ jobs:
           make install
           cd ../..
 
-          # 2. بناء libaom (أحدث إصدار مستقر)
-          rm -rf aom
-          git clone --depth 1 --branch v3.12.0 https://aomedia.googlesource.com/aom
-          cd aom
-          mkdir -p build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/av1-build"
-          make -j$(nproc)
-          make install
-          cd ../..
-
-          # 3. بناء FFmpeg مع كل شيء
-          rm -rf FFmpeg
           git clone --depth 1 --branch release/8.0 https://github.com/FFmpeg/FFmpeg.git
           cd FFmpeg
           export PKG_CONFIG_PATH="$HOME/av1-build/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
@@ -179,16 +166,13 @@ jobs:
             --enable-gpl \
             --enable-version3 \
             --enable-libsvtav1 \
-            --enable-libaom \
             --enable-libopus \
             --enable-filter=hqdn3d,pp7,atadenoise,nlmeans,vaguedenoiser,unsharp,gradfun,deblock,dedot,sab
           make -j$(nproc)
           make install
           cd ..
 
-          echo "التحقق من وجود المشفرات والفلاتر:"
-          $HOME/av1-build/bin/ffmpeg -encoders 2>/dev/null | grep -q libsvtav1 && echo "✅ libsvtav1 موجود" || echo "❌ libsvtav1 مفقود"
-          $HOME/av1-build/bin/ffmpeg -encoders 2>/dev/null | grep -q libaom && echo "✅ libaom-av1 موجود" || echo "❌ libaom-av1 مفقود"
+          echo "التحقق من وجود الفلاتر الأساسية:"
           for filter in hqdn3d pp7 atadenoise nlmeans vaguedenoiser unsharp gradfun deblock dedot sab; do
             if $HOME/av1-build/bin/ffmpeg -filters 2>/dev/null | grep -q "$filter"; then
               echo "✅ $filter موجود"
@@ -208,11 +192,10 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - AV1 (SVT أو AOM)
+      - name: ضغط الجزء (${{ matrix.chunk }}) - SVT-AV1 CRF 50 + فلاتر خفيفة
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
-          CODEC_CHOICE: ${{ github.event.inputs.codec }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
           set -o pipefail
@@ -223,32 +206,26 @@ jobs:
 
           PRESET="6"
           CRF=50
-          MAXRATE=3000
-          BUFSIZE=12000
+          MAXRATE=2000
+          BUFSIZE=8000
           GRAIN_PARAM="film-grain=8:film-grain-denoise=1"
-          AOM_PARAMS="-cpu-used 4 -row-mt 1"
 
-          echo "🎛️ المشفر المختار: $CODEC_CHOICE | CRF=$CRF | maxrate=${MAXRATE}k"
+          # فلاتر خفيفة جداً:
+          # 1. إزالة ضوضاء رقمية (atadenoise) بقيم ضعيفة للحفاظ على التفاصيل
+          # 2. تحسين الحدة (unsharp) بقيمة 0.3 لتعويض فقدان الوضوح من CRF العالي
+          VF_CHAIN="atadenoise=0a=0.02:0b=0.02:1a=0.03:1b=0.03,unsharp=5:5:0.3,scale=trunc(oh*a/2)*2:${RESOLUTION}"
 
-          if [ "$CODEC_CHOICE" = "aom" ]; then
-            ffmpeg -y -i "$IN" \
-              -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-              -pix_fmt yuv420p10le \
-              -c:v libaom-av1 -crf $CRF -b:v 0 \
-              -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
-              -aom-params "$AOM_PARAMS" \
-              -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-              -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
-          else
-            SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}"
-            ffmpeg -y -i "$IN" \
-              -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-              -pix_fmt yuv420p10le \
-              -c:v libsvtav1 -crf $CRF -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
-              -preset $PRESET $SVT_PARAMS \
-              -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-              -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
-          fi
+          SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}"
+
+          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | فلاتر: $VF_CHAIN | keyint=2s"
+
+          ffmpeg -y -i "$IN" \
+            -vf "$VF_CHAIN" \
+            -pix_fmt yuv420p10le \
+            -c:v libsvtav1 -crf $CRF -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
+            -preset $PRESET $SVT_PARAMS \
+            -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           if [ ! -s "$OUT_FILE" ]; then
             echo "❌ فشل ترميز الجزء ${CHUNK_ID}"
