@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 4.2.0 - مبني من المصدر)
+name: ضغط الفيديو (AV1 - بناء متماسك بمشفرين)
 
 on:
   workflow_dispatch:
@@ -10,9 +10,9 @@ on:
         description: 'الدقة (مثلاً 720)'
         required: true
       codec:
-        description: 'الكوديك (av1)'
+        description: 'اختر المشفر (svtav1 أو aom)'
         required: true
-        default: 'av1'
+        default: 'aom'
       chat_id:
         description: 'معرف الدردشة'
         required: true
@@ -41,9 +41,6 @@ permissions:
   contents: write
 
 jobs:
-  # -------------------------------------------------------------
-  # المرحلة الأولى: تحميل الفيديو وبناء البيئة
-  # -------------------------------------------------------------
   split-video:
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -108,7 +105,6 @@ jobs:
           mkdir -p chunks_raw
           DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 raw_input.mp4 | cut -d. -f1)
           echo "⏱️ مدة الفيديو: ${DURATION} ثانية"
-
           if [ "$DURATION" -gt 1200 ]; then
             echo "📦 الفيديو طويل، سيتم تقطيعه للمعالجة المتوازية"
             ffmpeg -i raw_input.mp4 -c copy -f segment -segment_time 600 -reset_timestamps 1 "chunks_raw/chunk_%03d.mp4"
@@ -116,7 +112,6 @@ jobs:
             echo "📄 الفيديو قصير، سيُعالج كجزء واحد فقط"
             cp raw_input.mp4 "chunks_raw/chunk_000.mp4"
           fi
-
           CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | jq -R . | jq -s -c .)
           echo "chunks=$CHUNKS_JSON" >> "$GITHUB_OUTPUT"
           echo "الأجزاء: $CHUNKS_JSON"
@@ -128,9 +123,6 @@ jobs:
           path: chunks_raw/
           retention-days: 1
 
-  # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء (CRF 40 + VBV 3000k/12000k)
-  # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
     runs-on: ubuntu-latest
@@ -140,25 +132,26 @@ jobs:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
       max-parallel: 10
     steps:
-      - name: استعادة بناء SVT-AV1 و FFmpeg من الكاش (أو بناؤه)
+      - name: استعادة بناء SVT-AV1 و FFmpeg + libaom من الكاش (أو بناؤه)
         uses: actions/cache@v4
         id: cache-build
         with:
           path: ~/av1-build
-          key: av1-ffmpeg-full-420-${{ runner.os }}-v1
+          key: av1-ffmpeg-full-aom-420-${{ runner.os }}-v1
 
-      - name: تثبيت متطلبات التشغيل (libopus)
+      - name: تثبيت متطلبات التشغيل الأساسية
         run: |
           sudo apt update
-          sudo apt install -y libopus0
+          sudo apt install -y libopus0 cmake nasm
 
-      - name: بناء SVT-AV1 4.2.0 و FFmpeg (بناء كامل)
+      - name: بناء مكتبات AV1 و FFmpeg (بناء متماسك كامل)
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           sudo apt install -y cmake nasm libopus-dev
-          rm -rf SVT-AV1 FFmpeg
 
+          # 1. بناء SVT-AV1 4.2.0
+          rm -rf SVT-AV1
           git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
           cd SVT-AV1/Build
           cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$HOME/av1-build"
@@ -166,21 +159,38 @@ jobs:
           make install
           cd ../..
 
+          # 2. بناء libaom (أحدث إصدار مستقر)
+          rm -rf aom
+          git clone --depth 1 --branch v3.12.0 https://aomedia.googlesource.com/aom
+          cd aom
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/av1-build"
+          make -j$(nproc)
+          make install
+          cd ../..
+
+          # 3. بناء FFmpeg مع كل شيء
+          rm -rf FFmpeg
           git clone --depth 1 --branch release/8.0 https://github.com/FFmpeg/FFmpeg.git
           cd FFmpeg
-          export PKG_CONFIG_PATH="$HOME/av1-build/lib/pkgconfig"
+          export PKG_CONFIG_PATH="$HOME/av1-build/lib/pkgconfig:$PKG_CONFIG_PATH"
           export LD_LIBRARY_PATH="$HOME/av1-build/lib"
           ./configure --prefix="$HOME/av1-build" \
             --enable-gpl \
             --enable-version3 \
             --enable-libsvtav1 \
+            --enable-libaom \
             --enable-libopus \
             --enable-filter=hqdn3d,pp7,atadenoise,nlmeans,vaguedenoiser,unsharp,gradfun,deblock,dedot,sab
           make -j$(nproc)
           make install
           cd ..
 
-          echo "التحقق من وجود الفلاتر الأساسية:"
+          # التحقق من وجود المشفرات والفلاتر
+          echo "التحقق من المشفرات:"
+          $HOME/av1-build/bin/ffmpeg -encoders 2>/dev/null | grep -q libsvtav1 && echo "✅ libsvtav1 موجود" || echo "❌ libsvtav1 مفقود"
+          $HOME/av1-build/bin/ffmpeg -encoders 2>/dev/null | grep -q libaom && echo "✅ libaom-av1 موجود" || echo "❌ libaom-av1 مفقود"
+          echo "التحقق من الفلاتر:"
           for filter in hqdn3d pp7 atadenoise nlmeans vaguedenoiser unsharp gradfun deblock dedot sab; do
             if $HOME/av1-build/bin/ffmpeg -filters 2>/dev/null | grep -q "$filter"; then
               echo "✅ $filter موجود"
@@ -200,10 +210,11 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 40 + VBV 3000k/12000k
+      - name: ضغط الجزء (${{ matrix.chunk }}) - AV1 (SVT أو AOM)
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
+          CODEC_CHOICE: ${{ github.event.inputs.codec }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
           set -o pipefail
@@ -213,41 +224,36 @@ jobs:
           mkdir -p "$OUT_DIR"
 
           PRESET="6"
+          CRF=50   # نقطة بداية جيدة للأنمي
+          MAXRATE=3000
+          BUFSIZE=12000
+          GRAIN_PARAM="film-grain=8:film-grain-denoise=1"
+          # إعدادات خاصة بـ libaom
+          AOM_PARAMS="-cpu-used 4 -row-mt 1"
 
-          case "$CONTENT_TYPE" in
-            real)
-              CRF=38
-              MAXRATE=4000
-              BUFSIZE=16000
-              GRAIN_PARAM="film-grain=6:film-grain-denoise=1" ;;
-            animation)
-              CRF=40
-              MAXRATE=3000
-              BUFSIZE=12000
-              GRAIN_PARAM="film-grain=8:film-grain-denoise=1" ;;
-            animation_ultra)
-              CRF=42
-              MAXRATE=2500
-              BUFSIZE=10000
-              GRAIN_PARAM="film-grain=10:film-grain-denoise=1" ;;
-            *)
-              CRF=40
-              MAXRATE=3000
-              BUFSIZE=12000
-              GRAIN_PARAM="film-grain=8:film-grain-denoise=1" ;;
-          esac
+          echo "🎛️ المشفر المختار: $CODEC_CHOICE | CRF=$CRF | maxrate=${MAXRATE}k"
 
-          SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}"
-
-          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | bufsize=${BUFSIZE}k | keyint=2s | $CONTENT_TYPE"
-
-          ffmpeg -y -i "$IN" \
-            -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-            -pix_fmt yuv420p10le \
-            -c:v libsvtav1 -crf $CRF -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
-            -preset $PRESET $SVT_PARAMS \
-            -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
+          if [ "$CODEC_CHOICE" = "aom" ]; then
+            # استخدام libaom-av1
+            ffmpeg -y -i "$IN" \
+              -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+              -pix_fmt yuv420p10le \
+              -c:v libaom-av1 -crf $CRF -b:v 0 \
+              -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
+              -aom-params "$AOM_PARAMS" \
+              -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+              -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
+          else
+            # استخدام libsvtav1 (SVT-AV1)
+            SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}"
+            ffmpeg -y -i "$IN" \
+              -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+              -pix_fmt yuv420p10le \
+              -c:v libsvtav1 -crf $CRF -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
+              -preset $PRESET $SVT_PARAMS \
+              -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+              -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
+          fi
 
           if [ ! -s "$OUT_FILE" ]; then
             echo "❌ فشل ترميز الجزء ${CHUNK_ID}"
@@ -263,9 +269,6 @@ jobs:
           path: chunks_encoded/encoded_${{ matrix.chunk }}.mkv
           retention-days: 1
 
-  # -------------------------------------------------------------
-  # المرحلة الثالثة: الدمج والتشفير والرفع
-  # -------------------------------------------------------------
   merge-and-send:
     needs: [split-video, encode-chunks]
     runs-on: ubuntu-latest
