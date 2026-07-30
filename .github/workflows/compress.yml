@@ -129,7 +129,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء (بناء كامل + فلاتر التنظيف + Grain)
+  # المرحلة الثانية: ضغط الأجزاء (CRF + VBV 3000k + Grain)
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
@@ -157,7 +157,6 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt install -y cmake nasm libopus-dev
-
           rm -rf SVT-AV1 FFmpeg
 
           git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
@@ -190,18 +189,18 @@ jobs:
             fi
           done
 
-      - name: تفعيل مسار FFmpeg المخصص لبقية الخطوات
+      - name: تفعيل مسار FFmpeg المخصص
         run: |
           echo "$HOME/av1-build/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$HOME/av1-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
-      - name: تنزيل الجزء المخصص لهذا السيرفر
+      - name: تنزيل الجزء المخصص
         uses: actions/download-artifact@v4
         with:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - 2‑Pass VBR 350k + pp7 + hqdn3d
+      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF + VBV 3000k
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -211,56 +210,49 @@ jobs:
           IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
           OUT_DIR="chunks_encoded"
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
-          PASSLOG="passlog_${CHUNK_ID}"
           mkdir -p "$OUT_DIR"
 
           PRESET="6"
 
           case "$CONTENT_TYPE" in
             real)
-              AVG_BITRATE=600
-              PRE_FILTER="pp7=qp=3,hqdn3d=2:1:2:2"
+              CRF=28
+              MAXRATE=4000
+              BUFSIZE=8000
               GRAIN_PARAM="film-grain=6:film-grain-denoise=1" ;;
             animation)
-              AVG_BITRATE=350
-              PRE_FILTER="pp7=qp=3,hqdn3d=2:1:2:2"
+              CRF=30
+              MAXRATE=3000
+              BUFSIZE=6000
               GRAIN_PARAM="film-grain=8:film-grain-denoise=1" ;;
             animation_ultra)
-              AVG_BITRATE=280
-              PRE_FILTER="pp7=qp=4,hqdn3d=2:1:3:3"
+              CRF=32
+              MAXRATE=2500
+              BUFSIZE=5000
               GRAIN_PARAM="film-grain=10:film-grain-denoise=1" ;;
             *)
-              AVG_BITRATE=350
-              PRE_FILTER="pp7=qp=3,hqdn3d=2:1:2:2"
+              CRF=30
+              MAXRATE=3000
+              BUFSIZE=6000
               GRAIN_PARAM="film-grain=8:film-grain-denoise=1" ;;
           esac
 
-          SVT_PARAMS="-svtav1-params tune=0:rc=1:enable-qm=1:qm-min=0:qm-max=15:enable-overlays=1:keyint=2s:${GRAIN_PARAM}"
+          # بدون أي فلتر خارجي، فقط grain synthesis الداخلي
+          SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}"
 
-          echo "🎛️ AV1 2‑Pass VBR - $CONTENT_TYPE | متوسط البتريت: ${AVG_BITRATE}k | فلاتر: $PRE_FILTER | keyint=2s"
+          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | keyint=2s | بدون فلاتر خارجية | $CONTENT_TYPE"
 
-          echo "📊 المرور الأول..."
           ffmpeg -y -i "$IN" \
-            -vf "${PRE_FILTER},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+            -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -pix_fmt yuv420p10le \
-            -c:v libsvtav1 -b:v "${AVG_BITRATE}k" \
+            -c:v libsvtav1 -crf $CRF -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
             -preset $PRESET $SVT_PARAMS \
-            -passlogfile "$PASSLOG" -pass 1 -an -f null /dev/null 2>&1 | tee "ffmpeg_${CHUNK_ID}_pass1.log"
-
-          echo "📊 المرور الثاني..."
-          ffmpeg -y -i "$IN" \
-            -vf "${PRE_FILTER},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
-            -pix_fmt yuv420p10le \
-            -c:v libsvtav1 -b:v "${AVG_BITRATE}k" \
-            -preset $PRESET $SVT_PARAMS \
-            -passlogfile "$PASSLOG" -pass 2 \
             -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}_pass2.log"
+            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           if [ ! -s "$OUT_FILE" ]; then
             echo "❌ فشل ترميز الجزء ${CHUNK_ID}"
-            cat "ffmpeg_${CHUNK_ID}_pass1.log"
-            cat "ffmpeg_${CHUNK_ID}_pass2.log"
+            cat "ffmpeg_${CHUNK_ID}.log"
             exit 1
           fi
           echo "✅ تم إنشاء $OUT_FILE ($(stat -c%s "$OUT_FILE") بايت)"
@@ -301,31 +293,18 @@ jobs:
         run: |
           set -euo pipefail
           echo "دمج الأجزاء" > stage.txt
-
-          echo "📂 محتويات مجلد all_encoded:"
-          ls -la all_encoded/ 2>/dev/null || echo "❌ المجلد غير موجود إطلاقاً"
-
           if [ ! -d all_encoded ] || [ -z "$(ls -A all_encoded 2>/dev/null)" ]; then
-            echo "❌ مجلد all_encoded فارغ أو غير موجود"
-            exit 1
+            echo "❌ مجلد all_encoded فارغ"; exit 1
           fi
-
           cd all_encoded
           rm -f concat_list.txt
           for f in $(ls encoded_*.mkv 2>/dev/null | sort); do
             echo "file '$f'" >> concat_list.txt
           done
-
-          if [ ! -s concat_list.txt ]; then
-            echo "❌ لا توجد ملفات"
-            exit 1
-          fi
-
+          [ -s concat_list.txt ] || { echo "❌ لا توجد ملفات"; exit 1; }
           ffmpeg -f concat -safe 0 -i concat_list.txt \
-            -c:v copy \
-            -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -c:v copy -c:a libopus -b:a 32k -ac 2 -ar 48000 \
             -y ../output.mkv
-
           cd ..
           [ -f output.mkv ] && echo "✅ الدمج ناجح" || { echo "❌ فشل الدمج"; exit 1; }
 
@@ -333,9 +312,7 @@ jobs:
         id: videoinfo
         run: |
           DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
-          H=$((DURATION_SEC / 3600))
-          M=$(((DURATION_SEC % 3600) / 60))
-          S=$((DURATION_SEC % 60))
+          H=$((DURATION_SEC/3600)); M=$(((DURATION_SEC%3600)/60)); S=$((DURATION_SEC%60))
           DURATION_FMT=$(printf "%02d:%02d:%02d" $H $M $S)
           ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.mkv)
           echo "duration_fmt=$DURATION_FMT" >> "$GITHUB_OUTPUT"
