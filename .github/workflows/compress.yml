@@ -129,7 +129,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء (2‑Pass VBR - اختبار بتريت 2000k للأنمي)
+  # المرحلة الثانية: ضغط الأجزاء (2‑Pass VBR + فلاتر تنظيف المصدر + Grain)
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
@@ -187,12 +187,16 @@ jobs:
           echo "🔍 نسخة ffmpeg:"
           which ffmpeg
           ffmpeg -version
-          echo "🔍 فحص وجود فلتر atadenoise:"
-          if ! ffmpeg -filters 2>/dev/null | grep -q atadenoise; then
-            echo "❌ فلتر atadenoise غير موجود — البناء معطوب"
+          echo "🔍 فحص وجود فلاتر pre-processing:"
+          if ! ffmpeg -filters 2>/dev/null | grep -q pp7; then
+            echo "❌ فلتر pp7 غير موجود"
             exit 1
           fi
-          echo "✅ الفلتر موجود"
+          if ! ffmpeg -filters 2>/dev/null | grep -q hqdn3d; then
+            echo "❌ فلتر hqdn3d غير موجود"
+            exit 1
+          fi
+          echo "✅ جميع الفلاتر المطلوبة موجودة"
 
       - name: تنزيل الجزء المخصص لهذا السيرفر
         uses: actions/download-artifact@v4
@@ -200,7 +204,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - 2‑Pass VBR 2000k (اختبار)
+      - name: ضغط الجزء (${{ matrix.chunk }}) - 2‑Pass VBR 350k + تنظيف المصدر
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -215,32 +219,36 @@ jobs:
 
           PRESET="6"
 
+          # إعدادات البتريت حسب نوع المحتوى (الأنمي 350k مع فلاتر جديدة)
           case "$CONTENT_TYPE" in
             real)
               AVG_BITRATE=600
-              DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.15:1b=0.15"
-              GRAIN_PARAM="film-grain=6:film-grain-denoise=0" ;;
+              # للمحتوى الحقيقي: نستخدم فلتر خفيف فقط لإزالة ضوضاء المصدر المضغوط
+              PRE_FILTER="pp7=qp=3,hqdn3d=2:1:2:2"
+              GRAIN_PARAM="film-grain=6:film-grain-denoise=1" ;;
             animation)
-              AVG_BITRATE=2000   # رفع إلى 2000k فقط للاختبار
-              DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.2:1b=0.2"
-              GRAIN_PARAM="film-grain=8:film-grain-denoise=0" ;;
+              AVG_BITRATE=350
+              # للأنمي: تنظيف آثار H.264/H.265 بلطف
+              PRE_FILTER="pp7=qp=3,hqdn3d=2:1:2:2"
+              GRAIN_PARAM="film-grain=8:film-grain-denoise=1" ;;
             animation_ultra)
               AVG_BITRATE=280
-              DENOISE="atadenoise=0a=0.15:0b=0.15:1a=0.3:1b=0.3"
-              GRAIN_PARAM="film-grain=10:film-grain-denoise=0" ;;
+              PRE_FILTER="pp7=qp=4,hqdn3d=2:1:3:3"
+              GRAIN_PARAM="film-grain=10:film-grain-denoise=1" ;;
             *)
-              AVG_BITRATE=2000   # للاختبار أيضاً
-              DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.2:1b=0.2"
-              GRAIN_PARAM="film-grain=6:film-grain-denoise=0" ;;
+              AVG_BITRATE=350
+              PRE_FILTER="pp7=qp=3,hqdn3d=2:1:2:2"
+              GRAIN_PARAM="film-grain=8:film-grain-denoise=1" ;;
           esac
 
+          # keyint=2s لعلاج الانتقالات
           SVT_PARAMS="-svtav1-params tune=0:rc=1:enable-qm=1:qm-min=0:qm-max=15:enable-overlays=1:keyint=2s:${GRAIN_PARAM}"
 
-          echo "🎛️ AV1 2‑Pass VBR - $CONTENT_TYPE | متوسط البتريت: ${AVG_BITRATE}k | keyint=2s (اختبار)"
+          echo "🎛️ AV1 2‑Pass VBR - $CONTENT_TYPE | متوسط البتريت: ${AVG_BITRATE}k | فلاتر: $PRE_FILTER | keyint=2s"
 
           echo "📊 المرور الأول..."
           ffmpeg -y -i "$IN" \
-            -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+            -vf "${PRE_FILTER},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -pix_fmt yuv420p10le \
             -c:v libsvtav1 -b:v "${AVG_BITRATE}k" \
             -preset $PRESET $SVT_PARAMS \
@@ -248,7 +256,7 @@ jobs:
 
           echo "📊 المرور الثاني..."
           ffmpeg -y -i "$IN" \
-            -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+            -vf "${PRE_FILTER},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -pix_fmt yuv420p10le \
             -c:v libsvtav1 -b:v "${AVG_BITRATE}k" \
             -preset $PRESET $SVT_PARAMS \
