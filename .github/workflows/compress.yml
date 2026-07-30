@@ -137,7 +137,7 @@ jobs:
         id: cache-build
         with:
           path: ~/av1-build
-          key: av1-ffmpeg-full-aom-420-${{ runner.os }}-v1
+          key: av1-ffmpeg-full-aom-420-${{ runner.os }}-v2
 
       - name: تثبيت متطلبات التشغيل الأساسية
         run: |
@@ -173,7 +173,7 @@ jobs:
           rm -rf FFmpeg
           git clone --depth 1 --branch release/8.0 https://github.com/FFmpeg/FFmpeg.git
           cd FFmpeg
-          export PKG_CONFIG_PATH="$HOME/av1-build/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export PKG_CONFIG_PATH="$HOME/av1-build/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           export LD_LIBRARY_PATH="$HOME/av1-build/lib"
           ./configure --prefix="$HOME/av1-build" \
             --enable-gpl \
@@ -186,11 +186,9 @@ jobs:
           make install
           cd ..
 
-          # التحقق من وجود المشفرات والفلاتر
-          echo "التحقق من المشفرات:"
+          echo "التحقق من وجود المشفرات والفلاتر:"
           $HOME/av1-build/bin/ffmpeg -encoders 2>/dev/null | grep -q libsvtav1 && echo "✅ libsvtav1 موجود" || echo "❌ libsvtav1 مفقود"
           $HOME/av1-build/bin/ffmpeg -encoders 2>/dev/null | grep -q libaom && echo "✅ libaom-av1 موجود" || echo "❌ libaom-av1 مفقود"
-          echo "التحقق من الفلاتر:"
           for filter in hqdn3d pp7 atadenoise nlmeans vaguedenoiser unsharp gradfun deblock dedot sab; do
             if $HOME/av1-build/bin/ffmpeg -filters 2>/dev/null | grep -q "$filter"; then
               echo "✅ $filter موجود"
@@ -224,17 +222,15 @@ jobs:
           mkdir -p "$OUT_DIR"
 
           PRESET="6"
-          CRF=50   # نقطة بداية جيدة للأنمي
+          CRF=50
           MAXRATE=3000
           BUFSIZE=12000
           GRAIN_PARAM="film-grain=8:film-grain-denoise=1"
-          # إعدادات خاصة بـ libaom
           AOM_PARAMS="-cpu-used 4 -row-mt 1"
 
           echo "🎛️ المشفر المختار: $CODEC_CHOICE | CRF=$CRF | maxrate=${MAXRATE}k"
 
           if [ "$CODEC_CHOICE" = "aom" ]; then
-            # استخدام libaom-av1
             ffmpeg -y -i "$IN" \
               -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
               -pix_fmt yuv420p10le \
@@ -244,7 +240,6 @@ jobs:
               -c:a libopus -b:a 32k -ac 2 -ar 48000 \
               -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
           else
-            # استخدام libsvtav1 (SVT-AV1)
             SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}"
             ffmpeg -y -i "$IN" \
               -vf "scale=trunc(oh*a/2)*2:${RESOLUTION}" \
