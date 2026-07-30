@@ -129,7 +129,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء (CRF + maxrate + keyint قصير + Grain Synthesis)
+  # المرحلة الثانية: ضغط الأجزاء (2‑Pass VBR + keyint=2s + Grain Synthesis)
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
@@ -181,28 +181,26 @@ jobs:
           echo "$HOME/av1-build/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$HOME/av1-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
-      - name: التحقق الإلزامي من سلامة البناء (يفشل الـ job فوراً لو معطوب)
+      - name: التحقق الإلزامي من سلامة البناء
         run: |
           set -euo pipefail
           echo "🔍 نسخة ffmpeg:"
           which ffmpeg
           ffmpeg -version
-
           echo "🔍 فحص وجود فلتر atadenoise:"
           if ! ffmpeg -filters 2>/dev/null | grep -q atadenoise; then
-            echo "❌ فلتر atadenoise غير موجود — الكاش/البناء معطوب. أوقف التشغيل فوراً."
-            ffmpeg -filters
+            echo "❌ فلتر atadenoise غير موجود — البناء معطوب"
             exit 1
           fi
-          echo "✅ الفلتر موجود، البناء سليم"
+          echo "✅ الفلتر موجود"
 
-      - name: تنزيل الجزء المخصص لهذا السيرفر
+      - name: تنزيل الجزء المخصص
         uses: actions/download-artifact@v4
         with:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF + Grain + keyint=2s
+      - name: ضغط الجزء (${{ matrix.chunk }}) - 2‑Pass VBR + keyint=2s
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -212,57 +210,60 @@ jobs:
           IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
           OUT_DIR="chunks_encoded"
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
+          PASSLOG="passlog_${CHUNK_ID}"
           mkdir -p "$OUT_DIR"
 
           PRESET="6"
 
-          # إعدادات CRF و maxrate وفلتر الضجيج حسب نوع المحتوى
           case "$CONTENT_TYPE" in
             real)
-              CRF=28
-              MAXRATE=1500
-              BUFSIZE=3000
+              AVG_BITRATE=600
               DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.15:1b=0.15"
               GRAIN_PARAM="film-grain=6:film-grain-denoise=0" ;;
             animation)
-              CRF=30
-              MAXRATE=800
-              BUFSIZE=1600
+              AVG_BITRATE=350   # رفعنا البتريت قليلاً لتجنب المربعات
               DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.25:1b=0.25"
               GRAIN_PARAM="film-grain=8:film-grain-denoise=0" ;;
             animation_ultra)
-              CRF=32
-              MAXRATE=700
-              BUFSIZE=1400
+              AVG_BITRATE=280
               DENOISE="atadenoise=0a=0.15:0b=0.15:1a=0.3:1b=0.3"
               GRAIN_PARAM="film-grain=10:film-grain-denoise=0" ;;
             *)
-              CRF=30
-              MAXRATE=1000
-              BUFSIZE=2000
+              AVG_BITRATE=400
               DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.3:1b=0.3"
               GRAIN_PARAM="film-grain=6:film-grain-denoise=0" ;;
           esac
 
-          # معاملات SVT-AV1 (بدون scd, مع keyint=2s)
-          SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:keyint=2s:${GRAIN_PARAM}"
+          # المعاملات المدعومة: keyint=2s يحل مشكلة الانتقالات، بدون maxrate/bufsize
+          SVT_PARAMS="-svtav1-params tune=0:rc=1:enable-qm=1:qm-min=0:qm-max=15:enable-overlays=1:keyint=2s:${GRAIN_PARAM}"
 
-          echo "🎛️ AV1 CRF=$CRF مع maxrate=${MAXRATE}k | keyint=2s | نوع المحتوى: $CONTENT_TYPE"
+          echo "🎛️ AV1 2‑Pass VBR - $CONTENT_TYPE | متوسط البتريت: ${AVG_BITRATE}k | keyint=2s"
 
+          echo "📊 المرور الأول..."
           ffmpeg -y -i "$IN" \
             -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
             -pix_fmt yuv420p10le \
-            -c:v libsvtav1 -crf $CRF -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
+            -c:v libsvtav1 -b:v "${AVG_BITRATE}k" \
             -preset $PRESET $SVT_PARAMS \
+            -passlogfile "$PASSLOG" -pass 1 -an -f null /dev/null 2>&1 | tee "ffmpeg_${CHUNK_ID}_pass1.log"
+
+          echo "📊 المرور الثاني..."
+          ffmpeg -y -i "$IN" \
+            -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
+            -pix_fmt yuv420p10le \
+            -c:v libsvtav1 -b:v "${AVG_BITRATE}k" \
+            -preset $PRESET $SVT_PARAMS \
+            -passlogfile "$PASSLOG" -pass 2 \
             -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
+            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}_pass2.log"
 
           if [ ! -s "$OUT_FILE" ]; then
-            echo "❌ فشل ترميز الجزء ${CHUNK_ID} - لم يُنشأ ملف الإخراج"
-            echo "--- سجل الترميز ---"; cat "ffmpeg_${CHUNK_ID}.log"
+            echo "❌ فشل ترميز الجزء ${CHUNK_ID}"
+            cat "ffmpeg_${CHUNK_ID}_pass1.log"
+            cat "ffmpeg_${CHUNK_ID}_pass2.log"
             exit 1
           fi
-          echo "✅ تم إنشاء $OUT_FILE بنجاح ($(stat -c%s "$OUT_FILE") بايت)"
+          echo "✅ تم إنشاء $OUT_FILE ($(stat -c%s "$OUT_FILE") بايت)"
 
       - name: رفع الجزء المضغوط
         uses: actions/upload-artifact@v4
@@ -272,7 +273,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثالثة: دمج الأجزاء والتشفير والرفع
+  # المرحلة الثالثة: الدمج والتشفير والرفع
   # -------------------------------------------------------------
   merge-and-send:
     needs: [split-video, encode-chunks]
@@ -289,79 +290,55 @@ jobs:
           sudo apt install -y ffmpeg p7zip-full
           pip install python-telegram-bot
 
-      - name: تنزيل جميع الأجزاء المضغوطة
+      - name: تنزيل الأجزاء المضغوطة
         uses: actions/download-artifact@v4
         with:
           pattern: encoded-*
           path: all_encoded
           merge-multiple: true
 
-      - name: تشخيص ودمج الأجزاء
+      - name: دمج الأجزاء
         run: |
           set -euo pipefail
           echo "دمج الأجزاء" > stage.txt
-
-          echo "📂 محتويات مجلد all_encoded:"
-          ls -la all_encoded/ 2>/dev/null || echo "❌ المجلد غير موجود إطلاقاً"
-
           if [ ! -d all_encoded ] || [ -z "$(ls -A all_encoded 2>/dev/null)" ]; then
-            echo "❌ مجلد all_encoded فارغ أو غير موجود — على الأغلب فشلت مرحلة الضغط ولم تُرفع أي أجزاء"
-            exit 1
+            echo "❌ مجلد all_encoded فارغ"; exit 1
           fi
-
           cd all_encoded
           rm -f concat_list.txt
           for f in $(ls encoded_*.mkv 2>/dev/null | sort); do
             echo "file '$f'" >> concat_list.txt
           done
-
           if [ ! -s concat_list.txt ]; then
-            echo "❌ لا توجد ملفات مطابقة للنمط encoded_*.mkv"
-            exit 1
+            echo "❌ لا توجد ملفات"; exit 1
           fi
-
-          echo "📋 الملفات التي سيتم دمجها:"
-          cat concat_list.txt
-
           ffmpeg -f concat -safe 0 -i concat_list.txt \
-            -c:v copy \
-            -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -c:v copy -c:a libopus -b:a 32k -ac 2 -ar 48000 \
             -y ../output.mkv
-
           cd ..
-          if [ ! -f output.mkv ]; then
-            echo "❌ فشل الدمج"
-            exit 1
-          fi
-          echo "✅ تم الدمج بنجاح"
+          [ -f output.mkv ] && echo "✅ الدمج ناجح" || { echo "❌ فشل الدمج"; exit 1; }
 
-      - name: استخراج معلومات الفيديو (المدة والدقة الفعلية)
+      - name: معلومات الفيديو
         id: videoinfo
         run: |
           DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
-          H=$((DURATION_SEC / 3600))
-          M=$(((DURATION_SEC % 3600) / 60))
-          S=$((DURATION_SEC % 60))
+          H=$((DURATION_SEC/3600)); M=$(((DURATION_SEC%3600)/60)); S=$((DURATION_SEC%60))
           DURATION_FMT=$(printf "%02d:%02d:%02d" $H $M $S)
-
           ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.mkv)
-
           echo "duration_fmt=$DURATION_FMT" >> "$GITHUB_OUTPUT"
           echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
-          echo "⏱️ المدة: $DURATION_FMT | 📐 الدقة الفعلية: $ACTUAL_RES"
+          echo "⏱️ $DURATION_FMT | 📐 $ACTUAL_RES"
 
-      - name: تشفير الفيديو (فقط لو خاص - بكلمة مرور المستخدم)
+      - name: تشفير (خاص فقط)
         if: github.event.inputs.private == 'true'
         env:
           USER_PASSWORD: ${{ github.event.inputs.password }}
         run: |
-          echo "تشفير الفيديو" > stage.txt
-          if [ -z "$USER_PASSWORD" ]; then
-            echo "❌ لم يتم توفير كلمة مرور للفيديو الخاص"; exit 1
-          fi
+          echo "تشفير" > stage.txt
+          [ -z "$USER_PASSWORD" ] && { echo "❌ كلمة المرور مطلوبة"; exit 1; }
           7z a -p"$USER_PASSWORD" -mhe=on output.7z output.mkv
 
-      - name: رفع الملف النهائي وإرسال رابط التليجرام
+      - name: رفع وإرسال تيليجرام
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
@@ -374,14 +351,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          echo "رفع الملف وإرسال الرابط" > stage.txt
+          echo "رفع وإرسال" > stage.txt
           TAG="video-${{ github.run_id }}"
           if [ "$PRIVATE" == "true" ]; then
             ASSET="output.7z"
           else
             ASSET="output.mkv"
           fi
-
           if [ -n "$FILENAME" ]; then
             BASE_NAME="$FILENAME"
           elif [ -n "$ORIGINAL_TITLE" ]; then
@@ -389,31 +365,15 @@ jobs:
           else
             BASE_NAME="video"
           fi
-
           EXT="${ASSET##*.}"
           mv "$ASSET" "${BASE_NAME}.${EXT}"
           ASSET="${BASE_NAME}.${EXT}"
-
-          if [ ! -f "$ASSET" ]; then
-            echo "❌ ملف الإخراج غير موجود: $ASSET"
-            exit 1
-          fi
-
-          SIZE_BYTES=$(stat -c%s "$ASSET")
-          SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $SIZE_BYTES/1048576}")
-          echo "📦 حجم الملف: ${SIZE_MB}MB"
-
-          echo "🚀 إنشاء الـ Release..."
+          [ -f "$ASSET" ] || { echo "❌ الملف غير موجود"; exit 1; }
+          SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $(stat -c%s "$ASSET")/1048576}")
+          echo "📦 ${SIZE_MB}MB"
           gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح"
-          echo "✅ تم إنشاء الـ Release بنجاح"
-
           DIRECT_URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
-          echo "🔗 الرابط المباشر: $DIRECT_URL"
-
-          export DOWNLOAD_URL="$DIRECT_URL"
-          export VIDEO_NAME="$BASE_NAME"
-          export SIZE_MB="$SIZE_MB"
-
+          export DOWNLOAD_URL="$DIRECT_URL" VIDEO_NAME="$BASE_NAME" SIZE_MB="$SIZE_MB"
           python3 << 'EOF'
           import os, asyncio, sys
           from telegram import Bot
@@ -428,24 +388,18 @@ jobs:
               duration = os.environ.get("DURATION_FMT", "")
               resolution = os.environ.get("ACTUAL_RES", "")
 
-              info_lines = f"🎬 الاسم: {name}\n📦 الحجم: {size_mb} MB\n📐 الدقة: {resolution}\n⏱️ المدة: {duration}"
-
+              info = f"🎬 {name}\n📦 {size_mb} MB\n📐 {resolution}\n⏱️ {duration}"
               if private == "true":
-                  text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
+                  text = f"✅ تم الضغط!\n\n{info}\n\n📥 الرابط:\n{url}\n\n🔑 كلمة المرور:\n{password}"
               else:
-                  text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل المباشر:\n" + url
-
-              try:
-                  await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
-                  print("✅ تم إرسال الرسالة بنجاح إلى تيليجرام")
-              except Exception as e:
-                  print(f"❌ فشل إرسال الرسالة: {e}", file=sys.stderr)
-                  raise
+                  text = f"✅ تم الضغط!\n\n{info}\n\n📥 الرابط المباشر:\n{url}"
+              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+              print("✅ تم الإرسال")
 
           asyncio.run(main())
           EOF
 
-      - name: إرسال إشعار الفشل مع التفاصيل لو حدث خطأ
+      - name: إشعار الفشل
         if: failure()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -456,26 +410,11 @@ jobs:
           python3 << 'EOF'
           import os, asyncio
           from telegram import Bot
-
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
-              chat_id = os.environ["CHAT_ID"]
-              repo = os.environ.get("GITHUB_REPOSITORY", "")
-              run_id = os.environ.get("GITHUB_RUN_ID", "")
-              run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
-
-              stage = "غير معروفة"
-              if os.path.exists("stage.txt"):
-                  with open("stage.txt", encoding="utf-8") as f:
-                      stage = f.read().strip()
-
-              text = (
-                  "❌ فشلت العملية.\n\n"
-                  f"🔎 المرحلة المتأثرة: {stage}\n\n"
-                  f"📋 صفحة التفاصيل والتشخيص:\n{run_url}"
-              )
-
-              await bot.send_message(chat_id=chat_id, text=text)
-
+              stage = open("stage.txt").read().strip() if os.path.exists("stage.txt") else "غير معروفة"
+              run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+              text = f"❌ فشلت العملية.\n🔎 المرحلة: {stage}\n📋 التفاصيل:\n{run_url}"
+              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
           asyncio.run(main())
           EOF
