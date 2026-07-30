@@ -129,7 +129,7 @@ jobs:
           retention-days: 1
 
   # -------------------------------------------------------------
-  # المرحلة الثانية: ضغط الأجزاء (2‑Pass VBR + keyint=2s + Grain)
+  # المرحلة الثانية: ضغط الأجزاء (2‑Pass VBR - اختبار بتريت 2000k للأنمي)
   # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
@@ -200,7 +200,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - 2‑Pass VBR 400k (اختبار أولي)
+      - name: ضغط الجزء (${{ matrix.chunk }}) - 2‑Pass VBR 2000k (اختبار)
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -215,14 +215,13 @@ jobs:
 
           PRESET="6"
 
-          # إعدادات حسب نوع المحتوى (الأنمي أصبح 400k للتجربة)
           case "$CONTENT_TYPE" in
             real)
               AVG_BITRATE=600
               DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.15:1b=0.15"
               GRAIN_PARAM="film-grain=6:film-grain-denoise=0" ;;
             animation)
-              AVG_BITRATE=400   # زيادة للاختبار، ثم ننزل تدريجياً
+              AVG_BITRATE=2000   # رفع إلى 2000k فقط للاختبار
               DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.2:1b=0.2"
               GRAIN_PARAM="film-grain=8:film-grain-denoise=0" ;;
             animation_ultra)
@@ -230,15 +229,14 @@ jobs:
               DENOISE="atadenoise=0a=0.15:0b=0.15:1a=0.3:1b=0.3"
               GRAIN_PARAM="film-grain=10:film-grain-denoise=0" ;;
             *)
-              AVG_BITRATE=400
+              AVG_BITRATE=2000   # للاختبار أيضاً
               DENOISE="atadenoise=0a=0.05:0b=0.05:1a=0.2:1b=0.2"
               GRAIN_PARAM="film-grain=6:film-grain-denoise=0" ;;
           esac
 
-          # keyint=2s يضمن keyframe كل ثانيتين → يحل مشكلة الانتقالات
           SVT_PARAMS="-svtav1-params tune=0:rc=1:enable-qm=1:qm-min=0:qm-max=15:enable-overlays=1:keyint=2s:${GRAIN_PARAM}"
 
-          echo "🎛️ AV1 2‑Pass VBR - $CONTENT_TYPE | متوسط البتريت: ${AVG_BITRATE}k | keyint=2s"
+          echo "🎛️ AV1 2‑Pass VBR - $CONTENT_TYPE | متوسط البتريت: ${AVG_BITRATE}k | keyint=2s (اختبار)"
 
           echo "📊 المرور الأول..."
           ffmpeg -y -i "$IN" \
