@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 4.2.0)
+name: ضغط الفيديو (AV1 4.2.0 - مبني من المصدر)
 
 on:
   workflow_dispatch:
@@ -41,6 +41,9 @@ permissions:
   contents: write
 
 jobs:
+  # -------------------------------------------------------------
+  # المرحلة الأولى: تحميل الفيديو وبناء البيئة
+  # -------------------------------------------------------------
   split-video:
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -48,13 +51,14 @@ jobs:
       chunks: ${{ steps.segment.outputs.chunks }}
       video_title: ${{ steps.title.outputs.video_title }}
     steps:
-      - uses: actions/checkout@v4
+      - name: استنساخ المستودع
+        uses: actions/checkout@v4
 
       - name: تجهيز أدوات التحميل
         run: |
           echo "تجهيز البيئة" > stage.txt
           sudo apt update
-          sudo apt install -y ffmpeg
+          sudo apt install -y jq ffmpeg
           pip install --upgrade --pre yt-dlp
 
       - name: تثبيت Deno
@@ -98,7 +102,7 @@ jobs:
           echo "video_title=$CLEAN_TITLE" >> "$GITHUB_OUTPUT"
           echo "📝 العنوان المستخرج: $CLEAN_TITLE"
 
-      - name: تقطيع الفيديو
+      - name: تقطيع الفيديو (فقط لو أطول من 20 دقيقة)
         id: segment
         run: |
           mkdir -p chunks_raw
@@ -113,16 +117,20 @@ jobs:
             cp raw_input.mp4 "chunks_raw/chunk_000.mp4"
           fi
 
-          CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | sed 's/.*/"&"/' | paste -sd, | sed 's/.*/[&]/')
+          CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | jq -R . | jq -s -c .)
           echo "chunks=$CHUNKS_JSON" >> "$GITHUB_OUTPUT"
           echo "الأجزاء: $CHUNKS_JSON"
 
-      - uses: actions/upload-artifact@v4
+      - name: رفع الأجزاء الخام كـ Artifacts
+        uses: actions/upload-artifact@v4
         with:
           name: raw-chunks
           path: chunks_raw/
           retention-days: 1
 
+  # -------------------------------------------------------------
+  # المرحلة الثانية: ضغط الأجزاء باستخدام SVT-AV1 4.2.0 + FFmpeg مستقر
+  # -------------------------------------------------------------
   encode-chunks:
     needs: split-video
     runs-on: ubuntu-latest
@@ -132,23 +140,64 @@ jobs:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
       max-parallel: 10
     steps:
-      - name: Cache SVT-AV1 & FFmpeg build
+      # ⚠️ مسار تثبيت مخصص وصغير (~/av1-build) بدل /usr/local الضخم
+      # هذا يسرّع حفظ/استرجاع الكاش بشكل كبير (كان يستغرق 19 دقيقة مع /usr/local)
+      - name: استعادة بناء SVT-AV1 و FFmpeg من الكاش (أو بناؤه)
         uses: actions/cache@v4
         id: cache-build
         with:
-          path: /usr/local
-          key: av1-ffmpeg-420-${{ runner.os }}-v-final
+          path: ~/av1-build
+          key: av1-ffmpeg-420-${{ runner.os }}-v4
 
-      - name: Build SVT-AV1 4.2.0 & FFmpeg
+      - name: بناء SVT-AV1 4.2.0 و FFmpeg (إصدار مستقر) من المصدر
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
-          sudo apt update && sudo apt install -y cmake nasm libopus-dev
-          git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
-          cd SVT-AV1/Build && cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON && make -j$(nproc) && sudo make install && sudo ldconfig && cd ../..
-          git clone --depth 1 --branch release/8.0 https://github.com/FFmpeg/FFmpeg.git
-          cd FFmpeg && ./configure --enable-libsvtav1 --enable-libopus && make -j$(nproc) && sudo make install && sudo ldconfig && cd ..
+          set -euo pipefail
+          sudo apt update
+          sudo apt install -y cmake nasm libopus-dev
 
-      - name: تنزيل الجزء المخصص
+          rm -rf SVT-AV1 FFmpeg
+
+          git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
+          cd SVT-AV1/Build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$HOME/av1-build"
+          make -j$(nproc)
+          make install
+          cd ../..
+
+          git clone --depth 1 --branch release/8.0 https://github.com/FFmpeg/FFmpeg.git
+          cd FFmpeg
+          export PKG_CONFIG_PATH="$HOME/av1-build/lib/pkgconfig"
+          export LD_LIBRARY_PATH="$HOME/av1-build/lib"
+          ./configure --prefix="$HOME/av1-build" --enable-libsvtav1 --enable-libopus
+          make -j$(nproc)
+          make install
+          cd ..
+
+      # ⚠️ نضيف مسار التثبيت المخصص لبيئة كل الخطوات القادمة في هذا الـ job
+      # (بدون هذا، bash ما رح يلقى ffmpeg ولا يلقى مكتباته المشتركة)
+      - name: تفعيل مسار FFmpeg المخصص لبقية الخطوات
+        run: |
+          echo "$HOME/av1-build/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$HOME/av1-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      # ⚠️ تعمل دائماً — سواء بُني حديثاً أو جاء من الكاش
+      - name: التحقق الإلزامي من سلامة البناء (يفشل الـ job فوراً لو معطوب)
+        run: |
+          set -euo pipefail
+          echo "🔍 نسخة ffmpeg:"
+          which ffmpeg
+          ffmpeg -version
+
+          echo "🔍 فحص وجود فلتر atadenoise:"
+          if ! ffmpeg -filters 2>/dev/null | grep -q atadenoise; then
+            echo "❌ فلتر atadenoise غير موجود — الكاش/البناء معطوب. أوقف التشغيل فوراً."
+            ffmpeg -filters
+            exit 1
+          fi
+          echo "✅ الفلتر موجود، البناء سليم"
+
+      - name: تنزيل الجزء المخصص لهذا السيرفر
         uses: actions/download-artifact@v4
         with:
           name: raw-chunks
@@ -160,6 +209,7 @@ jobs:
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
+          set -o pipefail
           IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
           OUT_DIR="chunks_encoded"
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
@@ -168,6 +218,7 @@ jobs:
           PRESET="6"
           SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.6"
           RATE_ARGS=""
+          # ⚠️ قيم atadenoise مضبوطة ضمن الحد المسموح [0 - 0.3] لهذا البناء
           DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.3:1b=0.3"
 
           case "$CONTENT_TYPE" in
@@ -185,7 +236,7 @@ jobs:
               DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.3:1b=0.3" ;;
           esac
 
-          echo "🎛️ AV1 4.2.0 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
+          echo "🎛️ AV1 - نوع المحتوى: $CONTENT_TYPE | CRF: $CRF | القيود: $RATE_ARGS"
 
           ffmpeg -y -i "$IN" \
             -vf "${DENOISE},scale=trunc(oh*a/2)*2:${RESOLUTION}" \
@@ -195,24 +246,29 @@ jobs:
             -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           if [ ! -s "$OUT_FILE" ]; then
-            echo "❌ فشل ترميز الجزء ${CHUNK_ID}"
+            echo "❌ فشل ترميز الجزء ${CHUNK_ID} - لم يُنشأ ملف الإخراج"
             cat "ffmpeg_${CHUNK_ID}.log"
             exit 1
           fi
           echo "✅ تم إنشاء $OUT_FILE بنجاح ($(stat -c%s "$OUT_FILE") بايت)"
 
-      - uses: actions/upload-artifact@v4
+      - name: رفع الجزء المضغوط
+        uses: actions/upload-artifact@v4
         with:
           name: encoded-${{ matrix.chunk }}
           path: chunks_encoded/encoded_${{ matrix.chunk }}.mkv
           retention-days: 1
 
+  # -------------------------------------------------------------
+  # المرحلة الثالثة: دمج الأجزاء والتشفير والرفع
+  # -------------------------------------------------------------
   merge-and-send:
     needs: [split-video, encode-chunks]
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v4
+      - name: استنساخ المستودع
+        uses: actions/checkout@v4
 
       - name: تجهيز أدوات الدمج
         run: |
@@ -233,8 +289,11 @@ jobs:
           set -euo pipefail
           echo "دمج الأجزاء" > stage.txt
 
+          echo "📂 محتويات مجلد all_encoded:"
+          ls -la all_encoded/ 2>/dev/null || echo "❌ المجلد غير موجود إطلاقاً"
+
           if [ ! -d all_encoded ] || [ -z "$(ls -A all_encoded 2>/dev/null)" ]; then
-            echo "❌ مجلد all_encoded فارغ أو غير موجود"
+            echo "❌ مجلد all_encoded فارغ أو غير موجود — على الأغلب فشلت مرحلة الضغط ولم تُرفع أي أجزاء"
             exit 1
           fi
 
@@ -245,9 +304,12 @@ jobs:
           done
 
           if [ ! -s concat_list.txt ]; then
-            echo "❌ لا توجد ملفات للدمج"
+            echo "❌ لا توجد ملفات مطابقة للنمط encoded_*.mkv"
             exit 1
           fi
+
+          echo "📋 الملفات التي سيتم دمجها:"
+          cat concat_list.txt
 
           ffmpeg -f concat -safe 0 -i concat_list.txt \
             -c:v copy \
@@ -261,7 +323,7 @@ jobs:
           fi
           echo "✅ تم الدمج بنجاح"
 
-      - name: استخراج معلومات الفيديو
+      - name: استخراج معلومات الفيديو (المدة والدقة الفعلية)
         id: videoinfo
         run: |
           DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
@@ -276,13 +338,14 @@ jobs:
           echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
           echo "⏱️ المدة: $DURATION_FMT | 📐 الدقة الفعلية: $ACTUAL_RES"
 
-      - name: تشفير الفيديو (فقط لو خاص)
+      - name: تشفير الفيديو (فقط لو خاص - بكلمة مرور المستخدم)
         if: github.event.inputs.private == 'true'
         env:
           USER_PASSWORD: ${{ github.event.inputs.password }}
         run: |
+          echo "تشفير الفيديو" > stage.txt
           if [ -z "$USER_PASSWORD" ]; then
-            echo "❌ لم يتم توفير كلمة مرور"; exit 1
+            echo "❌ لم يتم توفير كلمة مرور للفيديو الخاص"; exit 1
           fi
           7z a -p"$USER_PASSWORD" -mhe=on output.7z output.mkv
 
@@ -299,6 +362,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           set -euo pipefail
+          echo "رفع الملف وإرسال الرابط" > stage.txt
           TAG="video-${{ github.run_id }}"
           if [ "$PRIVATE" == "true" ]; then
             ASSET="output.7z"
@@ -327,42 +391,49 @@ jobs:
           SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $SIZE_BYTES/1048576}")
           echo "📦 حجم الملف: ${SIZE_MB}MB"
 
+          echo "🚀 إنشاء الـ Release..."
           gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح"
+          echo "✅ تم إنشاء الـ Release بنجاح"
+
           DIRECT_URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
+          echo "🔗 الرابط المباشر: $DIRECT_URL"
+
           export DOWNLOAD_URL="$DIRECT_URL"
+          export VIDEO_NAME="$BASE_NAME"
+          export SIZE_MB="$SIZE_MB"
 
           python3 << 'EOF'
-import os, asyncio
-from telegram import Bot
+          import os, asyncio, sys
+          from telegram import Bot
 
-async def main():
-    bot = Bot(token=os.environ["BOT_TOKEN"])
-    url = os.environ["DOWNLOAD_URL"]
-    private = os.environ["PRIVATE"]
-    password = os.environ.get("USER_PASSWORD", "")
-    name = os.environ.get("VIDEO_NAME", "")
-    size_mb = os.environ.get("SIZE_MB", "")
-    duration = os.environ.get("DURATION_FMT", "")
-    resolution = os.environ.get("ACTUAL_RES", "")
+          async def main():
+              bot = Bot(token=os.environ["BOT_TOKEN"])
+              url = os.environ["DOWNLOAD_URL"]
+              private = os.environ["PRIVATE"]
+              password = os.environ.get("USER_PASSWORD", "")
+              name = os.environ.get("VIDEO_NAME", "")
+              size_mb = os.environ.get("SIZE_MB", "")
+              duration = os.environ.get("DURATION_FMT", "")
+              resolution = os.environ.get("ACTUAL_RES", "")
 
-    info_lines = f"🎬 الاسم: {name}\n📦 الحجم: {size_mb} MB\n📐 الدقة: {resolution}\n⏱️ المدة: {duration}"
+              info_lines = f"🎬 الاسم: {name}\n📦 الحجم: {size_mb} MB\n📐 الدقة: {resolution}\n⏱️ المدة: {duration}"
 
-    if private == "true":
-        text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
-    else:
-        text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل المباشر:\n" + url
+              if private == "true":
+                  text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل:\n" + url + "\n\n🔑 كلمة المرور:\n" + password
+              else:
+                  text = "✅ تم الضغط بنجاح!\n\n" + info_lines + "\n\n📥 رابط التحميل المباشر:\n" + url
 
-    try:
-        await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
-        print("✅ تم إرسال الرسالة بنجاح إلى تيليجرام")
-    except Exception as e:
-        print(f"❌ فشل إرسال الرسالة: {e}")
-        raise
+              try:
+                  await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
+                  print("✅ تم إرسال الرسالة بنجاح إلى تيليجرام")
+              except Exception as e:
+                  print(f"❌ فشل إرسال الرسالة: {e}", file=sys.stderr)
+                  raise
 
-asyncio.run(main())
-EOF
+          asyncio.run(main())
+          EOF
 
-      - name: إرسال إشعار الفشل
+      - name: إرسال إشعار الفشل مع التفاصيل لو حدث خطأ
         if: failure()
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -371,14 +442,28 @@ EOF
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           python3 << 'EOF'
-import os, asyncio
-from telegram import Bot
+          import os, asyncio
+          from telegram import Bot
 
-async def main():
-    bot = Bot(token=os.environ["BOT_TOKEN"])
-    chat_id = os.environ["CHAT_ID"]
-    run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-    await bot.send_message(chat_id=chat_id, text=f"❌ فشلت العملية.\n📋 صفحة التفاصيل والتشخيص:\n{run_url}")
+          async def main():
+              bot = Bot(token=os.environ["BOT_TOKEN"])
+              chat_id = os.environ["CHAT_ID"]
+              repo = os.environ.get("GITHUB_REPOSITORY", "")
+              run_id = os.environ.get("GITHUB_RUN_ID", "")
+              run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
 
-asyncio.run(main())
-EOF
+              stage = "غير معروفة"
+              if os.path.exists("stage.txt"):
+                  with open("stage.txt", encoding="utf-8") as f:
+                      stage = f.read().strip()
+
+              text = (
+                  "❌ فشلت العملية.\n\n"
+                  f"🔎 المرحلة المتأثرة: {stage}\n\n"
+                  f"📋 صفحة التفاصيل والتشخيص:\n{run_url}"
+              )
+
+              await bot.send_message(chat_id=chat_id, text=text)
+
+          asyncio.run(main())
+          EOF
