@@ -140,8 +140,6 @@ jobs:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
       max-parallel: 10
     steps:
-      # ⚠️ مسار تثبيت مخصص وصغير (~/av1-build) بدل /usr/local الضخم
-      # هذا يسرّع حفظ/استرجاع الكاش بشكل كبير (كان يستغرق 19 دقيقة مع /usr/local)
       - name: استعادة بناء SVT-AV1 و FFmpeg من الكاش (أو بناؤه)
         uses: actions/cache@v4
         id: cache-build
@@ -174,14 +172,11 @@ jobs:
           make install
           cd ..
 
-      # ⚠️ نضيف مسار التثبيت المخصص لبيئة كل الخطوات القادمة في هذا الـ job
-      # (بدون هذا، bash ما رح يلقى ffmpeg ولا يلقى مكتباته المشتركة)
       - name: تفعيل مسار FFmpeg المخصص لبقية الخطوات
         run: |
           echo "$HOME/av1-build/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$HOME/av1-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
-      # ⚠️ تعمل دائماً — سواء بُني حديثاً أو جاء من الكاش
       - name: التحقق الإلزامي من سلامة البناء (يفشل الـ job فوراً لو معطوب)
         run: |
           set -euo pipefail
@@ -218,7 +213,6 @@ jobs:
           PRESET="6"
           SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:qm-max=15:qcomp=0.6"
           RATE_ARGS=""
-          # ⚠️ قيم atadenoise مضبوطة ضمن الحد المسموح [0 - 0.3] لهذا البناء
           DENOISE="atadenoise=0a=0.1:0b=0.1:1a=0.3:1b=0.3"
 
           case "$CONTENT_TYPE" in
@@ -359,7 +353,7 @@ jobs:
           ORIGINAL_TITLE: ${{ needs.split-video.outputs.video_title }}
           DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
           ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           echo "رفع الملف وإرسال الرابط" > stage.txt
