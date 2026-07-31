@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 - CRF 50 بدون فلاتر)
+name: ضغط الفيديو (AV1 - 4 خيارات بدون سقف)
 
 on:
   workflow_dispatch:
@@ -10,10 +10,16 @@ on:
         description: 'الدقة (مثلاً 720)'
         required: true
         default: '720'
-      codec:
-        description: 'الكوديك (av1)'
+      content_type:
+        description: 'نوع المحتوى'
         required: true
-        default: 'av1'
+        default: 'real'
+        type: choice
+        options:
+          - real
+          - anime_balanced
+          - anime_small
+          - unsure
       chat_id:
         description: 'معرف الدردشة'
         required: true
@@ -24,10 +30,6 @@ on:
         description: 'كلمة المرور (فقط لو خاص)'
         required: false
         default: ''
-      content_type:
-        description: 'نوع المحتوى (real, animation, animation_ultra, auto)'
-        required: false
-        default: 'auto'
       filename:
         description: 'اسم الملف المطلوب'
         required: false
@@ -190,9 +192,10 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF=50 بدون سقف أو فلاتر
+      - name: ضغط الجزء (${{ matrix.chunk }}) - حسب نوع المحتوى
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
+          CONTENT_TYPE: ${{ github.event.inputs.content_type }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
           set -o pipefail
@@ -201,15 +204,56 @@ jobs:
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
 
-          echo "🎛️ CRF=58 | preset=8 | بدون سقف | بدون فلاتر | صوت 32k"
+          # الإعدادات حسب نوع المحتوى
+          case "$CONTENT_TYPE" in
+            real)
+              CRF=30
+              PRESET=6
+              AUDIO_BITRATE=64
+              # film-grain مع denoise للمحتوى الواقعي فقط
+              SVT_PARAMS="-svtav1-params tune=0:film-grain=6:film-grain-denoise=1"
+              VF_CHAIN="scale=-2:${RESOLUTION}"
+              ;;
+            anime_balanced)
+              CRF=54
+              PRESET=8
+              AUDIO_BITRATE=32
+              SVT_PARAMS="-svtav1-params tune=0"
+              VF_CHAIN="scale=-2:${RESOLUTION}"
+              ;;
+            anime_small)
+              CRF=58
+              PRESET=8
+              AUDIO_BITRATE=32
+              SVT_PARAMS="-svtav1-params tune=0"
+              VF_CHAIN="scale=-2:${RESOLUTION}"
+              ;;
+            unsure)
+              CRF=40
+              PRESET=8
+              AUDIO_BITRATE=32
+              SVT_PARAMS="-svtav1-params tune=0"
+              VF_CHAIN="scale=-2:${RESOLUTION}"
+              ;;
+            *)
+              CRF=40
+              PRESET=8
+              AUDIO_BITRATE=32
+              SVT_PARAMS="-svtav1-params tune=0"
+              VF_CHAIN="scale=-2:${RESOLUTION}"
+              ;;
+          esac
+
+          echo "🎛️ النوع: $CONTENT_TYPE | CRF=$CRF | preset=$PRESET | صوت ${AUDIO_BITRATE}k"
 
           ffmpeg -y -i "$IN" \
-            -vf "scale=-2:${RESOLUTION}" \
+            -vf "$VF_CHAIN" \
             -c:v libsvtav1 \
-            -crf 58 \
-            -preset 8 \
+            -crf $CRF \
+            -preset $PRESET \
+            $SVT_PARAMS \
             -c:a libopus \
-            -b:a 32k \
+            -b:a "${AUDIO_BITRATE}k" \
             -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           if [ ! -s "$OUT_FILE" ]; then
@@ -261,8 +305,9 @@ jobs:
             echo "file '$f'" >> concat_list.txt
           done
           [ -s concat_list.txt ] || { echo "❌ لا توجد ملفات"; exit 1; }
+          # استخدام 64k كصوت افتراضي للدمج (سيتم تجاهله مع copy للفيديو)
           ffmpeg -f concat -safe 0 -i concat_list.txt \
-            -c:v copy -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -c:v copy -c:a libopus -b:a 64k -ac 2 -ar 48000 \
             -y ../output.mkv
           cd ..
           [ -f output.mkv ] && echo "✅ الدمج ناجح" || { echo "❌ فشل الدمج"; exit 1; }
