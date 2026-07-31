@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 4.2.0 - CRF 50 + سقف 2500 + bufsize أقصى)
+name: ضغط الفيديو (AV1 4.2.0 - CRF 58 + سقف 2500)
 
 on:
   workflow_dispatch:
@@ -210,7 +210,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 50 + maxrate 2500 + bufsize 10000
+      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 58 + maxrate 2500 + bufsize 10000
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -223,9 +223,8 @@ jobs:
           mkdir -p "$OUT_DIR"
 
           PRESET="6"
-          CRF=50
+          CRF=58
           MAXRATE=2500
-          # bufsize أقصى قيمة مسموحة (10000k) لضمان أقصى مرونة
           BUFSIZE=10000
           GRAIN_PARAM="film-grain=8:film-grain-denoise=1"
 
