@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 4.2.0 - CRF 50 + تحسينات مصححة)
+name: ضغط الفيديو (AV1 4.2.0 - CRF 50 + سقف 2500 + مخزن كبير)
 
 on:
   workflow_dispatch:
@@ -177,12 +177,6 @@ jobs:
           echo "$HOME/av1-build/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$HOME/av1-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
-      # ⚠️ إصلاح جوهري: هذه الخطوة انتقلت لخارج شرط cache-hit
-      # سابقاً كان التحقق من الفلاتر محصوراً داخل خطوة البناء نفسها، فكان
-      # يُتخطى بالكامل عند استخدام الكاش (نفس ثغرة "hqdn3d غير موجود" اللي
-      # واجهناها سابقاً). الآن يعمل دائماً، ويكتشف أيضاً دعم --sharpness
-      # (باراميتر لسه قيد الدمج لـ mainline وقت كتابة هذا الكود، فقد يكون
-      # موجوداً أو لا حسب توقيت البناء بالضبط)
       - name: التحقق الإلزامي من الفلاتر والباراميترات (يعمل دائماً)
         run: |
           set -euo pipefail
@@ -216,17 +210,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      # ⚠️ خطوة تشخيصية اختيارية (لا تؤثر على الترميز): تكشف هل الإطارات
-      # مكررة فعلياً (رسم أبطأ داخل حاوية 60fps) قبل اتخاذ قرار تقليل الإطارات
-      - name: تشخيص معدل الإطارات الفعلي (mpdecimate)
-        env:
-          CHUNK_ID: ${{ matrix.chunk }}
-        run: |
-          IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
-          echo "📊 فحص نسبة الإطارات المكررة فعلياً في هذا الجزء:"
-          ffmpeg -i "$IN" -vf mpdecimate,metadata=print -f null - 2>&1 | grep -c "lavfi.mpdecimate.drop_count" || echo "0 إطارات مكررة مكتشفة"
-
-      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 50 + variance-boost مضبوط
+      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 50 + maxrate 2500 + bufsize 250000
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -240,36 +224,31 @@ jobs:
 
           PRESET="6"
           CRF=50
-          MAXRATE=2000
-          BUFSIZE=12000
+          MAXRATE=2500
+          # bufsize ضخم (250,000k) ليمنح أقصى مرونة للمشاهد الحركية الطويلة
+          # دون خوف من تجاوز السقف
+          BUFSIZE=250000
           GRAIN_PARAM="film-grain=8:film-grain-denoise=1"
 
-          # ⚠️ variance-boost مضبوط بشكل أدق (بدل القيم الافتراضية):
-          # strength=3 (بدل 2 الافتراضي) يزيد قوة تعزيز المناطق منخفضة التباين
-          # octile=5 (بدل 6 الافتراضي) يخلي الخوارزمية أكثر انتقائية لأي منطقة
-          # ضعيفة التباين، مو فقط المناطق شبه المسطحة بالكامل — يستهدف بدقة
-          # مشكلة "اللقمة" في مشاهد الحركة السريعة
+          # variance-boost محسن لاستهداف المناطق منخفضة التباين (دخان، ظلال)
           VARBOOST="enable-variance-boost=1:variance-boost-strength=3:variance-octile=5"
 
-          # ⚠️ sharpness يُضاف فقط لو مدعوم فعلياً (من خطوة التحقق السابقة)
+          # sharpness يُضاف فقط لو مدعوم فعلياً (من خطوة التحقق السابقة)
           if [ "${SHARPNESS_SUPPORTED:-0}" = "1" ]; then
             SHARPNESS_PARAM=":sharpness=1"
           else
             SHARPNESS_PARAM=""
           fi
 
+          # فلتر خفيف لإزالة الضوضاء الرقمية من المصدر المضغوط سابقاً
           VF_CHAIN="hqdn3d=2:1:2:2,scale=trunc(oh*a/2)*2:${RESOLUTION}"
 
-          # ⚠️ إصلاح مشكلة الصوت: حذفنا aresample=async=1 (كان يسبب قطع
-          # سمعي مسموع كل ما يصحح فروقات توقيت طفيفة). الآن نستخدم توحيد
-          # تنسيق بسيط بدون إعادة مزامنة قسرية، مع avoid_negative_ts عند
-          # الإخراج للتعامل مع أي شذوذ في الـ timestamps بشكل نظيف بدل
-          # التلاعب بعينات الصوت نفسها
+          # توحيد تنسيق الصوت بدون async (يمنع التقطيع)
           AF_CHAIN="aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
 
           SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}:${VARBOOST}${SHARPNESS_PARAM}"
 
-          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | keyint=2s | variance-boost(strength=3,octile=5) | sharpness=${SHARPNESS_SUPPORTED:-0}"
+          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | bufsize=${BUFSIZE}k | keyint=2s | variance-boost(strength=3,octile=5)"
 
           ffmpeg -y -i "$IN" \
             -vf "$VF_CHAIN" \
