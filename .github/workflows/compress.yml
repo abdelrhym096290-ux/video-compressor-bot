@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 - CRF 62 بدون فلاتر)
+name: ضغط الفيديو (AV1 - CRF 50 بدون فلاتر)
 
 on:
   workflow_dispatch:
@@ -190,7 +190,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF=62 بدون سقف أو فلاتر
+      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF=50 بدون سقف أو فلاتر
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CHUNK_ID: ${{ matrix.chunk }}
@@ -201,12 +201,12 @@ jobs:
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
 
-          echo "🎛️ CRF=62 | preset=8 | بدون سقف | بدون فلاتر | صوت 32k"
+          echo "🎛️ CRF=50 | preset=8 | بدون سقف | بدون فلاتر | صوت 32k"
 
           ffmpeg -y -i "$IN" \
             -vf "scale=-2:${RESOLUTION}" \
             -c:v libsvtav1 \
-            -crf 62 \
+            -crf 50 \
             -preset 8 \
             -c:a libopus \
             -b:a 32k \
