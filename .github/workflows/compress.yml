@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 4.2.0 - CRF 58 + سقف 2500)
+name: ضغط الفيديو (AV1 - اختبار مبسّط CRF=58 بدون فلاتر)
 
 on:
   workflow_dispatch:
@@ -166,8 +166,7 @@ jobs:
             --enable-gpl \
             --enable-version3 \
             --enable-libsvtav1 \
-            --enable-libopus \
-            --enable-filter=hqdn3d,pp7,atadenoise,nlmeans,vaguedenoiser,unsharp,gradfun,deblock,dedot,sab
+            --enable-libopus
           make -j$(nproc)
           make install
           cd ..
@@ -177,32 +176,12 @@ jobs:
           echo "$HOME/av1-build/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$HOME/av1-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
-      - name: التحقق الإلزامي من الفلاتر والباراميترات (يعمل دائماً)
+      - name: التحقق الإلزامي من سلامة البناء (يعمل دائماً)
         run: |
           set -euo pipefail
           echo "🔍 نسخة ffmpeg:"
           which ffmpeg
           ffmpeg -version
-
-          echo "🔍 فحص الفلاتر الأساسية:"
-          for filter in hqdn3d pp7 atadenoise nlmeans vaguedenoiser unsharp gradfun deblock dedot sab; do
-            if ffmpeg -filters 2>/dev/null | grep -q "$filter"; then
-              echo "✅ $filter موجود"
-            else
-              echo "❌ $filter مفقود — الكاش/البناء معطوب"
-              ffmpeg -filters
-              exit 1
-            fi
-          done
-
-          echo "🔍 فحص دعم --sharpness في SvtAv1EncApp:"
-          if "$HOME/av1-build/bin/SvtAv1EncApp" --help 2>/dev/null | grep -qi -- "--sharpness"; then
-            echo "✅ --sharpness مدعوم في هذا البناء"
-            echo "SHARPNESS_SUPPORTED=1" >> "$GITHUB_ENV"
-          else
-            echo "⚠️ --sharpness غير مدعوم في mainline هذا الإصدار — سيتم تجاهله تلقائياً"
-            echo "SHARPNESS_SUPPORTED=0" >> "$GITHUB_ENV"
-          fi
 
       - name: تنزيل الجزء المخصص
         uses: actions/download-artifact@v4
@@ -210,10 +189,13 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 58 + maxrate 2500 + bufsize 10000
+      # ⚠️ اختبار تشخيصي مقصود: نسخة طبق الأصل من الكود القديم الناجح
+      # (بدون maxrate، بدون bufsize، بدون film-grain، بدون hqdn3d،
+      # بدون variance-boost) — الفرق الوحيد المتعمد هو رفع CRF من 40 إلى 58
+      # الهدف: عزل تأثير الفلاتر/film-grain عن تأثير الأنمي نفسه (بليتش)
+      - name: ضغط الجزء (${{ matrix.chunk }}) - نسخة مبسّطة CRF=58 بدون فلاتر
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
-          CONTENT_TYPE: ${{ github.event.inputs.content_type }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
           set -o pipefail
@@ -222,36 +204,15 @@ jobs:
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
 
-          PRESET="6"
-          CRF=58
-          MAXRATE=2500
-          BUFSIZE=10000
-          GRAIN_PARAM="film-grain=8:film-grain-denoise=1"
-
-          VARBOOST="enable-variance-boost=1:variance-boost-strength=3:variance-octile=5"
-
-          if [ "${SHARPNESS_SUPPORTED:-0}" = "1" ]; then
-            SHARPNESS_PARAM=":sharpness=1"
-          else
-            SHARPNESS_PARAM=""
-          fi
-
-          VF_CHAIN="hqdn3d=2:1:2:2,scale=trunc(oh*a/2)*2:${RESOLUTION}"
-
-          AF_CHAIN="aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
-
-          SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}:${VARBOOST}${SHARPNESS_PARAM}"
-
-          echo "🎛️ AV1 CRF=$CRF | maxrate=${MAXRATE}k | bufsize=${BUFSIZE}k | keyint=2s | variance-boost(strength=3,octile=5)"
+          echo "🎛️ نسخة مبسّطة (مطابقة للكود القديم) | CRF=58 | preset=8 | بدون سقف أو فلاتر"
 
           ffmpeg -y -i "$IN" \
-            -vf "$VF_CHAIN" \
-            -pix_fmt yuv420p10le \
-            -c:v libsvtav1 -crf $CRF -maxrate "${MAXRATE}k" -bufsize "${BUFSIZE}k" \
-            -preset $PRESET $SVT_PARAMS \
-            -af "$AF_CHAIN" \
-            -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-            -avoid_negative_ts make_zero \
+            -vf "scale=-2:${RESOLUTION}" \
+            -c:v libsvtav1 \
+            -crf 58 \
+            -preset 8 \
+            -c:a libopus \
+            -b:a 12k \
             -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           if [ ! -s "$OUT_FILE" ]; then
@@ -304,7 +265,7 @@ jobs:
           done
           [ -s concat_list.txt ] || { echo "❌ لا توجد ملفات"; exit 1; }
           ffmpeg -f concat -safe 0 -i concat_list.txt \
-            -c:v copy -c:a libopus -b:a 32k -ac 2 -ar 48000 \
+            -c:v copy -c:a libopus -b:a 12k -ac 2 -ar 48000 \
             -y ../output.mkv
           cd ..
           [ -f output.mkv ] && echo "✅ الدمج ناجح" || { echo "❌ فشل الدمج"; exit 1; }
