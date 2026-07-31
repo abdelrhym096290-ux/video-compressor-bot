@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 4.2.0 - CRF 50 + سقف 2500 + مخزن كبير)
+name: ضغط الفيديو (AV1 4.2.0 - CRF 50 + سقف 2500 + bufsize أقصى)
 
 on:
   workflow_dispatch:
@@ -210,7 +210,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 50 + maxrate 2500 + bufsize 250000
+      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF 50 + maxrate 2500 + bufsize 10000
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CONTENT_TYPE: ${{ github.event.inputs.content_type }}
@@ -225,25 +225,20 @@ jobs:
           PRESET="6"
           CRF=50
           MAXRATE=2500
-          # bufsize ضخم (250,000k) ليمنح أقصى مرونة للمشاهد الحركية الطويلة
-          # دون خوف من تجاوز السقف
-          BUFSIZE=250000
+          # bufsize أقصى قيمة مسموحة (10000k) لضمان أقصى مرونة
+          BUFSIZE=10000
           GRAIN_PARAM="film-grain=8:film-grain-denoise=1"
 
-          # variance-boost محسن لاستهداف المناطق منخفضة التباين (دخان، ظلال)
           VARBOOST="enable-variance-boost=1:variance-boost-strength=3:variance-octile=5"
 
-          # sharpness يُضاف فقط لو مدعوم فعلياً (من خطوة التحقق السابقة)
           if [ "${SHARPNESS_SUPPORTED:-0}" = "1" ]; then
             SHARPNESS_PARAM=":sharpness=1"
           else
             SHARPNESS_PARAM=""
           fi
 
-          # فلتر خفيف لإزالة الضوضاء الرقمية من المصدر المضغوط سابقاً
           VF_CHAIN="hqdn3d=2:1:2:2,scale=trunc(oh*a/2)*2:${RESOLUTION}"
 
-          # توحيد تنسيق الصوت بدون async (يمنع التقطيع)
           AF_CHAIN="aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
 
           SVT_PARAMS="-svtav1-params tune=0:keyint=2s:${GRAIN_PARAM}:${VARBOOST}${SHARPNESS_PARAM}"
