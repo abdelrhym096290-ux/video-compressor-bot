@@ -10,6 +10,10 @@ on:
         description: 'الدقة (مثلاً 720)'
         required: true
         default: '720'
+      codec:
+        description: 'الكوديك (av1)'
+        required: false
+        default: 'av1'
       content_type:
         description: 'نوع المحتوى (real, anime_balanced, anime_small, unsure)'
         required: true
@@ -198,13 +202,11 @@ jobs:
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
 
-          # الإعدادات حسب نوع المحتوى
           case "$CONTENT_TYPE" in
             real)
               CRF=30
               PRESET=6
               AUDIO_BITRATE=64
-              # film-grain مع denoise للمحتوى الواقعي فقط
               SVT_PARAMS="-svtav1-params tune=0:film-grain=6:film-grain-denoise=1"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
@@ -299,7 +301,6 @@ jobs:
             echo "file '$f'" >> concat_list.txt
           done
           [ -s concat_list.txt ] || { echo "❌ لا توجد ملفات"; exit 1; }
-          # استخدام 64k كصوت افتراضي للدمج (سيتم تجاهله مع copy للفيديو)
           ffmpeg -f concat -safe 0 -i concat_list.txt \
             -c:v copy -c:a libopus -b:a 64k -ac 2 -ar 48000 \
             -y ../output.mkv
