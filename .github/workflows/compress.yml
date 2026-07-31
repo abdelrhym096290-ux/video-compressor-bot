@@ -11,15 +11,9 @@ on:
         required: true
         default: '720'
       content_type:
-        description: 'نوع المحتوى'
+        description: 'نوع المحتوى (real, anime_balanced, anime_small, unsure)'
         required: true
         default: 'real'
-        type: choice
-        options:
-          - real
-          - anime_balanced
-          - anime_small
-          - unsure
       chat_id:
         description: 'معرف الدردشة'
         required: true
