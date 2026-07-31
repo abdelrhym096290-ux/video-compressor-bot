@@ -201,12 +201,12 @@ jobs:
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
 
-          echo "🎛️ CRF=50 | preset=8 | بدون سقف | بدون فلاتر | صوت 32k"
+          echo "🎛️ CRF=58 | preset=8 | بدون سقف | بدون فلاتر | صوت 32k"
 
           ffmpeg -y -i "$IN" \
             -vf "scale=-2:${RESOLUTION}" \
             -c:v libsvtav1 \
-            -crf 50 \
+            -crf 58 \
             -preset 8 \
             -c:a libopus \
             -b:a 32k \
