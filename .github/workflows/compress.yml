@@ -1,4 +1,4 @@
-name: ضغط الفيديو (AV1 - اختبار مبسّط CRF=58 بدون فلاتر)
+name: ضغط الفيديو (AV1 - CRF 62 بدون فلاتر)
 
 on:
   workflow_dispatch:
@@ -9,6 +9,7 @@ on:
       resolution:
         description: 'الدقة (مثلاً 720)'
         required: true
+        default: '720'
       codec:
         description: 'الكوديك (av1)'
         required: true
@@ -137,14 +138,14 @@ jobs:
         id: cache-build
         with:
           path: ~/av1-build
-          key: av1-ffmpeg-full-420-${{ runner.os }}-v2
+          key: av1-ffmpeg-simple-420-${{ runner.os }}-v1
 
       - name: تثبيت متطلبات التشغيل الأساسية
         run: |
           sudo apt update
           sudo apt install -y libopus0
 
-      - name: بناء SVT-AV1 4.2.0 و FFmpeg (بناء كامل)
+      - name: بناء SVT-AV1 4.2.0 و FFmpeg (بناء بسيط)
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -176,7 +177,7 @@ jobs:
           echo "$HOME/av1-build/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$HOME/av1-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
-      - name: التحقق الإلزامي من سلامة البناء (يعمل دائماً)
+      - name: التحقق الإلزامي من سلامة البناء
         run: |
           set -euo pipefail
           echo "🔍 نسخة ffmpeg:"
@@ -189,11 +190,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      # ⚠️ اختبار تشخيصي مقصود: نسخة طبق الأصل من الكود القديم الناجح
-      # (بدون maxrate، بدون bufsize، بدون film-grain، بدون hqdn3d،
-      # بدون variance-boost) — الفرق الوحيد المتعمد هو رفع CRF من 40 إلى 58
-      # الهدف: عزل تأثير الفلاتر/film-grain عن تأثير الأنمي نفسه (بليتش)
-      - name: ضغط الجزء (${{ matrix.chunk }}) - نسخة مبسّطة CRF=58 بدون فلاتر
+      - name: ضغط الجزء (${{ matrix.chunk }}) - CRF=62 بدون سقف أو فلاتر
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CHUNK_ID: ${{ matrix.chunk }}
@@ -204,15 +201,15 @@ jobs:
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
 
-          echo "🎛️ نسخة مبسّطة (مطابقة للكود القديم) | CRF=58 | preset=8 | بدون سقف أو فلاتر"
+          echo "🎛️ CRF=62 | preset=8 | بدون سقف | بدون فلاتر | صوت 32k"
 
           ffmpeg -y -i "$IN" \
             -vf "scale=-2:${RESOLUTION}" \
             -c:v libsvtav1 \
-            -crf 58 \
+            -crf 62 \
             -preset 8 \
             -c:a libopus \
-            -b:a 12k \
+            -b:a 32k \
             -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
 
           if [ ! -s "$OUT_FILE" ]; then
@@ -265,7 +262,7 @@ jobs:
           done
           [ -s concat_list.txt ] || { echo "❌ لا توجد ملفات"; exit 1; }
           ffmpeg -f concat -safe 0 -i concat_list.txt \
-            -c:v copy -c:a libopus -b:a 12k -ac 2 -ar 48000 \
+            -c:v copy -c:a libopus -b:a 32k -ac 2 -ar 48000 \
             -y ../output.mkv
           cd ..
           [ -f output.mkv ] && echo "✅ الدمج ناجح" || { echo "❌ فشل الدمج"; exit 1; }
