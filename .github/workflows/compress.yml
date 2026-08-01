@@ -15,9 +15,9 @@ on:
         required: false
         default: 'av1'
       content_type:
-        description: 'نوع المحتوى (real, anime_balanced, anime_small, unsure)'
+        description: 'نوع المحتوى (content_real, content_animation, content_animation_ultra, content_auto)'
         required: true
-        default: 'real'
+        default: 'content_real'
       chat_id:
         description: 'معرف الدردشة'
         required: true
@@ -203,28 +203,28 @@ jobs:
           mkdir -p "$OUT_DIR"
 
           case "$CONTENT_TYPE" in
-            real)
+            content_real)
               CRF=30
-              PRESET=6
-              AUDIO_BITRATE=64
-              SVT_PARAMS="-svtav1-params tune=0:film-grain=6:film-grain-denoise=1"
+              PRESET=8
+              AUDIO_BITRATE=32
+              SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
-            anime_balanced)
+            content_animation)
               CRF=54
               PRESET=8
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
-            anime_small)
+            content_animation_ultra)
               CRF=58
               PRESET=8
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
-            unsure)
+            content_auto)
               CRF=40
               PRESET=8
               AUDIO_BITRATE=32
@@ -302,7 +302,7 @@ jobs:
           done
           [ -s concat_list.txt ] || { echo "❌ لا توجد ملفات"; exit 1; }
           ffmpeg -f concat -safe 0 -i concat_list.txt \
-            -c:v copy -c:a libopus -b:a 64k -ac 2 -ar 48000 \
+            -c:v copy -c:a libopus -b:a 32k -ac 2 -ar 48000 \
             -y ../output.mkv
           cd ..
           [ -f output.mkv ] && echo "✅ الدمج ناجح" || { echo "❌ فشل الدمج"; exit 1; }
