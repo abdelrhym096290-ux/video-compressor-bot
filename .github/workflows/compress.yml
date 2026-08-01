@@ -197,6 +197,8 @@ jobs:
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
           set -o pipefail
+          echo "📥 القيمة المستلمة من البوت: '$CONTENT_TYPE'"
+
           IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
           OUT_DIR="chunks_encoded"
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
@@ -232,6 +234,7 @@ jobs:
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             *)
+              echo "⚠️ قيمة غير معروفة، استخدام الإعدادات الافتراضية"
               CRF=40
               PRESET=8
               AUDIO_BITRATE=32
