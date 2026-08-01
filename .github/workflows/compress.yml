@@ -320,34 +320,12 @@ jobs:
           echo "duration_fmt=$DURATION_FMT" >> "$GITHUB_OUTPUT"
           echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
 
-      - name: تشفير (خاص فقط)
-        if: github.event.inputs.private == 'true'
+      - name: إعداد الاسم النهائي
+        id: naming
         env:
-          USER_PASSWORD: ${{ github.event.inputs.password }}
-        run: |
-          [ -z "$USER_PASSWORD" ] && { echo "❌ كلمة المرور مطلوبة"; exit 1; }
-          7z a -p"$USER_PASSWORD" -mhe=on output.7z output.mkv
-
-      - name: رفع وإرسال تيليجرام
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ github.event.inputs.chat_id }}
-          PRIVATE: ${{ github.event.inputs.private }}
-          USER_PASSWORD: ${{ github.event.inputs.password }}
           FILENAME: ${{ github.event.inputs.filename }}
           ORIGINAL_TITLE: ${{ needs.split-video.outputs.video_title }}
-          DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
-          ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          TAG="video-${{ github.run_id }}"
-          if [ "$PRIVATE" == "true" ]; then
-            ASSET="output.7z"
-          else
-            ASSET="output.mkv"
-          fi
-
           if [ -n "$FILENAME" ]; then
             FINAL_NAME="$FILENAME"
           elif [ -n "$ORIGINAL_TITLE" ]; then
@@ -355,12 +333,39 @@ jobs:
           else
             FINAL_NAME="video"
           fi
+          echo "final_name=$FINAL_NAME" >> "$GITHUB_OUTPUT"
 
-          EXT="${ASSET##*.}"
-          mv "$ASSET" "${FINAL_NAME}.${EXT}"
-          ASSET="${FINAL_NAME}.${EXT}"
+      - name: تشفير (خاص فقط)
+        if: github.event.inputs.private == 'true'
+        env:
+          USER_PASSWORD: ${{ github.event.inputs.password }}
+          FINAL_NAME: ${{ steps.naming.outputs.final_name }}
+        run: |
+          [ -z "$USER_PASSWORD" ] && { echo "❌ كلمة المرور مطلوبة"; exit 1; }
+          mv output.mkv "${FINAL_NAME}.mkv"
+          7z a -p"$USER_PASSWORD" -mhe=on "${FINAL_NAME}.7z" "${FINAL_NAME}.mkv"
 
-          [ -f "$ASSET" ] || { echo "❌ ملف غير موجود"; exit 1; }
+      - name: رفع وإرسال تيليجرام
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
+          PRIVATE: ${{ github.event.inputs.private }}
+          USER_PASSWORD: ${{ github.event.inputs.password }}
+          FINAL_NAME: ${{ steps.naming.outputs.final_name }}
+          DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
+          ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="video-${{ github.run_id }}"
+          if [ "$PRIVATE" == "true" ]; then
+            ASSET="${FINAL_NAME}.7z"
+          else
+            ASSET="${FINAL_NAME}.mkv"
+            mv output.mkv "$ASSET"
+          fi
+
+          [ -f "$ASSET" ] || { echo "❌ ملف غير موجود: $ASSET"; exit 1; }
           SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $(stat -c%s "$ASSET")/1048576}")
 
           echo "🚀 إنشاء الـ Release..."
@@ -373,8 +378,8 @@ jobs:
           export DOWNLOAD_URL="$DIRECT_URL"
           export VIDEO_NAME="$FINAL_NAME"
           export SIZE_MB="$SIZE_MB"
-          python3 << 'EOF'
-          import os, asyncio, sys
+          python3 << 'PYEOF'
+          import os, asyncio
           from telegram import Bot
 
           async def main():
@@ -396,7 +401,7 @@ jobs:
               print("✅ تم الإرسال")
 
           asyncio.run(main())
-          EOF
+          PYEOF
 
       - name: إشعار الفشل
         if: failure()
@@ -406,7 +411,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
-          python3 << 'EOF'
+          python3 << 'PYEOF'
           import os, asyncio
           from telegram import Bot
           async def main():
@@ -416,4 +421,4 @@ jobs:
               text = f"❌ فشلت العملية.\n🔎 المرحلة: {stage}\n📋 التفاصيل:\n{run_url}"
               await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
           asyncio.run(main())
-          EOF
+          PYEOF
