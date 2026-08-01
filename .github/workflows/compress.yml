@@ -15,9 +15,9 @@ on:
         required: false
         default: 'av1'
       content_type:
-        description: 'نوع المحتوى (content_real, content_animation, content_animation_ultra, content_auto)'
+        description: 'نوع المحتوى (real, animation, animation_ultra, auto)'
         required: true
-        default: 'content_real'
+        default: 'real'
       chat_id:
         description: 'معرف الدردشة'
         required: true
@@ -205,28 +205,28 @@ jobs:
           mkdir -p "$OUT_DIR"
 
           case "$CONTENT_TYPE" in
-            content_real)
+            real)
               CRF=30
               PRESET=8
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
-            content_animation)
+            animation)
               CRF=54
               PRESET=8
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
-            content_animation_ultra)
+            animation_ultra)
               CRF=58
               PRESET=8
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
-            content_auto)
+            auto)
               CRF=40
               PRESET=8
               AUDIO_BITRATE=32
