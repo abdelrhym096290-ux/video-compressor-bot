@@ -84,7 +84,7 @@ jobs:
           rm -f cookies.txt
           if [ ! -f raw_input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
 
-      - name: استخراج وتنظيف اسم الفيديو الأصلي (مع الحفاظ على العربية)
+      - name: استخراج وتنظيف اسم الفيديو الأصلي
         id: title
         run: |
           if [ -f video_title_raw.txt ]; then
@@ -92,7 +92,6 @@ jobs:
           else
             RAW_TITLE="video"
           fi
-          # نحذف فقط الرموز الممنوعة في أسماء الملفات، ونترك العربية والأرقام والمسافات
           CLEAN_TITLE=$(echo "$RAW_TITLE" | sed 's/[\/\\:*?"<>|]//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
           if [ -z "$CLEAN_TITLE" ]; then
             CLEAN_TITLE="video"
@@ -329,7 +328,7 @@ jobs:
           [ -z "$USER_PASSWORD" ] && { echo "❌ كلمة المرور مطلوبة"; exit 1; }
           7z a -p"$USER_PASSWORD" -mhe=on output.7z output.mkv
 
-      - name: رفع وإرسال تيليجرام (معالجة الاسم العربي)
+      - name: رفع وإرسال تيليجرام
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
@@ -349,7 +348,6 @@ jobs:
             ASSET="output.mkv"
           fi
 
-          # إعداد الاسم العربي
           if [ -n "$FILENAME" ]; then
             FINAL_NAME="$FILENAME"
           elif [ -n "$ORIGINAL_TITLE" ]; then
@@ -359,30 +357,15 @@ jobs:
           fi
 
           EXT="${ASSET##*.}"
-          TARGET_NAME="${FINAL_NAME}.${EXT}"
+          mv "$ASSET" "${FINAL_NAME}.${EXT}"
+          ASSET="${FINAL_NAME}.${EXT}"
 
-          # محاولة رفع الملف بالاسم العربي
-          echo "🔍 الاسم المستهدف: '$TARGET_NAME'"
-          cp "$ASSET" "$TARGET_NAME" 2>/dev/null || true
-          if [ -f "$TARGET_NAME" ]; then
-            ASSET="$TARGET_NAME"
-            echo "📁 سيتم الرفع بالاسم العربي: $TARGET_NAME"
-          else
-            echo "⚠️ تعذّر استخدام الاسم العربي، سيتم الرفع بالاسم الافتراضي."
-          fi
-
+          [ -f "$ASSET" ] || { echo "❌ ملف غير موجود"; exit 1; }
           SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $(stat -c%s "$ASSET")/1048576}")
 
           echo "🚀 إنشاء الـ Release..."
-          if gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح"; then
-            echo "✅ تم إنشاء الـ Release بنجاح"
-          else
-            echo "⚠️ فشل الرفع بالاسم العربي، إعادة المحاولة باسم ASCII..."
-            SAFE_NAME="compressed_${{ github.run_id }}.${EXT}"
-            mv "$ASSET" "$SAFE_NAME"
-            ASSET="$SAFE_NAME"
-            gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح"
-          fi
+          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح"
+          echo "✅ تم إنشاء الـ Release بنجاح"
 
           DIRECT_URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
           echo "🔗 الرابط المباشر: $DIRECT_URL"
