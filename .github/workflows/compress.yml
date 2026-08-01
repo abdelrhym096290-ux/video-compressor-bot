@@ -207,28 +207,28 @@ jobs:
           case "$CONTENT_TYPE" in
             real)
               CRF=30
-              PRESET=8
+              PRESET=7
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             animation)
               CRF=54
-              PRESET=8
+              PRESET=7
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             animation_ultra)
-              CRF=58
-              PRESET=8
+              CRF=56
+              PRESET=7
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             auto)
               CRF=40
-              PRESET=8
+              PRESET=7
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
