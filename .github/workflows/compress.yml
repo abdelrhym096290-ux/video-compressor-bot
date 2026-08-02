@@ -213,7 +213,7 @@ jobs:
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             animation)
-              CRF=50
+              CRF=52
               PRESET=7
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
