@@ -19,7 +19,7 @@ on:
         required: true
         default: 'real'
       chat_id:
-        description: 'معرف الدردشة'
+        description: 'معرف الدردشة (لإشعارات النجاح/الفشل)'
         required: true
       private:
         description: 'خصوصي (true/false)'
@@ -213,14 +213,14 @@ jobs:
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             animation)
-              CRF=54
+              CRF=50
               PRESET=7
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             animation_ultra)
-              CRF=56
+              CRF=54
               PRESET=7
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
@@ -236,7 +236,7 @@ jobs:
             *)
               echo "⚠️ قيمة غير معروفة، استخدام الإعدادات الافتراضية"
               CRF=40
-              PRESET=8
+              PRESET=7
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
@@ -282,7 +282,7 @@ jobs:
           echo "دمج الأجزاء ورفع الملف" > stage.txt
           sudo apt update
           sudo apt install -y ffmpeg p7zip-full
-          pip install python-telegram-bot
+          pip install python-telegram-bot telethon
 
       - name: تنزيل جميع الأجزاء المضغوطة
         uses: actions/download-artifact@v4
@@ -345,63 +345,79 @@ jobs:
           mv output.mkv "${FINAL_NAME}.mkv"
           7z a -p"$USER_PASSWORD" -mhe=on "${FINAL_NAME}.7z" "${FINAL_NAME}.mkv"
 
-      - name: رفع وإرسال تيليجرام
+      - name: رفع الملف إلى قناة تيليجرام وإرسال إشعار النجاح
         env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
+          TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
-          PRIVATE: ${{ github.event.inputs.private }}
-          USER_PASSWORD: ${{ github.event.inputs.password }}
           FINAL_NAME: ${{ steps.naming.outputs.final_name }}
+          PRIVATE: ${{ github.event.inputs.private }}
           DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
           ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          TAG="video-${{ github.run_id }}"
+          # تحديد الملف النهائي
           if [ "$PRIVATE" == "true" ]; then
-            ASSET="${FINAL_NAME}.7z"
+            UPLOAD_FILE="${FINAL_NAME}.7z"
           else
-            ASSET="${FINAL_NAME}.mkv"
-            mv output.mkv "$ASSET"
+            UPLOAD_FILE="${FINAL_NAME}.mkv"
+            if [ -f "output.mkv" ]; then
+              mv output.mkv "$UPLOAD_FILE"
+            fi
           fi
 
-          [ -f "$ASSET" ] || { echo "❌ ملف غير موجود: $ASSET"; exit 1; }
-          SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $(stat -c%s "$ASSET")/1048576}")
+          [ -f "$UPLOAD_FILE" ] || { echo "❌ الملف غير موجود: $UPLOAD_FILE"; exit 1; }
 
-          echo "🚀 إنشاء الـ Release..."
-          gh release create "$TAG" "$ASSET" --title "فيديو مضغوط" --notes "تم الضغط بنجاح"
-          echo "✅ تم إنشاء الـ Release بنجاح"
+          # حساب الحجم
+          SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $(stat -c%s "$UPLOAD_FILE")/1048576}")
 
-          DIRECT_URL=$(gh release view "$TAG" --json assets -q '.assets[0].url')
-          echo "🔗 الرابط المباشر: $DIRECT_URL"
+          # رفع الملف إلى القناة مع وصف بدون حجم
+          python3 <<'PYEOF'
+          import os, asyncio
+          from telethon import TelegramClient
+          from telethon.sessions import StringSession
 
-          export DOWNLOAD_URL="$DIRECT_URL"
-          export VIDEO_NAME="$FINAL_NAME"
-          export SIZE_MB="$SIZE_MB"
-          python3 << 'PYEOF'
+          api_id = int(os.environ["TG_API_ID"])
+          api_hash = os.environ["TG_API_HASH"]
+          session = os.environ["TG_SESSION"]
+          channel_id = int(os.environ["TG_CHANNEL_ID"])
+          file = os.environ["UPLOAD_FILE"]
+          final_name = os.environ["FINAL_NAME"]
+          duration = os.environ["DURATION_FMT"]
+          resolution = os.environ["ACTUAL_RES"]
+
+          caption = f"🎬 {final_name}\n📐 {resolution}\n⏱️ {duration}"
+
+          async def main():
+              client = TelegramClient(StringSession(session), api_id, api_hash)
+              await client.start()
+              await client.send_file(channel_id, file, caption=caption)
+              print("✅ تم رفع الملف إلى القناة بنجاح")
+
+          with TelegramClient(StringSession(session), api_id, api_hash) as client:
+              client.loop.run_until_complete(main())
+          PYEOF
+
+          # إرسال إشعار النجاح إلى البوت (مع الحجم)
+          python3 <<'PYEOF2'
           import os, asyncio
           from telegram import Bot
 
           async def main():
               bot = Bot(token=os.environ["BOT_TOKEN"])
-              url = os.environ["DOWNLOAD_URL"]
-              private = os.environ["PRIVATE"]
-              password = os.environ.get("USER_PASSWORD", "")
-              name = os.environ.get("VIDEO_NAME", "")
-              size_mb = os.environ.get("SIZE_MB", "")
-              duration = os.environ.get("DURATION_FMT", "")
-              resolution = os.environ.get("ACTUAL_RES", "")
+              final_name = os.environ["FINAL_NAME"]
+              size_mb = os.environ["SIZE_MB"]
+              duration = os.environ["DURATION_FMT"]
+              resolution = os.environ["ACTUAL_RES"]
 
-              info = f"🎬 {name}\n📦 {size_mb} MB\n📐 {resolution}\n⏱️ {duration}"
-              if private == "true":
-                  text = f"✅ تم الضغط!\n\n{info}\n\n📥 الرابط:\n{url}\n\n🔑 كلمة المرور:\n{password}"
-              else:
-                  text = f"✅ تم الضغط!\n\n{info}\n\n📥 الرابط المباشر:\n{url}"
-              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
-              print("✅ تم الإرسال")
+              info = f"✅ تم الضغط!\n\n🎬 {final_name}\n📦 {size_mb} MB\n📐 {resolution}\n⏱️ {duration}"
+              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=info)
+              print("✅ تم إرسال إشعار النجاح")
 
           asyncio.run(main())
-          PYEOF
+          PYEOF2
 
       - name: إشعار الفشل
         if: failure()
