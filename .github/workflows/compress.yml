@@ -19,7 +19,7 @@ on:
         required: true
         default: 'real'
       chat_id:
-        description: 'معرف الدردشة (لإشعارات النجاح/الفشل)'
+        description: 'معرف الدردشة'
         required: true
       private:
         description: 'خصوصي (true/false)'
@@ -57,48 +57,23 @@ jobs:
           echo "تجهيز البيئة" > stage.txt
           sudo apt update
           sudo apt install -y jq ffmpeg
-          pip install --upgrade --pre yt-dlp
 
-      - name: تثبيت Deno
-        run: |
-          curl -fsSL https://deno.land/install.sh | sh
-          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
-
-      - name: تحميل الفيديو المصدر واستخراج العنوان
+      - name: تحميل الفيديو المصدر (رابط مباشر)
         env:
           VIDEO_URL: ${{ github.event.inputs.url }}
-          RESOLUTION: ${{ github.event.inputs.resolution }}
-          YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
-          unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY
-          echo "$YT_COOKIES" > cookies.txt
-          yt-dlp -f "bv*[height<=${RESOLUTION}]+ba/b[height<=${RESOLUTION}]/best[height<=${RESOLUTION}]/bv*+ba/best" \
-            --extractor-args "youtube:player_client=android,tv,web;formats=missing_pot" \
-            --remote-components ejs:github \
-            --merge-output-format mp4 \
-            -o raw_input.mp4 \
-            --cookies cookies.txt \
-            --print-to-file "%(title)s" video_title_raw.txt \
-            --verbose \
-            "$VIDEO_URL" 2>&1 | tee ytdlp_log.txt || { echo "❌ فشل التحميل"; exit 1; }
-          rm -f cookies.txt
+          echo "تحميل الفيديو" > stage.txt
+          echo "📋 تحميل عبر الرابط المباشر..."
+          curl -L -o raw_input.mp4 "$VIDEO_URL" || { echo "❌ فشل التحميل"; exit 1; }
           if [ ! -f raw_input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
+          echo "✅ تم التحميل بنجاح"
 
       - name: استخراج وتنظيف اسم الفيديو الأصلي
         id: title
         run: |
-          if [ -f video_title_raw.txt ]; then
-            RAW_TITLE=$(head -n 1 video_title_raw.txt)
-          else
-            RAW_TITLE="video"
-          fi
-          CLEAN_TITLE=$(echo "$RAW_TITLE" | sed 's/[\/\\:*?"<>|]//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
-          if [ -z "$CLEAN_TITLE" ]; then
-            CLEAN_TITLE="video"
-          fi
-          CLEAN_TITLE=$(echo "$CLEAN_TITLE" | cut -c1-100)
+          CLEAN_TITLE="video"
           echo "video_title=$CLEAN_TITLE" >> "$GITHUB_OUTPUT"
-          echo "📝 العنوان المستخرج: $CLEAN_TITLE"
+          echo "📝 العنوان المستخدم: $CLEAN_TITLE"
 
       - name: تقطيع الفيديو (فقط لو أطول من 20 دقيقة)
         id: segment
@@ -209,36 +184,31 @@ jobs:
               CRF=30
               PRESET=6
               AUDIO_BITRATE=32
-              SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             animation)
               CRF=52
               PRESET=7
               AUDIO_BITRATE=32
-              SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             animation_ultra)
               CRF=54
               PRESET=7
               AUDIO_BITRATE=32
-              SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             auto)
               CRF=40
               PRESET=7
               AUDIO_BITRATE=32
-              SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             *)
               echo "⚠️ قيمة غير معروفة، استخدام الإعدادات الافتراضية"
               CRF=40
-              PRESET=8
+              PRESET=7
               AUDIO_BITRATE=32
-              SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
           esac
@@ -250,7 +220,7 @@ jobs:
             -c:v libsvtav1 \
             -crf $CRF \
             -preset $PRESET \
-            $SVT_PARAMS \
+            -svtav1-params tune=0 \
             -c:a libopus \
             -b:a "${AUDIO_BITRATE}k" \
             -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
@@ -358,7 +328,6 @@ jobs:
           DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
           ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
         run: |
-          # تحديد الملف النهائي
           if [ "$PRIVATE" == "true" ]; then
             UPLOAD_FILE="${FINAL_NAME}.7z"
           else
@@ -370,11 +339,9 @@ jobs:
 
           [ -f "$UPLOAD_FILE" ] || { echo "❌ الملف غير موجود: $UPLOAD_FILE"; exit 1; }
 
-          # حساب الحجم وتصدير المتغيرات لسكربتات Python
           SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $(stat -c%s "$UPLOAD_FILE")/1048576}")
           export UPLOAD_FILE SIZE_MB
 
-          # رفع الملف إلى القناة مع وصف بدون حجم
           python3 <<'PYEOF'
           import os, asyncio
           from telethon import TelegramClient
@@ -394,14 +361,13 @@ jobs:
           async def main():
               client = TelegramClient(StringSession(session), api_id, api_hash)
               await client.start()
-              await client.send_file(channel_id, file, caption=caption)
+              await client.send_file(channel_id, file, caption=caption, force_document=True)
               print("✅ تم رفع الملف إلى القناة بنجاح")
 
           with TelegramClient(StringSession(session), api_id, api_hash) as client:
               client.loop.run_until_complete(main())
           PYEOF
 
-          # إرسال إشعار النجاح إلى البوت (مع الحجم)
           python3 <<'PYEOF2'
           import os, asyncio
           from telegram import Bot
