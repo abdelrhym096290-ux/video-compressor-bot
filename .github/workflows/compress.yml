@@ -207,28 +207,28 @@ jobs:
           case "$CONTENT_TYPE" in
             real)
               CRF=30
-              PRESET=7
+              PRESET=8
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             animation)
-              CRF=50
-              PRESET=7
+              CRF=54
+              PRESET=8
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             animation_ultra)
-              CRF=54
-              PRESET=7
+              CRF=58
+              PRESET=8
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
               ;;
             auto)
               CRF=40
-              PRESET=7
+              PRESET=8
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
@@ -236,7 +236,7 @@ jobs:
             *)
               echo "⚠️ قيمة غير معروفة، استخدام الإعدادات الافتراضية"
               CRF=40
-              PRESET=7
+              PRESET=8
               AUDIO_BITRATE=32
               SVT_PARAMS="-svtav1-params tune=0"
               VF_CHAIN="scale=-2:${RESOLUTION}"
@@ -370,8 +370,9 @@ jobs:
 
           [ -f "$UPLOAD_FILE" ] || { echo "❌ الملف غير موجود: $UPLOAD_FILE"; exit 1; }
 
-          # حساب الحجم
+          # حساب الحجم وتصدير المتغيرات لسكربتات Python
           SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $(stat -c%s "$UPLOAD_FILE")/1048576}")
+          export UPLOAD_FILE SIZE_MB
 
           # رفع الملف إلى القناة مع وصف بدون حجم
           python3 <<'PYEOF'
