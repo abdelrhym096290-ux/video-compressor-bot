@@ -3,8 +3,8 @@ name: ضغط الفيديو (AV1 - 4 خيارات بدون سقف)
 on:
   workflow_dispatch:
     inputs:
-      url:
-        description: 'رابط الفيديو'
+      message_id:
+        description: 'معرف رسالة الفيديو في تيليجرام'
         required: true
       resolution:
         description: 'الدقة (مثلاً 720)'
@@ -19,7 +19,7 @@ on:
         required: true
         default: 'real'
       chat_id:
-        description: 'معرف الدردشة'
+        description: 'معرف الدردشة (نفسه مصدر الفيديو ووجهة الإشعارات)'
         required: true
       private:
         description: 'خصوصي (true/false)'
@@ -57,14 +57,43 @@ jobs:
           echo "تجهيز البيئة" > stage.txt
           sudo apt update
           sudo apt install -y jq ffmpeg
+          pip install telethon
 
-      - name: تحميل الفيديو المصدر (رابط مباشر)
+      - name: تحميل الفيديو المصدر (عبر جلسة Telethon - MTProto وليس رابط مباشر)
         env:
-          VIDEO_URL: ${{ github.event.inputs.url }}
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
+          SOURCE_CHAT_ID: ${{ github.event.inputs.chat_id }}
+          MESSAGE_ID: ${{ github.event.inputs.message_id }}
         run: |
           echo "تحميل الفيديو" > stage.txt
-          echo "📋 تحميل عبر الرابط المباشر..."
-          curl -L -o raw_input.mp4 "$VIDEO_URL" || { echo "❌ فشل التحميل"; exit 1; }
+          echo "📥 تحميل الفيديو عبر Telethon من الرسالة رقم $MESSAGE_ID"
+          python3 <<'PYEOF'
+          import os, asyncio, sys
+          from telethon import TelegramClient
+          from telethon.sessions import StringSession
+
+          api_id = int(os.environ["TG_API_ID"])
+          api_hash = os.environ["TG_API_HASH"]
+          session = os.environ["TG_SESSION"]
+          chat_id = int(os.environ["SOURCE_CHAT_ID"])
+          message_id = int(os.environ["MESSAGE_ID"])
+
+          async def main():
+              async with TelegramClient(StringSession(session), api_id, api_hash) as client:
+                  msg = await client.get_messages(chat_id, ids=message_id)
+                  if msg is None or not msg.media:
+                      print("❌ لم يتم العثور على رسالة تحتوي على ملف بهذا المعرف")
+                      sys.exit(1)
+                  path = await client.download_media(msg, file="raw_input.mp4")
+                  if not path:
+                      print("❌ فشل تحميل الملف")
+                      sys.exit(1)
+                  print(f"✅ تم التحميل: {path}")
+
+          asyncio.run(main())
+          PYEOF
           if [ ! -f raw_input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
           echo "✅ تم التحميل بنجاح"
 
