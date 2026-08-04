@@ -59,16 +59,16 @@ jobs:
           sudo apt install -y jq ffmpeg
           pip install telethon
 
-      - name: تحميل الفيديو المصدر (عبر جلسة Telethon - MTProto وليس رابط مباشر)
+      - name: تحميل الفيديو المصدر (تسجيل دخول كبوت عبر MTProto - يتجاوز حد Bot API)
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
-          TG_SESSION: ${{ secrets.TG_SESSION }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           SOURCE_CHAT_ID: ${{ github.event.inputs.chat_id }}
           MESSAGE_ID: ${{ github.event.inputs.message_id }}
         run: |
           echo "تحميل الفيديو" > stage.txt
-          echo "📥 تحميل الفيديو عبر Telethon من الرسالة رقم $MESSAGE_ID"
+          echo "📥 تحميل الفيديو عبر Telethon (جلسة بوت) من الرسالة رقم $MESSAGE_ID"
           python3 <<'PYEOF'
           import os, asyncio, sys
           from telethon import TelegramClient
@@ -76,12 +76,14 @@ jobs:
 
           api_id = int(os.environ["TG_API_ID"])
           api_hash = os.environ["TG_API_HASH"]
-          session = os.environ["TG_SESSION"]
+          bot_token = os.environ["BOT_TOKEN"]
           chat_id = int(os.environ["SOURCE_CHAT_ID"])
           message_id = int(os.environ["MESSAGE_ID"])
 
           async def main():
-              async with TelegramClient(StringSession(session), api_id, api_hash) as client:
+              client = TelegramClient(StringSession(), api_id, api_hash)
+              await client.start(bot_token=bot_token)
+              async with client:
                   msg = await client.get_messages(chat_id, ids=message_id)
                   if msg is None or not msg.media:
                       print("❌ لم يتم العثور على رسالة تحتوي على ملف بهذا المعرف")
