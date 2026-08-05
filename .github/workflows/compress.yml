@@ -77,32 +77,32 @@ jobs:
           if [ -n "$MESSAGE_ID" ]; then
             echo "📥 تحميل الفيديو عبر Telethon (جلسة بوت) من الرسالة رقم $MESSAGE_ID"
             python3 <<'PYEOF'
-            import os, asyncio, sys
-            from telethon import TelegramClient
-            from telethon.sessions import StringSession
+          import os, asyncio, sys
+          from telethon import TelegramClient
+          from telethon.sessions import StringSession
 
-            api_id = int(os.environ["TG_API_ID"])
-            api_hash = os.environ["TG_API_HASH"]
-            bot_token = os.environ["BOT_TOKEN"]
-            chat_id = int(os.environ["SOURCE_CHAT_ID"])
-            message_id = int(os.environ["MESSAGE_ID"])
+          api_id = int(os.environ["TG_API_ID"])
+          api_hash = os.environ["TG_API_HASH"]
+          bot_token = os.environ["BOT_TOKEN"]
+          chat_id = int(os.environ["SOURCE_CHAT_ID"])
+          message_id = int(os.environ["MESSAGE_ID"])
 
-            async def main():
-                client = TelegramClient(StringSession(), api_id, api_hash)
-                await client.start(bot_token=bot_token)
-                async with client:
-                    msg = await client.get_messages(chat_id, ids=message_id)
-                    if msg is None or not msg.media:
-                        print("❌ لم يتم العثور على رسالة تحتوي على ملف بهذا المعرف")
-                        sys.exit(1)
-                    path = await client.download_media(msg, file="raw_input.mp4")
-                    if not path:
-                        print("❌ فشل تحميل الملف")
-                        sys.exit(1)
-                    print(f"✅ تم التحميل: {path}")
+          async def main():
+              client = TelegramClient(StringSession(), api_id, api_hash)
+              await client.start(bot_token=bot_token)
+              async with client:
+                  msg = await client.get_messages(chat_id, ids=message_id)
+                  if msg is None or not msg.media:
+                      print("❌ لم يتم العثور على رسالة تحتوي على ملف بهذا المعرف")
+                      sys.exit(1)
+                  path = await client.download_media(msg, file="raw_input.mp4")
+                  if not path:
+                      print("❌ فشل تحميل الملف")
+                      sys.exit(1)
+                  print(f"✅ تم التحميل: {path}")
 
-            asyncio.run(main())
-            PYEOF
+          asyncio.run(main())
+          PYEOF
           elif [ -n "$VIDEO_URL" ]; then
             echo "📥 تحميل الفيديو عبر الرابط المباشر..."
             curl -L -o raw_input.mp4 "$VIDEO_URL" || { echo "❌ فشل التحميل"; exit 1; }
@@ -340,10 +340,17 @@ jobs:
           FILENAME: ${{ github.event.inputs.filename }}
           ORIGINAL_TITLE: ${{ needs.split-video.outputs.video_title }}
         run: |
-          if [ -n "$FILENAME" ]; then
-            FINAL_NAME="$FILENAME"
-          elif [ -n "$ORIGINAL_TITLE" ]; then
-            FINAL_NAME="$ORIGINAL_TITLE"
+          # أخذ أول سطر فقط وتنظيف الاسم من رموز غير صالحة لأسماء الملفات
+          # (تحمي أيضًا من كسر تنسيق GITHUB_OUTPUT عند وجود أسطر متعددة أو رمز |)
+          sanitize() {
+            printf '%s' "$1" | head -n1 | tr -d '\r' | sed 's/[\/\\:*?"<>|]/ /g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//'
+          }
+          SAFE_FILENAME=$(sanitize "$FILENAME")
+          SAFE_ORIGINAL=$(sanitize "$ORIGINAL_TITLE")
+          if [ -n "$SAFE_FILENAME" ]; then
+            FINAL_NAME="$SAFE_FILENAME"
+          elif [ -n "$SAFE_ORIGINAL" ]; then
+            FINAL_NAME="$SAFE_ORIGINAL"
           else
             FINAL_NAME="video"
           fi
@@ -438,7 +445,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
-          python3 << 'PYEOF'
+          python3 <<'PYEOF'
           import os, asyncio
           from telegram import Bot
           async def main():
