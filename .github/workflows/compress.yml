@@ -68,14 +68,17 @@ jobs:
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           SOURCE_CHAT_ID: ${{ github.event.inputs.chat_id }}
           MESSAGE_ID: ${{ github.event.inputs.message_id }}
           VIDEO_URL: ${{ github.event.inputs.url }}
         run: |
           echo "تحميل الفيديو" > stage.txt
+
           if [ -n "$MESSAGE_ID" ]; then
-            echo "📥 تحميل الفيديو عبر Telethon (جلسة بوت) من الرسالة رقم $MESSAGE_ID"
+            echo "📥 تحميل الفيديو عبر Telethon (البوت) من الرسالة رقم $MESSAGE_ID"
+
             python3 <<'PYEOF'
           import os, asyncio, sys
           from telethon import TelegramClient
@@ -90,26 +93,90 @@ jobs:
           async def main():
               client = TelegramClient(StringSession(), api_id, api_hash)
               await client.start(bot_token=bot_token)
+
               async with client:
                   msg = await client.get_messages(chat_id, ids=message_id)
+
                   if msg is None or not msg.media:
-                      print("❌ لم يتم العثور على رسالة تحتوي على ملف بهذا المعرف")
+                      print("❌ لم يتم العثور على ملف")
                       sys.exit(1)
+
                   path = await client.download_media(msg, file="raw_input.mp4")
+
                   if not path:
-                      print("❌ فشل تحميل الملف")
+                      print("❌ فشل التحميل")
                       sys.exit(1)
+
                   print(f"✅ تم التحميل: {path}")
 
           asyncio.run(main())
           PYEOF
+
           elif [ -n "$VIDEO_URL" ]; then
-            echo "📥 تحميل الفيديو عبر الرابط المباشر..."
-            curl -L -o raw_input.mp4 "$VIDEO_URL" || { echo "❌ فشل التحميل"; exit 1; }
+
+            if [[ "$VIDEO_URL" =~ t\.me/c/ ]]; then
+
+              echo "📥 رابط قناة خاصة، استخدام جلسة الحساب..."
+
+              python3 <<'PYEOF'
+          import os, asyncio, sys, re
+          from telethon import TelegramClient
+          from telethon.sessions import StringSession
+
+          api_id = int(os.environ["TG_API_ID"])
+          api_hash = os.environ["TG_API_HASH"]
+          session = os.environ["TG_SESSION"]
+          url = os.environ["VIDEO_URL"]
+
+          match = re.search(r"t\.me/c/(\d+)/(\d+)", url)
+
+          if not match:
+              print("❌ رابط القناة غير صحيح")
+              sys.exit(1)
+
+          channel_id = int("-100" + match.group(1))
+          message_id = int(match.group(2))
+
+          async def main():
+              client = TelegramClient(StringSession(session), api_id, api_hash)
+              await client.start()
+
+              async with client:
+                  msg = await client.get_messages(channel_id, ids=message_id)
+
+                  if not msg or not msg.media:
+                      print("❌ لم يتم العثور على الفيديو")
+                      sys.exit(1)
+
+                  path = await client.download_media(msg, file="raw_input.mp4")
+
+                  if not path:
+                      print("❌ فشل تحميل الفيديو")
+                      sys.exit(1)
+
+                  print(f"✅ تم تحميل الفيديو: {path}")
+
+          asyncio.run(main())
+          PYEOF
+
+            else
+              echo "📥 تحميل رابط مباشر..."
+              curl -L -o raw_input.mp4 "$VIDEO_URL" || {
+                echo "❌ فشل التحميل"
+                exit 1
+              }
+            fi
+
           else
-            echo "❌ لم يتم تمرير message_id ولا url"; exit 1
+            echo "❌ لم يتم تمرير message_id ولا url"
+            exit 1
           fi
-          if [ ! -f raw_input.mp4 ]; then echo "❌ الملف لم يُنشأ"; exit 1; fi
+
+          if [ ! -f raw_input.mp4 ]; then
+            echo "❌ الملف لم يُنشأ"
+            exit 1
+          fi
+
           echo "✅ تم التحميل بنجاح"
 
       - name: استخراج وتنظيف اسم الفيديو الأصلي
