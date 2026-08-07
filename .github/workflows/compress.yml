@@ -292,7 +292,6 @@ jobs:
 
           case "$CONTENT_TYPE" in
             real)
-              real)
               CRF=32
               PRESET=6
               AUDIO_BITRATE=32
