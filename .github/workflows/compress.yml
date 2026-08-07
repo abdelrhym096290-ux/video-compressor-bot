@@ -292,7 +292,7 @@ jobs:
 
           case "$CONTENT_TYPE" in
             real)
-              CRF=32
+              CRF=30
               PRESET=6
               AUDIO_BITRATE=32
               VF_CHAIN="hqdn3d=1.5:1.5:6:6,deband=1thr=0.02:2thr=0.02:3thr=0.02,scale=-2:${RESOLUTION}"
