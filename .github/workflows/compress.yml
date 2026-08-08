@@ -1,40 +1,48 @@
-name: ضغط الفيديو (AV1 - 4 خيارات بدون سقف)
+name: ضغط الفيديو (AV1 - احترافي شامل)
 
 on:
   workflow_dispatch:
     inputs:
       message_id:
-        description: 'معرف رسالة الفيديو في تيليجرام (اتركه فارغًا إذا استخدمت url)'
+        description: 'معرف رسالة الفيديو'
         required: false
         default: ''
       url:
-        description: 'رابط الفيديو المباشر (اتركه فارغًا إذا استخدمت message_id)'
+        description: 'رابط مباشر (إن وجد)'
         required: false
         default: ''
       resolution:
-        description: 'الدقة (مثلاً 720)'
+        description: 'الدقة (مثلاً 480)'
         required: true
-        default: '720'
-      codec:
-        description: 'الكوديك (av1)'
+        default: '480'
+      encode_mode:
+        description: 'نوع المعالجة (filters, nofilters, audio)'
+        required: true
+        default: 'filters'
+      av1_preset:
+        description: 'البريست (8, 7, 6, 4)'
         required: false
-        default: 'av1'
-      content_type:
-        description: 'نوع المحتوى (real, animation, animation_ultra, auto)'
+        default: '4'
+      encode_method:
+        description: 'طريقة الضغط (crf, twopass, audio)'
         required: true
-        default: 'real'
+        default: 'crf'
+      target_value:
+        description: 'القيمة المستهدفة (مثلاً 28 أو 250k)'
+        required: true
+        default: '28'
       chat_id:
-        description: 'معرف الدردشة (نفسه مصدر الفيديو ووجهة الإشعارات)'
+        description: 'معرف الدردشة'
         required: true
       private:
         description: 'خصوصي (true/false)'
         required: true
       password:
-        description: 'كلمة المرور (فقط لو خاص)'
+        description: 'كلمة المرور'
         required: false
         default: ''
       filename:
-        description: 'اسم الملف المطلوب'
+        description: 'الاسم النهائي للملف'
         required: false
         default: ''
 
@@ -64,7 +72,7 @@ jobs:
           sudo apt install -y jq ffmpeg
           pip install telethon
 
-      - name: تحميل الفيديو المصدر (تيليجرام عبر Telethon أو رابط مباشر)
+      - name: تحميل الفيديو المصدر
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
@@ -77,8 +85,6 @@ jobs:
           echo "تحميل الفيديو" > stage.txt
 
           if [ -n "$MESSAGE_ID" ]; then
-            echo "📥 تحميل الفيديو عبر Telethon (البوت) من الرسالة رقم $MESSAGE_ID"
-
             python3 <<'PYEOF'
           import os, asyncio, sys
           from telethon import TelegramClient
@@ -93,117 +99,40 @@ jobs:
           async def main():
               client = TelegramClient(StringSession(), api_id, api_hash)
               await client.start(bot_token=bot_token)
-
               async with client:
                   msg = await client.get_messages(chat_id, ids=message_id)
-
                   if msg is None or not msg.media:
-                      print("❌ لم يتم العثور على ملف")
                       sys.exit(1)
-
                   path = await client.download_media(msg, file="raw_input.mp4")
-
-                  if not path:
-                      print("❌ فشل التحميل")
-                      sys.exit(1)
-
-                  print(f"✅ تم التحميل: {path}")
-
           asyncio.run(main())
           PYEOF
-
           elif [ -n "$VIDEO_URL" ]; then
-
-            if [[ "$VIDEO_URL" =~ t\.me/c/ ]]; then
-
-              echo "📥 رابط قناة خاصة، استخدام جلسة الحساب..."
-
-              python3 <<'PYEOF'
-          import os, asyncio, sys, re
-          from telethon import TelegramClient
-          from telethon.sessions import StringSession
-
-          api_id = int(os.environ["TG_API_ID"])
-          api_hash = os.environ["TG_API_HASH"]
-          session = os.environ["TG_SESSION"]
-          url = os.environ["VIDEO_URL"]
-
-          match = re.search(r"t\.me/c/(\d+)/(\d+)", url)
-
-          if not match:
-              print("❌ رابط القناة غير صحيح")
-              sys.exit(1)
-
-          channel_id = int("-100" + match.group(1))
-          message_id = int(match.group(2))
-
-          async def main():
-              client = TelegramClient(StringSession(session), api_id, api_hash)
-              await client.start()
-
-              async with client:
-                  msg = await client.get_messages(channel_id, ids=message_id)
-
-                  if not msg or not msg.media:
-                      print("❌ لم يتم العثور على الفيديو")
-                      sys.exit(1)
-
-                  path = await client.download_media(msg, file="raw_input.mp4")
-
-                  if not path:
-                      print("❌ فشل تحميل الفيديو")
-                      sys.exit(1)
-
-                  print(f"✅ تم تحميل الفيديو: {path}")
-
-          asyncio.run(main())
-          PYEOF
-
-            else
-              echo "📥 تحميل رابط مباشر..."
-              curl -L -o raw_input.mp4 "$VIDEO_URL" || {
-                echo "❌ فشل التحميل"
-                exit 1
-              }
-            fi
-
+            curl -L -o raw_input.mp4 "$VIDEO_URL" || exit 1
           else
-            echo "❌ لم يتم تمرير message_id ولا url"
             exit 1
           fi
 
-          if [ ! -f raw_input.mp4 ]; then
-            echo "❌ الملف لم يُنشأ"
-            exit 1
-          fi
+          if [ ! -f raw_input.mp4 ]; then exit 1; fi
 
-          echo "✅ تم التحميل بنجاح"
-
-      - name: استخراج وتنظيف اسم الفيديو الأصلي
+      - name: استخراج اسم الفيديو الأصلي
         id: title
         run: |
-          CLEAN_TITLE="video"
-          echo "video_title=$CLEAN_TITLE" >> "$GITHUB_OUTPUT"
-          echo "📝 العنوان المستخدم: $CLEAN_TITLE"
+          echo "video_title=video" >> "$GITHUB_OUTPUT"
 
-      - name: تقطيع الفيديو (فقط لو أطول من 20 دقيقة)
+      - name: تقطيع الفيديو
         id: segment
         run: |
           mkdir -p chunks_raw
           DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 raw_input.mp4 | cut -d. -f1)
-          echo "⏱️ مدة الفيديو: ${DURATION} ثانية"
           if [ "$DURATION" -gt 1200 ]; then
-            echo "📦 الفيديو طويل، سيتم تقطيعه للمعالجة المتوازية"
             ffmpeg -i raw_input.mp4 -c copy -f segment -segment_time 600 -reset_timestamps 1 "chunks_raw/chunk_%03d.mp4"
           else
-            echo "📄 الفيديو قصير، سيُعالج كجزء واحد فقط"
             cp raw_input.mp4 "chunks_raw/chunk_000.mp4"
           fi
           CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_//' | sed 's/\.mp4//' | jq -R . | jq -s -c .)
           echo "chunks=$CHUNKS_JSON" >> "$GITHUB_OUTPUT"
-          echo "الأجزاء: $CHUNKS_JSON"
 
-      - name: رفع الأجزاء الخام كـ Artifacts
+      - name: رفع الأجزاء الخام
         uses: actions/upload-artifact@v4
         with:
           name: raw-chunks
@@ -219,19 +148,19 @@ jobs:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
       max-parallel: 10
     steps:
-      - name: استعادة بناء SVT-AV1 و FFmpeg من الكاش (أو بناؤه)
+      - name: استعادة بناء SVT-AV1 و FFmpeg
         uses: actions/cache@v4
         id: cache-build
         with:
           path: ~/av1-build
           key: av1-ffmpeg-simple-420-${{ runner.os }}-v1
 
-      - name: تثبيت متطلبات التشغيل الأساسية
+      - name: تثبيت المتطلبات
         run: |
           sudo apt update
           sudo apt install -y libopus0
 
-      - name: بناء SVT-AV1 4.2.0 و FFmpeg (بناء بسيط)
+      - name: بناء البنية
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -249,26 +178,14 @@ jobs:
           cd FFmpeg
           export PKG_CONFIG_PATH="$HOME/av1-build/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           export LD_LIBRARY_PATH="$HOME/av1-build/lib"
-          ./configure --prefix="$HOME/av1-build" \
-            --enable-gpl \
-            --enable-version3 \
-            --enable-libsvtav1 \
-            --enable-libopus
+          ./configure --prefix="$HOME/av1-build" --enable-gpl --enable-version3 --enable-libsvtav1 --enable-libopus
           make -j$(nproc)
           make install
-          cd ..
 
-      - name: تفعيل مسار FFmpeg المخصص
+      - name: تفعيل مسار FFmpeg
         run: |
           echo "$HOME/av1-build/bin" >> "$GITHUB_PATH"
           echo "LD_LIBRARY_PATH=$HOME/av1-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-
-      - name: التحقق الإلزامي من سلامة البناء
-        run: |
-          set -euo pipefail
-          echo "🔍 نسخة ffmpeg:"
-          which ffmpeg
-          ffmpeg -version
 
       - name: تنزيل الجزء المخصص
         uses: actions/download-artifact@v4
@@ -276,72 +193,64 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء (${{ matrix.chunk }}) - حسب نوع المحتوى
+      - name: المعالجة المتقدمة (الفلاتر والشروط)
         env:
           RESOLUTION: ${{ github.event.inputs.resolution }}
-          CONTENT_TYPE: ${{ github.event.inputs.content_type }}
+          ENCODE_MODE: ${{ github.event.inputs.encode_mode }}
+          AV1_PRESET: ${{ github.event.inputs.av1_preset }}
+          ENCODE_METHOD: ${{ github.event.inputs.encode_method }}
+          TARGET_VALUE: ${{ github.event.inputs.target_value }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
           set -o pipefail
-          echo "📥 القيمة المستلمة من البوت: '$CONTENT_TYPE'"
-
           IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
           OUT_DIR="chunks_encoded"
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
 
-          case "$CONTENT_TYPE" in
-            real)
-              CRF=28
-              PRESET=4
-              AUDIO_BITRATE=32
-              VF_CHAIN="scale=-2:${RESOLUTION}"
-              ;;
-            animation)
-              CRF=50
-              PRESET=7
-              AUDIO_BITRATE=32
-              VF_CHAIN="scale=-2:${RESOLUTION}"
-              ;;
-            animation_ultra)
-              CRF=52
-              PRESET=7
-              AUDIO_BITRATE=32
-              VF_CHAIN="scale=-2:${RESOLUTION}"
-              ;;
-            auto)
-              CRF=45
-              PRESET=7
-              AUDIO_BITRATE=32
-              VF_CHAIN="scale=-2:${RESOLUTION}"
-              ;;
-            *)
-              echo "⚠️ قيمة غير معروفة، استخدام الإعدادات الافتراضية"
-              CRF=40
-              PRESET=7
-              AUDIO_BITRATE=32
-              VF_CHAIN="scale=-2:${RESOLUTION}"
-              ;;
-          esac
-
-          echo "🎛️ النوع: $CONTENT_TYPE | CRF=$CRF | preset=$PRESET | صوت ${AUDIO_BITRATE}k"
-
-          ffmpeg -y -i "$IN" \
-            -vf "$VF_CHAIN" \
-            -c:v libsvtav1 \
-            -crf $CRF \
-            -preset $PRESET \
-            -svtav1-params tune=0 \
-            -c:a libopus \
-            -b:a "${AUDIO_BITRATE}k" \
-            -y "$OUT_FILE" 2>&1 | tee "ffmpeg_${CHUNK_ID}.log"
-
-          if [ ! -s "$OUT_FILE" ]; then
-            echo "❌ فشل ترميز الجزء ${CHUNK_ID}"
-            cat "ffmpeg_${CHUNK_ID}.log"
-            exit 1
+          # 🌟 التفرقة بين المسلسلات والأنمي
+          if [ "$ENCODE_MODE" == "filters" ]; then
+            echo "🎭 وضع المسلسلات: تفعيل الفلاتر"
+            VF_CHAIN="scale=-2:${RESOLUTION},hqdn3d=3:2:2:3,deband,cas=0.4,format=yuv420p10le"
+            SVT_PARAMS="-svtav1-params film-grain=10:film-grain-denoise=1"
+          elif [ "$ENCODE_MODE" == "nofilters" ]; then
+            echo "🌸 وضع الأنمي: بدون فلاتر تنعيم"
+            VF_CHAIN="scale=-2:${RESOLUTION},format=yuv420p10le"
+            SVT_PARAMS="-svtav1-params tune=0"
+          else
+            VF_CHAIN=""
+            SVT_PARAMS=""
           fi
-          echo "✅ تم إنشاء $OUT_FILE ($(stat -c%s "$OUT_FILE") بايت)"
+
+          # 🌟 تنفيذ المعالجة بناءً على الطريقة المطلوبة
+          if [ "$ENCODE_METHOD" == "crf" ]; then
+            echo "🎛️ نظام CRF | القيمة: $TARGET_VALUE | Preset: $AV1_PRESET"
+            ffmpeg -y -i "$IN" \
+              -vf "$VF_CHAIN" \
+              -c:v libsvtav1 -preset "$AV1_PRESET" -crf "$TARGET_VALUE" -g 240 \
+              $SVT_PARAMS \
+              -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+
+          elif [ "$ENCODE_METHOD" == "twopass" ]; then
+            echo "⚖️ نظام التمريرتين (Two-Pass) | الهدف: $TARGET_VALUE | Preset: $AV1_PRESET"
+            ffmpeg -y -i "$IN" \
+              -vf "$VF_CHAIN" \
+              -c:v libsvtav1 -preset 8 -b:v "$TARGET_VALUE" -pass 1 \
+              -an -f null /dev/null
+              
+            ffmpeg -y -i "$IN" \
+              -vf "$VF_CHAIN" \
+              -c:v libsvtav1 -preset "$AV1_PRESET" -b:v "$TARGET_VALUE" -pass 2 \
+              $SVT_PARAMS \
+              -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+
+          elif [ "$ENCODE_METHOD" == "audio" ]; then
+            echo "🎵 استخراج الصوت فقط | Bitrate: $TARGET_VALUE"
+            ffmpeg -y -i "$IN" \
+              -vn -c:a libopus -b:a "$TARGET_VALUE" -ac 2 "$OUT_FILE"
+          fi
+
+          if [ ! -s "$OUT_FILE" ]; then exit 1; fi
 
       - name: رفع الجزء المضغوط
         uses: actions/upload-artifact@v4
@@ -360,68 +269,51 @@ jobs:
 
       - name: تجهيز أدوات الدمج
         run: |
-          echo "دمج الأجزاء ورفع الملف" > stage.txt
           sudo apt update
           sudo apt install -y ffmpeg p7zip-full
-          pip install python-telegram-bot telethon
+          pip install telethon
 
-      - name: تنزيل جميع الأجزاء المضغوطة
+      - name: تنزيل جميع الأجزاء
         uses: actions/download-artifact@v4
         with:
           pattern: encoded-*
           path: all_encoded
           merge-multiple: true
 
-      - name: تشخيص ودمج الأجزاء
+      - name: دمج الأجزاء
         run: |
           set -euo pipefail
-          echo "دمج الأجزاء" > stage.txt
-          if [ ! -d all_encoded ] || [ -z "$(ls -A all_encoded 2>/dev/null)" ]; then
-            echo "❌ مجلد all_encoded فارغ"; exit 1
-          fi
           cd all_encoded
           rm -f concat_list.txt
-          for f in $(ls encoded_*.mkv 2>/dev/null | sort); do
-            echo "file '$f'" >> concat_list.txt
-          done
-          [ -s concat_list.txt ] || { echo "❌ لا توجد ملفات"; exit 1; }
-          ffmpeg -f concat -safe 0 -i concat_list.txt \
-            -c:v copy -c:a libopus -b:a 32k -ac 2 -ar 48000 \
-            -y ../output.mkv
+          for f in $(ls encoded_*.mkv | sort); do echo "file '$f'" >> concat_list.txt; done
+          ffmpeg -f concat -safe 0 -i concat_list.txt -c copy -y ../output.mkv
           cd ..
-          [ -f output.mkv ] && echo "✅ الدمج ناجح" || { echo "❌ فشل الدمج"; exit 1; }
 
       - name: استخراج معلومات الفيديو
         id: videoinfo
+        env:
+          ENCODE_METHOD: ${{ github.event.inputs.encode_method }}
         run: |
           DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
           H=$((DURATION_SEC/3600)); M=$(((DURATION_SEC%3600)/60)); S=$((DURATION_SEC%60))
           DURATION_FMT=$(printf "%02d:%02d:%02d" $H $M $S)
-          ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.mkv)
           echo "duration_fmt=$DURATION_FMT" >> "$GITHUB_OUTPUT"
-          echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
+          
+          if [ "$ENCODE_METHOD" == "audio" ]; then
+            echo "actual_res=صوت فقط 🎵" >> "$GITHUB_OUTPUT"
+          else
+            ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.mkv)
+            echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: إعداد الاسم النهائي
         id: naming
         env:
           FILENAME: ${{ github.event.inputs.filename }}
-          ORIGINAL_TITLE: ${{ needs.split-video.outputs.video_title }}
         run: |
-          # أخذ أول سطر فقط وتنظيف الاسم من رموز غير صالحة لأسماء الملفات
-          # (تحمي أيضًا من كسر تنسيق GITHUB_OUTPUT عند وجود أسطر متعددة أو رمز |)
-          sanitize() {
-            printf '%s' "$1" | head -n1 | tr -d '\r' | sed 's/[\/\\:*?"<>|]/ /g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//'
-          }
+          sanitize() { printf '%s' "$1" | head -n1 | tr -d '\r' | sed 's/[\/\\:*?"<>|]/ /g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//'; }
           SAFE_FILENAME=$(sanitize "$FILENAME")
-          SAFE_ORIGINAL=$(sanitize "$ORIGINAL_TITLE")
-          if [ -n "$SAFE_FILENAME" ]; then
-            FINAL_NAME="$SAFE_FILENAME"
-          elif [ -n "$SAFE_ORIGINAL" ]; then
-            FINAL_NAME="$SAFE_ORIGINAL"
-          else
-            FINAL_NAME="video"
-          fi
-          echo "final_name=$FINAL_NAME" >> "$GITHUB_OUTPUT"
+          echo "final_name=${SAFE_FILENAME:-video}" >> "$GITHUB_OUTPUT"
 
       - name: تشفير (خاص فقط)
         if: github.event.inputs.private == 'true'
@@ -429,11 +321,10 @@ jobs:
           USER_PASSWORD: ${{ github.event.inputs.password }}
           FINAL_NAME: ${{ steps.naming.outputs.final_name }}
         run: |
-          [ -z "$USER_PASSWORD" ] && { echo "❌ كلمة المرور مطلوبة"; exit 1; }
           mv output.mkv "${FINAL_NAME}.mkv"
           7z a -p"$USER_PASSWORD" -mhe=on "${FINAL_NAME}.7z" "${FINAL_NAME}.mkv"
 
-      - name: رفع الملف إلى قناة تيليجرام وإرسال إشعار النجاح
+      - name: رفع الملف إلى تيليجرام
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
@@ -450,59 +341,33 @@ jobs:
             UPLOAD_FILE="${FINAL_NAME}.7z"
           else
             UPLOAD_FILE="${FINAL_NAME}.mkv"
-            if [ -f "output.mkv" ]; then
-              mv output.mkv "$UPLOAD_FILE"
-            fi
+            if [ -f "output.mkv" ]; then mv output.mkv "$UPLOAD_FILE"; fi
           fi
 
-          [ -f "$UPLOAD_FILE" ] || { echo "❌ الملف غير موجود: $UPLOAD_FILE"; exit 1; }
-
-          SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $(stat -c%s "$UPLOAD_FILE")/1048576}")
+          SIZE_MB=$(awk "BEGIN {printf \"%.1f\", $(stat -c%s \"$UPLOAD_FILE\")/1048576}")
           export UPLOAD_FILE SIZE_MB
 
           python3 <<'PYEOF'
           import os, asyncio
           from telethon import TelegramClient
           from telethon.sessions import StringSession
-
           api_id = int(os.environ["TG_API_ID"])
           api_hash = os.environ["TG_API_HASH"]
           session = os.environ["TG_SESSION"]
           channel_id = int(os.environ["TG_CHANNEL_ID"])
           file = os.environ["UPLOAD_FILE"]
-          final_name = os.environ["FINAL_NAME"]
-          duration = os.environ["DURATION_FMT"]
-          resolution = os.environ["ACTUAL_RES"]
-
-          caption = f"🎬 {final_name}\n📐 {resolution}\n⏱️ {duration}"
-
+          caption = f"🎬 {os.environ['FINAL_NAME']}\n📐 {os.environ['ACTUAL_RES']}\n⏱️ {os.environ['DURATION_FMT']}"
           async def main():
               client = TelegramClient(StringSession(session), api_id, api_hash)
               await client.start()
               await client.send_file(channel_id, file, caption=caption, force_document=True)
-              print("✅ تم رفع الملف إلى القناة بنجاح")
-
           with TelegramClient(StringSession(session), api_id, api_hash) as client:
               client.loop.run_until_complete(main())
           PYEOF
 
-          python3 <<'PYEOF2'
-          import os, asyncio
-          from telegram import Bot
-
-          async def main():
-              bot = Bot(token=os.environ["BOT_TOKEN"])
-              final_name = os.environ["FINAL_NAME"]
-              size_mb = os.environ["SIZE_MB"]
-              duration = os.environ["DURATION_FMT"]
-              resolution = os.environ["ACTUAL_RES"]
-
-              info = f"✅ تم الضغط!\n\n🎬 {final_name}\n📦 {size_mb} MB\n📐 {resolution}\n⏱️ {duration}"
-              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=info)
-              print("✅ تم إرسال إشعار النجاح")
-
-          asyncio.run(main())
-          PYEOF2
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d text="✅ تم الضغط بنجاح!%0A%0A🎬 ${FINAL_NAME}%0A📦 ${SIZE_MB} MB%0A📐 ${ACTUAL_RES}%0A⏱️ ${DURATION_FMT}"
 
       - name: إشعار الفشل
         if: failure()
@@ -512,14 +377,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
-          python3 <<'PYEOF'
-          import os, asyncio
-          from telegram import Bot
-          async def main():
-              bot = Bot(token=os.environ["BOT_TOKEN"])
-              stage = open("stage.txt").read().strip() if os.path.exists("stage.txt") else "غير معروفة"
-              run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-              text = f"❌ فشلت العملية.\n🔎 المرحلة: {stage}\n📋 التفاصيل:\n{run_url}"
-              await bot.send_message(chat_id=os.environ["CHAT_ID"], text=text)
-          asyncio.run(main())
-          PYEOF
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d text="❌ فشلت العملية.%0A📋 التفاصيل: ${run_url}"
