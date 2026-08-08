@@ -27,17 +27,17 @@ export default {
 
         if (preset && preset.active) {
           // ===== وضع الإعداد المسبق: رفع فوري بلا أسئلة =====
-          // استخدام اسم الحلقة التلقائي إن وُجد
           let filename = defaultName || undefined;
           if (preset.next_episode !== undefined && preset.next_episode !== null) {
             const prefix = preset.episode_prefix || "";
             filename = `${prefix}${preset.next_episode}`;
-            // زيادة العداد وتحديث الإعداد
             preset.next_episode++;
             await setPreset(env, chatId, preset);
           }
           const autoSession = {
             message_id: update.message.message_id,
+            encode_method: preset.encode_method,
+            target_value: preset.target_value,
             resolution: preset.resolution,
             content_type: preset.content_type,
             isPrivate: preset.isPrivate,
@@ -53,7 +53,8 @@ export default {
         if (defaultName) newSession.filename = defaultName;
 
         await setSession(env, chatId, newSession);
-        await sendQualityKeyboard(BOT_TOKEN, chatId, RESOLUTIONS);
+        // التعديل: إرسال خيارات طريقة الضغط بدلاً من الجودة مباشرة
+        await sendEncodeMethodKeyboard(BOT_TOKEN, chatId);
         return ok();
       }
 
@@ -84,7 +85,8 @@ export default {
 
         if (text === "/setup" || text === "/settings") {
           await setSession(env, chatId, { configuring_preset: true });
-          await sendQualityKeyboard(BOT_TOKEN, chatId, RESOLUTIONS);
+          // التعديل: إرسال خيارات طريقة الضغط بدلاً من الجودة مباشرة
+          await sendEncodeMethodKeyboard(BOT_TOKEN, chatId);
           return ok();
         }
 
@@ -125,7 +127,7 @@ export default {
             const num = parseInt(parts[1], 10);
             const preset = (await getPreset(env, chatId)) || {};
             preset.next_episode = num;
-            if (!preset.resolution) {
+            if (!preset.encode_method) {
               await sendMessage(BOT_TOKEN, chatId, "⚠️ لا يوجد إعداد مسبق محفوظ. سيتم حفظ رقم الحلقة لكنك تحتاج لعمل /setup أولاً لبقية الإعدادات.");
             }
             await setPreset(env, chatId, preset);
@@ -145,7 +147,7 @@ export default {
           }
           const preset = (await getPreset(env, chatId)) || {};
           preset.episode_prefix = prefix;
-          if (!preset.resolution) {
+          if (!preset.encode_method) {
             await sendMessage(BOT_TOKEN, chatId, "⚠️ لا يوجد إعداد مسبق محفوظ. سيتم حفظ البادئة لكنك تحتاج لعمل /setup أولاً.");
           }
           await setPreset(env, chatId, preset);
@@ -153,7 +155,6 @@ export default {
           return ok();
         }
 
-        // ===== أمر إيقاف التسمية التلقائية =====
         if (text === "/stopepisode") {
           const preset = await getPreset(env, chatId);
           if (preset) {
@@ -163,6 +164,23 @@ export default {
             await sendMessage(BOT_TOKEN, chatId, "🛑 تم إلغاء التسمية التلقائية للحلقات.");
           } else {
             await sendMessage(BOT_TOKEN, chatId, "لا يوجد إعداد محفوظ.");
+          }
+          return ok();
+        }
+
+        // التعديل: استقبال القيمة المستهدفة (Target Value)
+        if (session.awaiting_target_value) {
+          session.target_value = text;
+          session.awaiting_target_value = false;
+          await setSession(env, chatId, session);
+          
+          if (session.encode_method === "audio") {
+            // تخطي اختيار الجودة ونوع المحتوى إذا كان صوت فقط
+            await sendMessage(BOT_TOKEN, chatId, `✅ تم تعيين القيمة: ${text}`);
+            await sendPrivacyKeyboard(BOT_TOKEN, chatId);
+          } else {
+            await sendMessage(BOT_TOKEN, chatId, `✅ تم تعيين القيمة: ${text}`);
+            await sendQualityKeyboard(BOT_TOKEN, chatId, RESOLUTIONS);
           }
           return ok();
         }
@@ -219,6 +237,8 @@ export default {
             }
             const autoSession = {
               url: text,
+              encode_method: preset.encode_method,
+              target_value: preset.target_value,
               resolution: preset.resolution,
               content_type: preset.content_type,
               isPrivate: preset.isPrivate,
@@ -231,7 +251,8 @@ export default {
           }
           const newSession = { url: text };
           await setSession(env, chatId, newSession);
-          await sendQualityKeyboard(BOT_TOKEN, chatId, RESOLUTIONS);
+          // التعديل: إرسال خيارات طريقة الضغط بدلاً من الجودة مباشرة
+          await sendEncodeMethodKeyboard(BOT_TOKEN, chatId);
           return ok();
         }
 
@@ -246,7 +267,6 @@ export default {
         const data = query.data;
         await answerCallback(BOT_TOKEN, query.id);
 
-        // ===== فحص التصريح بالدخول أيضاً على الأزرار =====
         const isAuthorized = await env.SESSIONS.get(`authorized:${chatId}`);
         if (!isAuthorized) {
           await sendMessage(BOT_TOKEN, chatId, "🔒 هذا البوت خاص. أرسل كلمة المرور للمتابعة:");
@@ -258,6 +278,23 @@ export default {
         if (data === "cancel") {
           await deleteSession(env, chatId);
           await editMessage(BOT_TOKEN, chatId, query.message.message_id, "🚫 تم الإلغاء.");
+          return ok();
+        }
+
+        // التعديل: التعامل مع اختيار طريقة الضغط
+        if (data.startsWith("method_")) {
+          const method = data.split("_")[1];
+          session.encode_method = method;
+          session.awaiting_target_value = true;
+          await setSession(env, chatId, session);
+
+          let promptText = "";
+          if (method === "crf") promptText = "✏️ أرسل قيمة الجودة (CRF) المطلوبة:\n(مثال: 28 للحجم الصغير، أو 24 لجودة أعلى)";
+          if (method === "twopass") promptText = "✏️ أرسل معدل البت المستهدف للحجم الثابت:\n(مثال: 250k، 300k)";
+          if (method === "video") promptText = "✏️ أرسل قيمة الجودة (CRF) للفيديو (الفيديو سيكون بدون صوت):\n(مثال: 28، 30)";
+          if (method === "audio") promptText = "✏️ أرسل معدل بت الصوت المطلوب استخراجه:\n(مثال: 32k، 48k)";
+
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, promptText);
           return ok();
         }
 
@@ -324,7 +361,6 @@ function ok() {
   return new Response("OK", { status: 200 });
 }
 
-// ========== الجلسات عبر KV ==========
 async function getSession(env, chatId) {
   const raw = await env.SESSIONS.get(`session:${chatId}`);
   return raw ? JSON.parse(raw) : null;
@@ -336,7 +372,6 @@ async function deleteSession(env, chatId) {
   await env.SESSIONS.delete(`session:${chatId}`);
 }
 
-// ========== الإعداد المسبق (Preset) عبر KV — بلا انتهاء صلاحية ==========
 async function getPreset(env, chatId) {
   const raw = await env.SESSIONS.get(`preset:${chatId}`);
   return raw ? JSON.parse(raw) : null;
@@ -347,19 +382,19 @@ async function setPreset(env, chatId, preset) {
 
 async function savePresetAndConfirm(env, BOT_TOKEN, chatId, session, editMessageId = null) {
   const preset = {
-    resolution: session.resolution,
+    encode_method: session.encode_method,     // التعديل
+    target_value: session.target_value,       // التعديل
+    resolution: session.resolution || "none",
     content_type: session.content_type || "auto",
     isPrivate: !!session.isPrivate,
     password: session.password || "",
     active: true,
   };
-  // الاحتفاظ بإعدادات الحلقة إن وجدت في الجلسة أو الإعداد السابق
   const oldPreset = await getPreset(env, chatId);
   if (oldPreset) {
     if (oldPreset.next_episode !== undefined) preset.next_episode = oldPreset.next_episode;
     if (oldPreset.episode_prefix) preset.episode_prefix = oldPreset.episode_prefix;
   }
-  // يمكن أيضاً تمريرها من session مباشرة لو أضفناها لاحقاً
   await setPreset(env, chatId, preset);
   await deleteSession(env, chatId);
   const text = `✅ تم حفظ الإعداد وتفعيله.\n${presetStatusText(preset)}\n\nالآن أرسل أي فيديو أو رابط وسيُرفع فورًا بهذا الإعداد. استخدم /auto_off لإيقافه مؤقتًا، أو /setup لتغييره.`;
@@ -373,12 +408,25 @@ async function savePresetAndConfirm(env, BOT_TOKEN, chatId, session, editMessage
 function presetStatusText(preset) {
   if (!preset) return "لا يوجد إعداد محفوظ. استخدم /setup لإنشاء واحد.";
   const contentLabels = { real: "فيديو حقيقي", animation: "أنمي/رسوم (متوازن)", animation_ultra: "أنمي/رسوم (أصغر حجم)", auto: "مش متأكد" };
+  
+  // التعديل: إظهار طريقة الضغط
+  let methodLabel = "CRF";
+  if (preset.encode_method === "twopass") methodLabel = "حجم ثابت (Two-Pass)";
+  if (preset.encode_method === "video") methodLabel = "فيديو فقط (بدون صوت)";
+  if (preset.encode_method === "audio") methodLabel = "صوت فقط (استخراج)";
+
   let lines = [
     `الحالة: ${preset.active ? "🟢 نشط" : "🔴 متوقف"}`,
-    `الجودة: ${preset.resolution}p`,
-    `النوع: ${contentLabels[preset.content_type] || preset.content_type}`,
-    `الخصوصية: ${preset.isPrivate ? "🔒 خاص" : "🔓 عام"}`,
+    `الطريقة: ${methodLabel} (${preset.target_value || "بدون قيمة"})`,
   ];
+  
+  if (preset.encode_method !== "audio") {
+    lines.push(`الجودة: ${preset.resolution}p`);
+    lines.push(`النوع: ${contentLabels[preset.content_type] || preset.content_type}`);
+  }
+  
+  lines.push(`الخصوصية: ${preset.isPrivate ? "🔒 خاص" : "🔓 عام"}`);
+
   if (preset.next_episode !== undefined && preset.next_episode !== null) {
     const prefix = preset.episode_prefix || "";
     lines.push(`🎬 التسمية التلقائية: "${prefix}${preset.next_episode}" (التالي)`);
@@ -389,7 +437,7 @@ function presetStatusText(preset) {
 function startMessage(preset) {
   const base = "🚀 أرسل الفيديو مباشرة هنا، أو أرسل رابط فيديو.\n⚡ سيتم إرسال المهمة إلى المصنع السحابي (GitHub Actions).";
   const extra = [
-    "💡 يمكنك ضبط جودة/نوع/خصوصية ثابتة مرة واحدة عبر /setup.",
+    "💡 يمكنك ضبط جودة/نوع/طريقة ثابتة مرة واحدة عبر /setup.",
     "📌 أوامر التسمية التلقائية:",
     "  /setepisode 1  ➜ تعيين رقم الحلقة التالية",
     "  /setprefix حلقة   ➜ تعيين بادئة (اختياري)",
@@ -402,7 +450,6 @@ function startMessage(preset) {
   return `${base}\n\n${extra.join("\n")}`;
 }
 
-// ========== عدّاد الطابور ==========
 async function getQueueAheadCount(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW) {
   const headers = {
     Authorization: `token ${GITHUB_TOKEN}`,
@@ -427,19 +474,21 @@ async function getQueueAheadCount(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW) {
   return total;
 }
 
-// ========== إطلاق GitHub Actions ==========
 async function triggerGitHub(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, session, chatId) {
   const body = {
     ref: "main",
     inputs: {
       message_id: session.message_id ? String(session.message_id) : "",
       url: session.url || "",
-      resolution: session.resolution,
+      resolution: session.resolution || "audio",
       chat_id: String(chatId),
       private: session.isPrivate ? "true" : "false",
       password: session.password || "",
       content_type: session.content_type || "auto",
       filename: session.filename || "",
+      // التعديل: إرسال المتغيرات الجديدة للسكربت
+      encode_method: session.encode_method || "crf",
+      target_value: String(session.target_value || "28"),
     },
   };
 
@@ -465,8 +514,9 @@ async function triggerGitHub(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, session
 }
 
 async function finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, session) {
-  if ((!session.message_id && !session.url) || !session.resolution) {
-    await sendMessage(BOT_TOKEN, chatId, "❌ حدث خطأ. أعد إرسال الفيديو أو الرابط.");
+  // التعديل: السماح بتخطي الجودة إذا كان الاستخراج للصوت فقط
+  if ((!session.message_id && !session.url) || (!session.resolution && session.encode_method !== "audio")) {
+    await sendMessage(BOT_TOKEN, chatId, "❌ حدث خطأ أو بيانات غير مكتملة. أعد إرسال الفيديو.");
     await deleteSession(env, chatId);
     return;
   }
@@ -490,7 +540,6 @@ async function finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GIT
   await deleteSession(env, chatId);
 }
 
-// ========== استخراج الاسم الافتراضي من الرسالة ==========
 function extractDefaultName(message) {
   const VIDEO_EXT = /\.(mp4|mkv|mov|avi|webm|ts|m4v|flv|wmv)$/i;
   let name = null;
@@ -506,7 +555,6 @@ function extractDefaultName(message) {
   return name || null;
 }
 
-// ========== طلب اسم الملف ==========
 async function promptFilename(BOT_TOKEN, chatId, editMessageId, defaultName, isEdit) {
   let text, keyboard;
   if (defaultName) {
@@ -523,7 +571,34 @@ async function promptFilename(BOT_TOKEN, chatId, editMessageId, defaultName, isE
   }
 }
 
-// ========== لوحات المفاتيح ==========
+// التعديل: كيبورد طرق المعالجة (يُرسل في بداية الجلسة)
+async function sendEncodeMethodKeyboard(BOT_TOKEN, chatId) {
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "🎛️ ضغط ذكي (CRF)", callback_data: "method_crf" }],
+      [{ text: "⚖️ حجم ثابت (Two-Pass)", callback_data: "method_twopass" }],
+      [{ text: "🎬 فيديو فقط (بدون صوت)", callback_data: "method_video" }],
+      [{ text: "🎵 صوت فقط (استخراج الصوت)", callback_data: "method_audio" }],
+      [{ text: "إلغاء", callback_data: "cancel" }]
+    ]
+  };
+  await sendMessage(BOT_TOKEN, chatId, "⚙️ اختر طريقة المعالجة المناسبة:", keyboard);
+}
+
+// التعديل: دالة منفصلة لإرسال كيبورد الخصوصية (تستخدم عند تخطي مسار الجودة)
+async function sendPrivacyKeyboard(BOT_TOKEN, chatId) {
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: "🔒 خاص (بكلمة مرور)", callback_data: "priv_yes" },
+        { text: "🔓 عام (رابط مباشر)", callback_data: "priv_no" },
+      ],
+      [{ text: "إلغاء", callback_data: "cancel" }],
+    ],
+  };
+  await sendMessage(BOT_TOKEN, chatId, "🔐 هل تريد الملف خاصاً؟", keyboard);
+}
+
 async function sendQualityKeyboard(BOT_TOKEN, chatId, resolutions) {
   const rows = [];
   for (let i = 0; i < resolutions.length; i += 2) {
@@ -565,7 +640,6 @@ async function editPrivacyKeyboard(BOT_TOKEN, chatId, messageId) {
   await editMessage(BOT_TOKEN, chatId, messageId, "🔐 هل تريد الفيديو خاصاً؟", keyboard);
 }
 
-// ========== Telegram API ==========
 async function sendTelegram(BOT_TOKEN, method, body) {
   const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: "POST",
