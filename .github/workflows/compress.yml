@@ -208,7 +208,6 @@ jobs:
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
 
-          # 🌟 التفرقة بين المسلسلات والأنمي
           if [ "$ENCODE_MODE" == "filters" ]; then
             echo "🎭 وضع المسلسلات: تفعيل الفلاتر"
             VF_CHAIN="scale=-2:${RESOLUTION},hqdn3d=3:2:2:3,deband,cas=0.4,format=yuv420p10le"
@@ -222,7 +221,6 @@ jobs:
             SVT_PARAMS=""
           fi
 
-          # 🌟 تنفيذ المعالجة بناءً على الطريقة المطلوبة
           if [ "$ENCODE_METHOD" == "crf" ]; then
             echo "🎛️ نظام CRF | القيمة: $TARGET_VALUE | Preset: $AV1_PRESET"
             ffmpeg -y -i "$IN" \
@@ -324,7 +322,7 @@ jobs:
           mv output.mkv "${FINAL_NAME}.mkv"
           7z a -p"$USER_PASSWORD" -mhe=on "${FINAL_NAME}.7z" "${FINAL_NAME}.mkv"
 
-            - name: رفع الملف إلى تيليجرام
+      - name: رفع الملف إلى تيليجرام
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
@@ -344,7 +342,6 @@ jobs:
             if [ -f "output.mkv" ]; then mv output.mkv "$UPLOAD_FILE"; fi
           fi
 
-          # 🌟 [الإصلاح هنا] جلب الحجم بأمان أولاً، ثم حسابه بـ awk
           FILE_SIZE=$(stat -c%s "$UPLOAD_FILE")
           SIZE_MB=$(awk -v size="$FILE_SIZE" 'BEGIN {printf "%.1f", size/1048576}')
           
@@ -354,6 +351,9 @@ jobs:
           import os, asyncio
           from telethon import TelegramClient
           from telethon.sessions import StringSession
+          api_id = int(os.environ["TG_API_ID"])
+          api_hash = int(os.environ["TG_API_HASH"] if str(os.environ["TG_API_HASH"]).isdigit() else os.environ["TG_API_ID"]) # Safe cast
+          # Note: Keep standard env parsing below
           api_id = int(os.environ["TG_API_ID"])
           api_hash = os.environ["TG_API_HASH"]
           session = os.environ["TG_SESSION"]
@@ -371,3 +371,16 @@ jobs:
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d chat_id="${CHAT_ID}" \
             -d text="✅ تم الضغط بنجاح!%0A%0A🎬 ${FINAL_NAME}%0A📦 ${SIZE_MB} MB%0A📐 ${ACTUAL_RES}%0A⏱️ ${DURATION_FMT}"
+
+      - name: إشعار الفشل
+        if: failure()
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d text="❌ فشلت العملية.%0A📋 التفاصيل: ${run_url}"
