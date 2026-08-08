@@ -25,36 +25,35 @@ export default {
         const defaultName = extractDefaultName(update.message);
         const preset = await getPreset(env, chatId);
 
+        // ===== وضع الإعداد التلقائي =====
         if (preset && preset.active) {
-          // ===== وضع الإعداد المسبق: رفع فوري بلا أسئلة =====
-          let filename = defaultName || undefined;
+          let finalName = defaultName || "video";
           if (preset.next_episode !== undefined && preset.next_episode !== null) {
-            const prefix = preset.episode_prefix || "";
-            filename = `${prefix}${preset.next_episode}`;
+            const prefix = preset.episode_prefix ? preset.episode_prefix + " " : "";
+            finalName = `${finalName} - ${prefix}${preset.next_episode}`.trim();
             preset.next_episode++;
             await setPreset(env, chatId, preset);
           }
           const autoSession = {
             message_id: update.message.message_id,
+            encode_mode: preset.encode_mode,
+            av1_preset: preset.av1_preset,
             encode_method: preset.encode_method,
             target_value: preset.target_value,
             resolution: preset.resolution,
-            content_type: preset.content_type,
             isPrivate: preset.isPrivate,
             password: preset.password,
-            filename: filename,
+            filename: finalName,
           };
-          await sendMessage(BOT_TOKEN, chatId, `📤 جاري الإرسال تلقائيًا${filename ? `: ${filename}` : ""}...`);
+          await sendMessage(BOT_TOKEN, chatId, `📤 جاري الإرسال تلقائيًا: ${finalName}`);
           await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, autoSession);
           return ok();
         }
 
-        const newSession = { message_id: update.message.message_id };
-        if (defaultName) newSession.filename = defaultName;
-
+        // ===== جلسة يدوية جديدة =====
+        const newSession = { message_id: update.message.message_id, default_name: defaultName };
         await setSession(env, chatId, newSession);
-        // التعديل: إرسال خيارات طريقة الضغط بدلاً من الجودة مباشرة
-        await sendEncodeMethodKeyboard(BOT_TOKEN, chatId);
+        await sendEncodeModeKeyboard(BOT_TOKEN, chatId);
         return ok();
       }
 
@@ -63,7 +62,6 @@ export default {
         const chatId = update.message.chat.id;
         const text = update.message.text.trim();
 
-        // ===== فحص التصريح بالدخول (كلمة السر) =====
         const isAuthorized = await env.SESSIONS.get(`authorized:${chatId}`);
         if (!isAuthorized) {
           if (text === BOT_PASSWORD) {
@@ -85,8 +83,7 @@ export default {
 
         if (text === "/setup" || text === "/settings") {
           await setSession(env, chatId, { configuring_preset: true });
-          // التعديل: إرسال خيارات طريقة الضغط بدلاً من الجودة مباشرة
-          await sendEncodeMethodKeyboard(BOT_TOKEN, chatId);
+          await sendEncodeModeKeyboard(BOT_TOKEN, chatId);
           return ok();
         }
 
@@ -101,7 +98,7 @@ export default {
           if (preset) {
             preset.active = false;
             await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, "⏸️ تم إيقاف الوضع التلقائي. أرسل فيديو/رابط وستُسأل عن الإعدادات كالمعتاد.");
+            await sendMessage(BOT_TOKEN, chatId, "⏸️ تم إيقاف الوضع التلقائي. أرسل فيديو وستُسأل عن الإعدادات.");
           } else {
             await sendMessage(BOT_TOKEN, chatId, "لا يوجد إعداد محفوظ أصلاً.");
           }
@@ -115,43 +112,36 @@ export default {
             await setPreset(env, chatId, preset);
             await sendMessage(BOT_TOKEN, chatId, `▶️ تم تفعيل الوضع التلقائي.\n${presetStatusText(preset)}`);
           } else {
-            await sendMessage(BOT_TOKEN, chatId, "لا يوجد إعداد محفوظ بعد. استخدم /setup لإنشاء واحد.");
+            await sendMessage(BOT_TOKEN, chatId, "لا يوجد إعداد محفوظ بعد. استخدم /setup.");
           }
           return ok();
         }
 
-        // ===== أمر تعيين رقم الحلقة التالي =====
+        // ===== أوامر العداد التلقائي =====
         if (text.startsWith("/setepisode")) {
           const parts = text.split(" ");
           if (parts.length === 2 && /^\d+$/.test(parts[1])) {
             const num = parseInt(parts[1], 10);
             const preset = (await getPreset(env, chatId)) || {};
             preset.next_episode = num;
-            if (!preset.encode_method) {
-              await sendMessage(BOT_TOKEN, chatId, "⚠️ لا يوجد إعداد مسبق محفوظ. سيتم حفظ رقم الحلقة لكنك تحتاج لعمل /setup أولاً لبقية الإعدادات.");
-            }
             await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, `✅ تم تعيين رقم الحلقة التالية إلى: ${num}`);
+            await sendMessage(BOT_TOKEN, chatId, `✅ تم تفعيل العداد، الحلقة القادمة ستكون رقم: ${num}`);
           } else {
-            await sendMessage(BOT_TOKEN, chatId, "❌ استخدم الصيغة: /setepisode <رقم>\nمثال: /setepisode 1");
+            await sendMessage(BOT_TOKEN, chatId, "❌ الصيغة: /setepisode <رقم>\nمثال: /setepisode 1");
           }
           return ok();
         }
 
-        // ===== أمر تعيين بادئة الحلقة =====
         if (text.startsWith("/setprefix")) {
           const prefix = text.substring("/setprefix".length).trimStart();
           if (!prefix) {
-            await sendMessage(BOT_TOKEN, chatId, "❌ أرسل نص البادئة بعد الأمر.\nمثال: /setprefix حلقة ");
+            await sendMessage(BOT_TOKEN, chatId, "❌ أرسل نص البادئة بعد الأمر.\nمثال: /setprefix حلقة");
             return ok();
           }
           const preset = (await getPreset(env, chatId)) || {};
           preset.episode_prefix = prefix;
-          if (!preset.encode_method) {
-            await sendMessage(BOT_TOKEN, chatId, "⚠️ لا يوجد إعداد مسبق محفوظ. سيتم حفظ البادئة لكنك تحتاج لعمل /setup أولاً.");
-          }
           await setPreset(env, chatId, preset);
-          await sendMessage(BOT_TOKEN, chatId, `✅ تم تعيين بادئة الحلقة: "${prefix}"`);
+          await sendMessage(BOT_TOKEN, chatId, `✅ تم تعيين بادئة العداد: "${prefix}"`);
           return ok();
         }
 
@@ -161,46 +151,44 @@ export default {
             delete preset.next_episode;
             delete preset.episode_prefix;
             await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, "🛑 تم إلغاء التسمية التلقائية للحلقات.");
-          } else {
-            await sendMessage(BOT_TOKEN, chatId, "لا يوجد إعداد محفوظ.");
+            await sendMessage(BOT_TOKEN, chatId, "🛑 تم إلغاء التسمية بالعداد التلقائي.");
           }
           return ok();
         }
 
-        // التعديل: استقبال القيمة المستهدفة (Target Value)
+        // ===== استقبال القيمة (CRF أو Bitrate) =====
         if (session.awaiting_target_value) {
           session.target_value = text;
           session.awaiting_target_value = false;
           await setSession(env, chatId, session);
           
-          if (session.encode_method === "audio") {
-            // تخطي اختيار الجودة ونوع المحتوى إذا كان صوت فقط
-            await sendMessage(BOT_TOKEN, chatId, `✅ تم تعيين القيمة: ${text}`);
+          if (session.encode_mode === "audio") {
+            await sendMessage(BOT_TOKEN, chatId, `✅ القيمة المسجلة: ${text}`);
             await sendPrivacyKeyboard(BOT_TOKEN, chatId);
           } else {
-            await sendMessage(BOT_TOKEN, chatId, `✅ تم تعيين القيمة: ${text}`);
+            await sendMessage(BOT_TOKEN, chatId, `✅ القيمة المسجلة: ${text}`);
             await sendQualityKeyboard(BOT_TOKEN, chatId, RESOLUTIONS);
           }
           return ok();
         }
 
+        // ===== استقبال الجودة (لو مخصصة) =====
         if (session.awaiting_res) {
           if (/^\d+$/.test(text)) {
             session.resolution = text;
             session.awaiting_res = false;
             await setSession(env, chatId, session);
-            await sendMessage(BOT_TOKEN, chatId, `🎯 ${text}p`);
-            await sendContentTypeKeyboard(BOT_TOKEN, chatId);
+            await sendPrivacyKeyboard(BOT_TOKEN, chatId);
           } else {
-            await sendMessage(BOT_TOKEN, chatId, "❌ أرسل رقماً صحيحاً (مثلاً 550):");
+            await sendMessage(BOT_TOKEN, chatId, "❌ أرسل رقماً فقط (مثال: 550):");
           }
           return ok();
         }
 
+        // ===== استقبال كلمة المرور =====
         if (session.awaiting_password) {
           if (text.length < 4) {
-            await sendMessage(BOT_TOKEN, chatId, "❌ كلمة المرور قصيرة جداً. أرسل كلمة مرور من 4 أحرف على الأقل:");
+            await sendMessage(BOT_TOKEN, chatId, "❌ أرسل كلمة مرور من 4 أحرف على الأقل:");
           } else {
             session.password = text;
             session.awaiting_password = false;
@@ -209,58 +197,31 @@ export default {
             } else {
               session.awaiting_filename = true;
               await setSession(env, chatId, session);
-              await sendMessage(BOT_TOKEN, chatId, "🔑 تم حفظ كلمة المرور.");
-              await promptFilename(BOT_TOKEN, chatId, null, session.filename, false);
+              await promptFilename(BOT_TOKEN, chatId, null, session.default_name, false);
             }
           }
           return ok();
         }
 
+        // ===== استقبال اسم الملف (ومزجه مع العداد) =====
         if (session.awaiting_filename) {
           session.filename = text;
           session.awaiting_filename = false;
+          
+          const finalName = await applyCounterToName(env, chatId, session.filename);
+          session.filename = finalName;
+          
           await setSession(env, chatId, session);
-          await sendMessage(BOT_TOKEN, chatId, `✅ تم تعيين اسم الملف: ${text}`);
+          await sendMessage(BOT_TOKEN, chatId, `✅ تم اعتماد الاسم النهائي: ${finalName}`);
           await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, session);
           return ok();
         }
 
-        if (/^https?:\/\//.test(text)) {
-          const preset = await getPreset(env, chatId);
-          if (preset && preset.active) {
-            let filename = undefined;
-            if (preset.next_episode !== undefined && preset.next_episode !== null) {
-              const prefix = preset.episode_prefix || "";
-              filename = `${prefix}${preset.next_episode}`;
-              preset.next_episode++;
-              await setPreset(env, chatId, preset);
-            }
-            const autoSession = {
-              url: text,
-              encode_method: preset.encode_method,
-              target_value: preset.target_value,
-              resolution: preset.resolution,
-              content_type: preset.content_type,
-              isPrivate: preset.isPrivate,
-              password: preset.password,
-              filename: filename,
-            };
-            await sendMessage(BOT_TOKEN, chatId, "📤 جاري الإرسال تلقائيًا...");
-            await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, autoSession);
-            return ok();
-          }
-          const newSession = { url: text };
-          await setSession(env, chatId, newSession);
-          // التعديل: إرسال خيارات طريقة الضغط بدلاً من الجودة مباشرة
-          await sendEncodeMethodKeyboard(BOT_TOKEN, chatId);
-          return ok();
-        }
-
-        await sendMessage(BOT_TOKEN, chatId, "❌ أرسل فيديو مباشرة، أو رابط فيديو صحيح.");
+        await sendMessage(BOT_TOKEN, chatId, "❌ أرسل فيديو مباشرة للبدء.");
         return ok();
       }
 
-      // ===== ضغطات الأزرار =====
+      // ===== ضغطات الأزرار (Callback Queries) =====
       if (update.callback_query) {
         const query = update.callback_query;
         const chatId = query.message.chat.id;
@@ -268,10 +229,7 @@ export default {
         await answerCallback(BOT_TOKEN, query.id);
 
         const isAuthorized = await env.SESSIONS.get(`authorized:${chatId}`);
-        if (!isAuthorized) {
-          await sendMessage(BOT_TOKEN, chatId, "🔒 هذا البوت خاص. أرسل كلمة المرور للمتابعة:");
-          return ok();
-        }
+        if (!isAuthorized) return ok();
 
         const session = (await getSession(env, chatId)) || {};
 
@@ -281,52 +239,70 @@ export default {
           return ok();
         }
 
-        // التعديل: التعامل مع اختيار طريقة الضغط
-        if (data.startsWith("method_")) {
-          const method = data.split("_")[1];
-          session.encode_method = method;
-          session.awaiting_target_value = true;
+        // 1. اختيار نوع المعالجة الثلاثي
+        if (data.startsWith("mode_")) {
+          const mode = data.split("_")[1];
+          session.encode_mode = mode; // filters, nofilters, audio
           await setSession(env, chatId, session);
 
-          let promptText = "";
-          if (method === "crf") promptText = "✏️ أرسل قيمة الجودة (CRF) المطلوبة:\n(مثال: 28 للحجم الصغير، أو 24 لجودة أعلى)";
-          if (method === "twopass") promptText = "✏️ أرسل معدل البت المستهدف للحجم الثابت:\n(مثال: 250k، 300k)";
-          if (method === "video") promptText = "✏️ أرسل قيمة الجودة (CRF) للفيديو (الفيديو سيكون بدون صوت):\n(مثال: 28، 30)";
-          if (method === "audio") promptText = "✏️ أرسل معدل بت الصوت المطلوب استخراجه:\n(مثال: 32k، 48k)";
-
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, promptText);
+          if (mode === "audio") {
+            session.av1_preset = "none";
+            session.encode_method = "audio";
+            session.awaiting_target_value = true;
+            await setSession(env, chatId, session);
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "✏️ أرسل معدل بت الصوت (مثال: 32k أو 48k):");
+          } else {
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "⚙️ ممتاز! اختر الـ Preset (سرعة/قوة الضغط):", presetKeyboardMarkup());
+          }
           return ok();
         }
 
+        // 2. اختيار الـ Preset
+        if (data.startsWith("preset_")) {
+          const preset_val = data.split("_")[1];
+          session.av1_preset = preset_val;
+          await setSession(env, chatId, session);
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `✅ Preset: ${preset_val}\n⚙️ الآن اختر طريقة الضغط:`, encodeMethodKeyboardMarkup());
+          return ok();
+        }
+
+        // 3. اختيار طريقة الضغط (CRF أو Two-Pass)
+        if (data.startsWith("encmethod_")) {
+          const method = data.split("_")[1];
+          session.encode_method = method; // crf أو twopass
+          session.awaiting_target_value = true;
+          await setSession(env, chatId, session);
+          
+          if (method === "crf") {
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, `✅ الطريقة: ضغط ذكي (CRF)\n✏️ أرسل قيمة الجودة (مثال: 28 للحجم الصغير):`);
+          } else {
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, `✅ الطريقة: حجم ثابت (Two-Pass)\n✏️ أرسل معدل البت المستهدف (مثال: 250k):`);
+          }
+          return ok();
+        }
+
+        // 4. اختيار الجودة
         if (data === "custom_res") {
           session.awaiting_res = true;
           await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "✏️ أرسل الجودة (رقم فقط، مثلاً 550):");
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "✏️ أرسل الجودة (رقم فقط):");
           return ok();
         }
 
         if (data.startsWith("res_")) {
-          const res = data.split("_")[1];
-          session.resolution = res;
+          session.resolution = data.split("_")[1];
           await setSession(env, chatId, session);
-          await editContentTypeKeyboard(BOT_TOKEN, chatId, query.message.message_id, res);
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `🎯 الجودة: ${session.resolution}p`, null);
+          await sendPrivacyKeyboard(BOT_TOKEN, chatId);
           return ok();
         }
 
-        if (data.startsWith("content_")) {
-          const contentType = data.substring("content_".length);
-          session.content_type = contentType;
-          await setSession(env, chatId, session);
-          await editPrivacyKeyboard(BOT_TOKEN, chatId, query.message.message_id);
-          return ok();
-        }
-
+        // 5. الخصوصية
         if (data === "priv_yes") {
           session.isPrivate = true;
           session.awaiting_password = true;
           await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id,
-            "🔒 أرسل كلمة المرور التي تريدها (4 أحرف على الأقل):");
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "🔒 أرسل كلمة المرور (4 أحرف على الأقل):");
           return ok();
         }
 
@@ -337,14 +313,18 @@ export default {
           } else {
             session.awaiting_filename = true;
             await setSession(env, chatId, session);
-            await promptFilename(BOT_TOKEN, chatId, query.message.message_id, session.filename, true);
+            await promptFilename(BOT_TOKEN, chatId, query.message.message_id, session.default_name, true);
           }
           return ok();
         }
 
+        // 6. استخدام الاسم المرفق
         if (data === "name_skip") {
           session.awaiting_filename = false;
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "📤 جاري الإرسال إلى المصنع السحابي...");
+          const finalName = await applyCounterToName(env, chatId, session.default_name || "video");
+          session.filename = finalName;
+          
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `📤 جاري الإرسال: ${finalName}`);
           await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, session);
           return ok();
         }
@@ -352,14 +332,11 @@ export default {
     } catch (err) {
       console.error("Handler error:", err.message, err.stack);
     }
-
     return ok();
   },
 };
 
-function ok() {
-  return new Response("OK", { status: 200 });
-}
+function ok() { return new Response("OK", { status: 200 }); }
 
 async function getSession(env, chatId) {
   const raw = await env.SESSIONS.get(`session:${chatId}`);
@@ -371,7 +348,6 @@ async function setSession(env, chatId, session) {
 async function deleteSession(env, chatId) {
   await env.SESSIONS.delete(`session:${chatId}`);
 }
-
 async function getPreset(env, chatId) {
   const raw = await env.SESSIONS.get(`preset:${chatId}`);
   return raw ? JSON.parse(raw) : null;
@@ -380,12 +356,25 @@ async function setPreset(env, chatId, preset) {
   await env.SESSIONS.put(`preset:${chatId}`, JSON.stringify(preset));
 }
 
+async function applyCounterToName(env, chatId, baseName) {
+  let finalName = baseName;
+  const preset = await getPreset(env, chatId);
+  if (preset && preset.next_episode !== undefined && preset.next_episode !== null) {
+    const prefix = preset.episode_prefix ? preset.episode_prefix + " " : "";
+    finalName = `${baseName} - ${prefix}${preset.next_episode}`.trim();
+    preset.next_episode++;
+    await setPreset(env, chatId, preset);
+  }
+  return finalName;
+}
+
 async function savePresetAndConfirm(env, BOT_TOKEN, chatId, session, editMessageId = null) {
   const preset = {
-    encode_method: session.encode_method,     // التعديل
-    target_value: session.target_value,       // التعديل
+    encode_mode: session.encode_mode,
+    av1_preset: session.av1_preset || "none",
+    encode_method: session.encode_method,
+    target_value: session.target_value,
     resolution: session.resolution || "none",
-    content_type: session.content_type || "auto",
     isPrivate: !!session.isPrivate,
     password: session.password || "",
     active: true,
@@ -397,81 +386,31 @@ async function savePresetAndConfirm(env, BOT_TOKEN, chatId, session, editMessage
   }
   await setPreset(env, chatId, preset);
   await deleteSession(env, chatId);
-  const text = `✅ تم حفظ الإعداد وتفعيله.\n${presetStatusText(preset)}\n\nالآن أرسل أي فيديو أو رابط وسيُرفع فورًا بهذا الإعداد. استخدم /auto_off لإيقافه مؤقتًا، أو /setup لتغييره.`;
-  if (editMessageId) {
-    await editMessage(BOT_TOKEN, chatId, editMessageId, text);
-  } else {
-    await sendMessage(BOT_TOKEN, chatId, text);
-  }
+  const text = `✅ تم حفظ الإعداد وتفعيله.\n${presetStatusText(preset)}\nاستخدم /auto_off للإيقاف.`;
+  if (editMessageId) await editMessage(BOT_TOKEN, chatId, editMessageId, text);
+  else await sendMessage(BOT_TOKEN, chatId, text);
 }
 
 function presetStatusText(preset) {
-  if (!preset) return "لا يوجد إعداد محفوظ. استخدم /setup لإنشاء واحد.";
-  const contentLabels = { real: "فيديو حقيقي", animation: "أنمي/رسوم (متوازن)", animation_ultra: "أنمي/رسوم (أصغر حجم)", auto: "مش متأكد" };
+  if (!preset) return "لا يوجد إعداد محفوظ.";
+  let modeLabel = preset.encode_mode === "filters" ? "مسلسلات (مع فلاتر)" : preset.encode_mode === "nofilters" ? "أنمي (بدون فلاتر)" : "صوت فقط";
+  let methodLabel = preset.encode_method === "crf" ? "CRF" : preset.encode_method === "twopass" ? "Two-Pass" : "استخراج";
   
-  // التعديل: إظهار طريقة الضغط
-  let methodLabel = "CRF";
-  if (preset.encode_method === "twopass") methodLabel = "حجم ثابت (Two-Pass)";
-  if (preset.encode_method === "video") methodLabel = "فيديو فقط (بدون صوت)";
-  if (preset.encode_method === "audio") methodLabel = "صوت فقط (استخراج)";
-
   let lines = [
-    `الحالة: ${preset.active ? "🟢 نشط" : "🔴 متوقف"}`,
-    `الطريقة: ${methodLabel} (${preset.target_value || "بدون قيمة"})`,
+    `الوضع: ${modeLabel}`,
+    `الـ Preset: ${preset.av1_preset}`,
+    `الطريقة: ${methodLabel}`,
+    `القيمة: ${preset.target_value}`,
   ];
-  
-  if (preset.encode_method !== "audio") {
-    lines.push(`الجودة: ${preset.resolution}p`);
-    lines.push(`النوع: ${contentLabels[preset.content_type] || preset.content_type}`);
-  }
-  
-  lines.push(`الخصوصية: ${preset.isPrivate ? "🔒 خاص" : "🔓 عام"}`);
-
-  if (preset.next_episode !== undefined && preset.next_episode !== null) {
-    const prefix = preset.episode_prefix || "";
-    lines.push(`🎬 التسمية التلقائية: "${prefix}${preset.next_episode}" (التالي)`);
+  if (preset.encode_mode !== "audio") lines.push(`الجودة: ${preset.resolution}p`);
+  if (preset.next_episode !== undefined) {
+    lines.push(`🎬 العداد التلقائي نشط للحلقة القادمة: ${preset.next_episode}`);
   }
   return lines.join("\n");
 }
 
 function startMessage(preset) {
-  const base = "🚀 أرسل الفيديو مباشرة هنا، أو أرسل رابط فيديو.\n⚡ سيتم إرسال المهمة إلى المصنع السحابي (GitHub Actions).";
-  const extra = [
-    "💡 يمكنك ضبط جودة/نوع/طريقة ثابتة مرة واحدة عبر /setup.",
-    "📌 أوامر التسمية التلقائية:",
-    "  /setepisode 1  ➜ تعيين رقم الحلقة التالية",
-    "  /setprefix حلقة   ➜ تعيين بادئة (اختياري)",
-    "  /stopepisode   ➜ إلغاء التسمية التلقائية",
-    "/preset لعرض الإعداد الحالي."
-  ];
-  if (preset && preset.active) {
-    return `${base}\n\n⚙️ الوضع التلقائي مفعّل حاليًا.\n${presetStatusText(preset)}\n\n${extra.join("\n")}`;
-  }
-  return `${base}\n\n${extra.join("\n")}`;
-}
-
-async function getQueueAheadCount(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW) {
-  const headers = {
-    Authorization: `token ${GITHUB_TOKEN}`,
-    Accept: "application/vnd.github.v3+json",
-    "User-Agent": "Cloudflare-Worker",
-  };
-  let total = 0;
-  try {
-    for (const status of ["queued", "in_progress"]) {
-      const r = await fetch(
-        `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/runs?status=${status}`,
-        { headers }
-      );
-      if (r.ok) {
-        const j = await r.json();
-        total += j.total_count || 0;
-      }
-    }
-  } catch (e) {
-    return null;
-  }
-  return total;
+  return `🚀 أرسل فيديو للبدء.\n\n📌 أوامر العداد التلقائي:\n  /setepisode 1 ➜ بدء العداد\n  /setprefix حلقة ➜ إضافة بادئة (اختياري)\n  /stopepisode ➜ إلغاء العداد\n\n${preset && preset.active ? '⚙️ الوضع التلقائي مفعّل.' : ''}`;
 }
 
 async function triggerGitHub(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, session, chatId) {
@@ -479,192 +418,119 @@ async function triggerGitHub(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, session
     ref: "main",
     inputs: {
       message_id: session.message_id ? String(session.message_id) : "",
-      url: session.url || "",
       resolution: session.resolution || "audio",
       chat_id: String(chatId),
       private: session.isPrivate ? "true" : "false",
       password: session.password || "",
-      content_type: session.content_type || "auto",
       filename: session.filename || "",
-      // التعديل: إرسال المتغيرات الجديدة للسكربت
-      encode_method: session.encode_method || "crf",
-      target_value: String(session.target_value || "28"),
+      encode_mode: session.encode_mode,
+      av1_preset: session.av1_preset,
+      encode_method: session.encode_method,
+      target_value: String(session.target_value),
     },
   };
 
-  const response = await fetch(
-    `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `token ${GITHUB_TOKEN}`,
-        Accept: "application/vnd.github.v3+json",
-        "User-Agent": "Cloudflare-Worker",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    }
-  );
-
-  if (response.status !== 204) {
-    const errText = await response.text();
-    console.error("GitHub dispatch failed:", response.status, errText);
-  }
+  const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`, {
+    method: "POST",
+    headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json", "User-Agent": "Cloudflare-Worker" },
+    body: JSON.stringify(body),
+  });
   return response.status === 204;
 }
 
 async function finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, session) {
-  // التعديل: السماح بتخطي الجودة إذا كان الاستخراج للصوت فقط
-  if ((!session.message_id && !session.url) || (!session.resolution && session.encode_method !== "audio")) {
-    await sendMessage(BOT_TOKEN, chatId, "❌ حدث خطأ أو بيانات غير مكتملة. أعد إرسال الفيديو.");
-    await deleteSession(env, chatId);
-    return;
-  }
-  if (session.isPrivate && !session.password) {
-    await sendMessage(BOT_TOKEN, chatId, "❌ حدث خطأ: لم يتم تسجيل كلمة المرور. أعد إرسال الفيديو.");
-    await deleteSession(env, chatId);
-    return;
-  }
-
   const success = await triggerGitHub(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, session, chatId);
-  if (success) {
-    const count = await getQueueAheadCount(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW);
-    let note = "";
-    if (count !== null) {
-      note = count <= 1 ? "\n⚡ ستبدأ مهمتك فورًا تقريبًا." : `\n⏳ يوجد حاليًا ${count - 1} مهمة قبل مهمتك في الطابور.`;
-    }
-    await sendMessage(BOT_TOKEN, chatId, `✅ تم الإرسال! سيصلك رابط التحميل خلال دقائق.${note}`);
-  } else {
-    await sendMessage(BOT_TOKEN, chatId, "❌ فشل إرسال المهمة. تحقق من التوكن أو حاول لاحقًا.");
-  }
+  if (success) await sendMessage(BOT_TOKEN, chatId, `✅ تم إرسال المهمة لمصنع الضغط السحابي!`);
+  else await sendMessage(BOT_TOKEN, chatId, "❌ فشل الإرسال إلى GitHub.");
   await deleteSession(env, chatId);
 }
 
 function extractDefaultName(message) {
-  const VIDEO_EXT = /\.(mp4|mkv|mov|avi|webm|ts|m4v|flv|wmv)$/i;
   let name = null;
-  if (message.caption && message.caption.trim()) {
-    name = message.caption.trim();
-  } else {
-    const fileName = (message.document && message.document.file_name) || (message.video && message.video.file_name);
-    if (fileName) name = fileName.replace(VIDEO_EXT, "").trim();
-  }
+  if (message.caption) name = message.caption;
+  else if (message.document) name = message.document.file_name;
+  else if (message.video) name = message.video.file_name;
   if (!name) return null;
-  name = name.split("\n")[0].trim();
-  name = name.replace(/[\/\\:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
-  return name || null;
+  return name.replace(/\.[^/.]+$/, "").replace(/[\/\\:*?"<>|]/g, " ").trim();
 }
 
 async function promptFilename(BOT_TOKEN, chatId, editMessageId, defaultName, isEdit) {
-  let text, keyboard;
-  if (defaultName) {
-    text = `✏️ الاسم المكتشف: ${defaultName}\nأرسل اسمًا جديدًا لتغييره، أو اضغط "استخدام هذا الاسم" للمتابعة.`;
-    keyboard = { inline_keyboard: [[{ text: "✅ استخدام هذا الاسم", callback_data: "name_skip" }]] };
-  } else {
-    text = '✏️ هل تريد تسمية الفيديو؟\n(أرسل اسم الملف الآن أو اضغط "لا، تابع")';
-    keyboard = { inline_keyboard: [[{ text: "✅ لا، تابع", callback_data: "name_skip" }]] };
-  }
-  if (isEdit && editMessageId) {
-    await editMessage(BOT_TOKEN, chatId, editMessageId, text, keyboard);
-  } else {
-    await sendMessage(BOT_TOKEN, chatId, text, keyboard);
-  }
+  const text = defaultName 
+    ? `الاسم المرفق: ${defaultName}\n\n✏️ أرسل اسماً جديداً الآن، أو اضغط استخدام المرفق.\n*(ملاحظة: العداد التلقائي سيُضاف للاسم إن كان مفعلاً)*`
+    : `✏️ أرسل اسم الملف الجديد الآن:`;
+  const keyboard = defaultName ? { inline_keyboard: [[{ text: "✅ استخدام الاسم المرفق", callback_data: "name_skip" }]] } : null;
+  
+  if (isEdit && editMessageId) await editMessage(BOT_TOKEN, chatId, editMessageId, text, keyboard);
+  else await sendMessage(BOT_TOKEN, chatId, text, keyboard);
 }
 
-// التعديل: كيبورد طرق المعالجة (يُرسل في بداية الجلسة)
-async function sendEncodeMethodKeyboard(BOT_TOKEN, chatId) {
+// ===== لوحات المفاتيح =====
+async function sendEncodeModeKeyboard(BOT_TOKEN, chatId) {
   const keyboard = {
     inline_keyboard: [
-      [{ text: "🎛️ ضغط ذكي (CRF)", callback_data: "method_crf" }],
-      [{ text: "⚖️ حجم ثابت (Two-Pass)", callback_data: "method_twopass" }],
-      [{ text: "🎬 فيديو فقط (بدون صوت)", callback_data: "method_video" }],
-      [{ text: "🎵 صوت فقط (استخراج الصوت)", callback_data: "method_audio" }],
+      [{ text: "🎬 إدخال مع فلاتر (للمسلسلات)", callback_data: "mode_filters" }],
+      [{ text: "🌸 إدخال بدون فلاتر (للأنمي)", callback_data: "mode_nofilters" }],
+      [{ text: "🎵 صوت فقط (استخراج الصوت)", callback_data: "mode_audio" }],
       [{ text: "إلغاء", callback_data: "cancel" }]
     ]
   };
-  await sendMessage(BOT_TOKEN, chatId, "⚙️ اختر طريقة المعالجة المناسبة:", keyboard);
+  await sendMessage(BOT_TOKEN, chatId, "⚙️ اختر نوع المعالجة:", keyboard);
 }
 
-// التعديل: دالة منفصلة لإرسال كيبورد الخصوصية (تستخدم عند تخطي مسار الجودة)
-async function sendPrivacyKeyboard(BOT_TOKEN, chatId) {
-  const keyboard = {
+function presetKeyboardMarkup() {
+  return {
     inline_keyboard: [
-      [
-        { text: "🔒 خاص (بكلمة مرور)", callback_data: "priv_yes" },
-        { text: "🔓 عام (رابط مباشر)", callback_data: "priv_no" },
-      ],
-      [{ text: "إلغاء", callback_data: "cancel" }],
-    ],
+      [{ text: "8 (سريع)", callback_data: "preset_8" }, { text: "7 (متوسط)", callback_data: "preset_7" }],
+      [{ text: "6 (بطيء)", callback_data: "preset_6" }, { text: "4 (أقصى ضغط)", callback_data: "preset_4" }],
+      [{ text: "إلغاء", callback_data: "cancel" }]
+    ]
   };
-  await sendMessage(BOT_TOKEN, chatId, "🔐 هل تريد الملف خاصاً؟", keyboard);
+}
+
+function encodeMethodKeyboardMarkup() {
+  return {
+    inline_keyboard: [
+      [{ text: "🎛️ ضغط ذكي (CRF)", callback_data: "encmethod_crf" }],
+      [{ text: "⚖️ حجم ثابت (Two-Pass)", callback_data: "encmethod_twopass" }],
+      [{ text: "إلغاء", callback_data: "cancel" }]
+    ]
+  };
 }
 
 async function sendQualityKeyboard(BOT_TOKEN, chatId, resolutions) {
   const rows = [];
   for (let i = 0; i < resolutions.length; i += 2) {
-    const row = resolutions.slice(i, i + 2).map((r) => ({ text: `${r}p`, callback_data: `res_${r}` }));
-    rows.push(row);
+    rows.push(resolutions.slice(i, i + 2).map((r) => ({ text: `${r}p`, callback_data: `res_${r}` })));
   }
   rows.push([{ text: "✏️ جودة مخصصة", callback_data: "custom_res" }]);
-  rows.push([{ text: "إلغاء", callback_data: "cancel" }]);
-  await sendMessage(BOT_TOKEN, chatId, "🎯 اختر الجودة:", { inline_keyboard: rows });
+  await sendMessage(BOT_TOKEN, chatId, "🎯 اختر الجودة النهائية:", { inline_keyboard: rows });
 }
 
-function contentTypeKeyboardMarkup() {
-  return {
-    inline_keyboard: [
-      [{ text: "🎬 فيديو حقيقي (لايف أكشن)", callback_data: "content_real" }],
-      [{ text: "🎨 أنمي/رسوم (متوازن)", callback_data: "content_animation" }],
-      [{ text: "🎨 أنمي/رسوم (أصغر حجم ممكن)", callback_data: "content_animation_ultra" }],
-      [{ text: "🤔 مش متأكد", callback_data: "content_auto" }],
-    ],
-  };
-}
-async function sendContentTypeKeyboard(BOT_TOKEN, chatId) {
-  await sendMessage(BOT_TOKEN, chatId, "🖼️ ما نوع محتوى الفيديو؟\n(هذا يساعد في اختيار أفضل إعدادات ضغط)", contentTypeKeyboardMarkup());
-}
-async function editContentTypeKeyboard(BOT_TOKEN, chatId, messageId, res) {
-  await editMessage(BOT_TOKEN, chatId, messageId, `🎯 ${res}p\n🖼️ ما نوع محتوى الفيديو؟`, contentTypeKeyboardMarkup());
-}
-
-async function editPrivacyKeyboard(BOT_TOKEN, chatId, messageId) {
+async function sendPrivacyKeyboard(BOT_TOKEN, chatId) {
   const keyboard = {
     inline_keyboard: [
-      [
-        { text: "🔒 خاص (بكلمة مرور)", callback_data: "priv_yes" },
-        { text: "🔓 عام (رابط مباشر)", callback_data: "priv_no" },
-      ],
-      [{ text: "إلغاء", callback_data: "cancel" }],
-    ],
+      [{ text: "🔒 خاص", callback_data: "priv_yes" }, { text: "🔓 عام", callback_data: "priv_no" }]
+    ]
   };
-  await editMessage(BOT_TOKEN, chatId, messageId, "🔐 هل تريد الفيديو خاصاً؟", keyboard);
+  await sendMessage(BOT_TOKEN, chatId, "🔐 هل تريد الملف خاصاً؟", keyboard);
 }
 
+// ===== API =====
 async function sendTelegram(BOT_TOKEN, method, body) {
-  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
   });
-  if (!r.ok) {
-    const errText = await r.text();
-    console.error(`Telegram API error (${method}):`, errText);
-  }
-  return r;
 }
-
 async function sendMessage(BOT_TOKEN, chatId, text, keyboard = null) {
   const body = { chat_id: chatId, text };
   if (keyboard) body.reply_markup = keyboard;
-  return sendTelegram(BOT_TOKEN, "sendMessage", body);
+  await sendTelegram(BOT_TOKEN, "sendMessage", body);
 }
-
 async function editMessage(BOT_TOKEN, chatId, messageId, text, keyboard = null) {
   const body = { chat_id: chatId, message_id: messageId, text };
   if (keyboard) body.reply_markup = keyboard;
-  return sendTelegram(BOT_TOKEN, "editMessageText", body);
+  await sendTelegram(BOT_TOKEN, "editMessageText", body);
 }
-
 async function answerCallback(BOT_TOKEN, callbackQueryId) {
-  return sendTelegram(BOT_TOKEN, "answerCallbackQuery", { callback_query_id: callbackQueryId });
+  await sendTelegram(BOT_TOKEN, "answerCallbackQuery", { callback_query_id: callbackQueryId });
 }
