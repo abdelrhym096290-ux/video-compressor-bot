@@ -208,6 +208,7 @@ jobs:
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
 
+          # 🌟 التفرقة بين المسلسلات والأنمي
           if [ "$ENCODE_MODE" == "filters" ]; then
             echo "🎭 وضع المسلسلات: تفعيل الفلاتر"
             VF_CHAIN="scale=-2:${RESOLUTION},hqdn3d=3:2:2:3,deband,cas=0.4,format=yuv420p10le"
@@ -221,6 +222,7 @@ jobs:
             SVT_PARAMS=""
           fi
 
+          # 🌟 تنفيذ المعالجة بناءً على الطريقة المطلوبة
           if [ "$ENCODE_METHOD" == "crf" ]; then
             echo "🎛️ نظام CRF | القيمة: $TARGET_VALUE | Preset: $AV1_PRESET"
             ffmpeg -y -i "$IN" \
@@ -342,18 +344,16 @@ jobs:
             if [ -f "output.mkv" ]; then mv output.mkv "$UPLOAD_FILE"; fi
           fi
 
+          # جلب الحجم بأمان أولاً (بمعزل عن أي تعشيش)، ثم حسابه بـ awk
           FILE_SIZE=$(stat -c%s "$UPLOAD_FILE")
           SIZE_MB=$(awk -v size="$FILE_SIZE" 'BEGIN {printf "%.1f", size/1048576}')
-          
+
           export UPLOAD_FILE SIZE_MB
 
           python3 <<'PYEOF'
           import os, asyncio
           from telethon import TelegramClient
           from telethon.sessions import StringSession
-          api_id = int(os.environ["TG_API_ID"])
-          api_hash = int(os.environ["TG_API_HASH"] if str(os.environ["TG_API_HASH"]).isdigit() else os.environ["TG_API_ID"]) # Safe cast
-          # Note: Keep standard env parsing below
           api_id = int(os.environ["TG_API_ID"])
           api_hash = os.environ["TG_API_HASH"]
           session = os.environ["TG_SESSION"]
