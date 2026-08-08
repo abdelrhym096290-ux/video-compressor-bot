@@ -3,9 +3,9 @@ export default {
     if (request.method !== "POST") return new Response("OK", { status: 200 });
 
     const BOT_TOKEN = env.BOT_TOKEN;
-    const GITHUB_TOKEN = env.GITHUB_TOKEN;
+    const GITHUB_TOKEN = env.GH_TOKEN;
     const BOT_PASSWORD = env.BOT_PASSWORD;
-    const GITHUB_REPO = "abdelrhym096290-ux/video-compressor-bot";
+    const GITHUB_REPO = "abdelrhym118-cloud/Abd00118";
     const GITHUB_WORKFLOW = "compress.yml";
     const RESOLUTIONS = ["240", "360", "480", "720", "1080"];
 
