@@ -209,14 +209,17 @@ jobs:
           mkdir -p "$OUT_DIR"
 
           # 🌟 التفرقة بين المسلسلات والأنمي
+          # الفلاتر هنا مبنية على افتراض أن المصدر معاد ترميزه مسبقاً (x264/x265)
+          # لذلك الهدف: إزالة آرتيفاكتس الضغط السابق (بلوك/باندينغ) دون تنعيم عدواني
+          # يفقد التفاصيل، مع رفع كفاءة الترميز عبر مصفوفات التكميم بدل زيادة الحدة.
           if [ "$ENCODE_MODE" == "filters" ]; then
-            echo "🎭 وضع المسلسلات: تفعيل الفلاتر"
-            VF_CHAIN="scale=-2:${RESOLUTION},hqdn3d=3:2:2:3,deband,cas=0.4,format=yuv420p10le"
-            SVT_PARAMS="-svtav1-params film-grain=10:film-grain-denoise=1"
+            echo "🎭 وضع المسلسلات: إزالة آرتيفاكتس الترميز السابق + تحسين الكفاءة"
+            VF_CHAIN="scale=-2:${RESOLUTION}:flags=lanczos,hqdn3d=1.5:1:1.5:1,deband=1thr=0.02:2thr=0.02:3thr=0.02:range=16,format=yuv420p10le"
+            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0:enable-overlays=1:film-grain=6:film-grain-denoise=0"
           elif [ "$ENCODE_MODE" == "nofilters" ]; then
-            echo "🌸 وضع الأنمي: بدون فلاتر تنعيم"
-            VF_CHAIN="scale=-2:${RESOLUTION},format=yuv420p10le"
-            SVT_PARAMS="-svtav1-params tune=0"
+            echo "🌸 وضع الأنمي: بدون تنعيم، إزالة باندينغ فقط"
+            VF_CHAIN="scale=-2:${RESOLUTION}:flags=lanczos,deband=1thr=0.015:2thr=0.015:3thr=0.015:range=16,format=yuv420p10le"
+            SVT_PARAMS="-svtav1-params tune=0:enable-qm=1:qm-min=0"
           else
             VF_CHAIN=""
             SVT_PARAMS=""
@@ -233,14 +236,16 @@ jobs:
 
           elif [ "$ENCODE_METHOD" == "twopass" ]; then
             echo "⚖️ نظام التمريرتين (Two-Pass) | الهدف: $TARGET_VALUE | Preset: $AV1_PRESET"
+            PASSLOG="${OUT_DIR}/passlog_${CHUNK_ID}"
+
             ffmpeg -y -i "$IN" \
               -vf "$VF_CHAIN" \
-              -c:v libsvtav1 -preset 8 -b:v "$TARGET_VALUE" -pass 1 \
+              -c:v libsvtav1 -preset 8 -b:v "$TARGET_VALUE" -g 240 -pass 1 -passlogfile "$PASSLOG" \
               -an -f null /dev/null
-              
+
             ffmpeg -y -i "$IN" \
               -vf "$VF_CHAIN" \
-              -c:v libsvtav1 -preset "$AV1_PRESET" -b:v "$TARGET_VALUE" -pass 2 \
+              -c:v libsvtav1 -preset "$AV1_PRESET" -b:v "$TARGET_VALUE" -g 240 -pass 2 -passlogfile "$PASSLOG" \
               $SVT_PARAMS \
               -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
 
@@ -298,7 +303,7 @@ jobs:
           H=$((DURATION_SEC/3600)); M=$(((DURATION_SEC%3600)/60)); S=$((DURATION_SEC%60))
           DURATION_FMT=$(printf "%02d:%02d:%02d" $H $M $S)
           echo "duration_fmt=$DURATION_FMT" >> "$GITHUB_OUTPUT"
-          
+
           if [ "$ENCODE_METHOD" == "audio" ]; then
             echo "actual_res=صوت فقط 🎵" >> "$GITHUB_OUTPUT"
           else
