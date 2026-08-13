@@ -321,16 +321,29 @@ jobs:
           retention-days: 1
 
   merge-and-send:
-    needs: [split-video, encode-chunks]
+    needs: [split-video, encode-chunks, prepare-codec-build]
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
+      - name: استعادة بناء المرّمّز وFFmpeg
+        if: github.event.inputs.codec != 'audio'
+        uses: actions/cache@v4
+        with:
+          path: ~/codec-build
+          key: codec-ffmpeg-${{ github.event.inputs.codec }}-ubuntu-v2
+
       - name: تجهيز أدوات الدمج والإرسال
+        env:
+          CODEC: ${{ github.event.inputs.codec }}
         run: |
           set -euo pipefail
           sudo apt update
-          sudo apt install -y ffmpeg p7zip-full
+          sudo apt install -y ffmpeg p7zip-full libopus0
           pip install telethon
+          if [ "$CODEC" != "audio" ]; then
+            echo "$HOME/codec-build/bin" >> "$GITHUB_PATH"
+            echo "LD_LIBRARY_PATH=$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          fi
 
       - name: تنزيل جميع الأجزاء المضغوطة
         uses: actions/download-artifact@v4
