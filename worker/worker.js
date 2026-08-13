@@ -37,7 +37,8 @@ export default {
           const autoSession = {
             message_id: update.message.message_id,
             encode_mode: preset.encode_mode,
-            av1_preset: preset.av1_preset,
+            codec: preset.codec || "av1",
+            preset: preset.preset || preset.av1_preset || "8",
             encode_method: preset.encode_method,
             target_value: preset.target_value,
             resolution: preset.resolution,
@@ -53,7 +54,7 @@ export default {
         // ===== جلسة يدوية جديدة =====
         const newSession = { message_id: update.message.message_id, default_name: defaultName };
         await setSession(env, chatId, newSession);
-        await sendEncodeModeKeyboard(BOT_TOKEN, chatId);
+        await sendCodecKeyboard(BOT_TOKEN, chatId);
         return ok();
       }
 
@@ -83,7 +84,7 @@ export default {
 
         if (text === "/setup" || text === "/settings") {
           await setSession(env, chatId, { configuring_preset: true });
-          await sendEncodeModeKeyboard(BOT_TOKEN, chatId);
+          await sendCodecKeyboard(BOT_TOKEN, chatId);
           return ok();
         }
 
@@ -156,12 +157,37 @@ export default {
           return ok();
         }
 
-        // ===== استقبال القيمة (CRF أو Bitrate) =====
+        // ===== استقبال رقم السرعة يدوياً =====
+        if (session.awaiting_preset) {
+          const value = text.trim();
+          const codec = session.codec || "av1";
+          const valid = codec === "av1"
+            ? /^(?:[0-9]|1[0-3])$/.test(value)
+            : /^(?:[1-4])$/.test(value);
+
+          if (!valid) {
+            const hint = codec === "av1"
+              ? "❌ أرسل رقم سرعة AV1 من 0 إلى 13 فقط:"
+              : "❌ أرسل رقم سرعة VVC من 1 إلى 4 فقط:";
+            await sendMessage(BOT_TOKEN, chatId, hint);
+            return ok();
+          }
+
+          session.preset = value;
+          session.awaiting_preset = false;
+          await setSession(env, chatId, session);
+          const label = codec === "vvc" ? `VVC سرعة ${value}` : `AV1 Preset ${value}`;
+          await sendMessage(BOT_TOKEN, chatId, `✅ تم تسجيل: ${label}`);
+          await sendEncodeMethodKeyboard(BOT_TOKEN, chatId, codec);
+          return ok();
+        }
+
+        // ===== استقبال القيمة (CRF/QP أو Bitrate) =====
         if (session.awaiting_target_value) {
           session.target_value = text;
           session.awaiting_target_value = false;
           await setSession(env, chatId, session);
-          
+
           if (session.encode_mode === "audio") {
             await sendMessage(BOT_TOKEN, chatId, `✅ القيمة المسجلة: ${text}`);
             await sendPrivacyKeyboard(BOT_TOKEN, chatId);
@@ -207,10 +233,10 @@ export default {
         if (session.awaiting_filename) {
           session.filename = text;
           session.awaiting_filename = false;
-          
+
           const finalName = await applyCounterToName(env, chatId, session.filename);
           session.filename = finalName;
-          
+
           await setSession(env, chatId, session);
           await sendMessage(BOT_TOKEN, chatId, `✅ تم اعتماد الاسم النهائي: ${finalName}`);
           await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, session);
@@ -239,20 +265,46 @@ export default {
           return ok();
         }
 
-        // 1. اختيار نوع المعالجة الثلاثي
+        // 0. اختيار المرّمّز
+        if (data.startsWith("codec_")) {
+          const codec = data.split("_")[1];
+          if (codec === "audio") {
+            session.codec = "audio";
+            session.encode_mode = "audio";
+            session.preset = "none";
+            session.encode_method = "audio";
+            session.awaiting_target_value = true;
+            await setSession(env, chatId, session);
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "✏️ أرسل معدل بت الصوت (مثال: 32k أو 48k):");
+          } else {
+            session.codec = codec;
+            await setSession(env, chatId, session);
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, `🎞️ المرّمّز: ${codec === "vvc" ? "H.266 / VVC" : "AV1"}`);
+            await sendEncodeModeKeyboard(BOT_TOKEN, chatId);
+          }
+          return ok();
+        }
+
+        // 1. اختيار نوع المعالجة
         if (data.startsWith("mode_")) {
           const mode = data.split("_")[1];
           session.encode_mode = mode; // filters, nofilters, audio
           await setSession(env, chatId, session);
 
           if (mode === "audio") {
-            session.av1_preset = "none";
+            session.codec = "audio";
+            session.preset = "none";
             session.encode_method = "audio";
             session.awaiting_target_value = true;
             await setSession(env, chatId, session);
             await editMessage(BOT_TOKEN, chatId, query.message.message_id, "✏️ أرسل معدل بت الصوت (مثال: 32k أو 48k):");
           } else {
-            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "⚙️ ممتاز! اختر الـ Preset (سرعة/قوة الضغط):", presetKeyboardMarkup());
+            session.awaiting_preset = true;
+            await setSession(env, chatId, session);
+            const hint = session.codec === "vvc"
+              ? "⚙️ أرسل رقم السرعة لـ VVC: 1 أبطأ، 2 بطيء، 3 سريع، 4 الأسرع."
+              : "⚙️ أرسل رقم سرعة AV1 من 0 إلى 13 (مثل 4 أو 8).";
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, hint);
           }
           return ok();
         }
@@ -260,9 +312,9 @@ export default {
         // 2. اختيار الـ Preset
         if (data.startsWith("preset_")) {
           const preset_val = data.split("_")[1];
-          session.av1_preset = preset_val;
+          session.preset = preset_val;
           await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `✅ Preset: ${preset_val}\n⚙️ الآن اختر طريقة الضغط:`, encodeMethodKeyboardMarkup());
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `✅ Preset: ${preset_val}\n⚙️ الآن اختر طريقة الضغط:`, encodeMethodKeyboardMarkup(session.codec || "av1"));
           return ok();
         }
 
@@ -272,11 +324,14 @@ export default {
           session.encode_method = method; // crf أو twopass
           session.awaiting_target_value = true;
           await setSession(env, chatId, session);
-          
+
           if (method === "crf") {
-            await editMessage(BOT_TOKEN, chatId, query.message.message_id, `✅ الطريقة: ضغط ذكي (CRF)\n✏️ أرسل قيمة الجودة (مثال: 28 للحجم الصغير):`);
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "✅ الطريقة: ضغط ذكي (CRF)\n✏️ أرسل قيمة الجودة (مثال: 28 للحجم الصغير):");
+          } else if (method === "qp") {
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "✅ الطريقة: جودة ثابتة (QP)\n✏️ أرسل قيمة QP من 0 إلى 63 (مثال: 32):");
           } else {
-            await editMessage(BOT_TOKEN, chatId, query.message.message_id, `✅ الطريقة: حجم ثابت (Two-Pass)\n✏️ أرسل معدل البت المستهدف (مثال: 250k):`);
+            const label = session.codec === "vvc" ? "معدل بت VBR" : "حجم ثابت (Two-Pass)";
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, `✅ الطريقة: ${label}\n✏️ أرسل معدل البت المستهدف (مثال: 250k):`);
           }
           return ok();
         }
@@ -323,7 +378,7 @@ export default {
           session.awaiting_filename = false;
           const finalName = await applyCounterToName(env, chatId, session.default_name || "video");
           session.filename = finalName;
-          
+
           await editMessage(BOT_TOKEN, chatId, query.message.message_id, `📤 جاري الإرسال: ${finalName}`);
           await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, session);
           return ok();
@@ -371,7 +426,8 @@ async function applyCounterToName(env, chatId, baseName) {
 async function savePresetAndConfirm(env, BOT_TOKEN, chatId, session, editMessageId = null) {
   const preset = {
     encode_mode: session.encode_mode,
-    av1_preset: session.av1_preset || "none",
+    codec: session.codec || "av1",
+    preset: session.preset || session.av1_preset || "8",
     encode_method: session.encode_method,
     target_value: session.target_value,
     resolution: session.resolution || "none",
@@ -393,12 +449,14 @@ async function savePresetAndConfirm(env, BOT_TOKEN, chatId, session, editMessage
 
 function presetStatusText(preset) {
   if (!preset) return "لا يوجد إعداد محفوظ.";
-  let modeLabel = preset.encode_mode === "filters" ? "مسلسلات (مع فلاتر)" : preset.encode_mode === "nofilters" ? "أنمي (بدون فلاتر)" : "صوت فقط";
-  let methodLabel = preset.encode_method === "crf" ? "CRF" : preset.encode_method === "twopass" ? "Two-Pass" : "استخراج";
-  
+  let modeLabel = preset.encode_mode === "filters" ? "مع فلاتر" : preset.encode_mode === "nofilters" ? "بدون فلاتر" : "صوت فقط";
+  let codecLabel = preset.codec === "vvc" ? "H.266 / VVC" : preset.codec === "audio" ? "صوت" : "AV1";
+  let methodLabel = preset.encode_method === "crf" ? "CRF" : preset.encode_method === "qp" ? "QP" : preset.encode_method === "vbr" ? "VBR" : preset.encode_method === "twopass" ? "Two-Pass" : "استخراج";
+
   let lines = [
+    `المرّمّز: ${codecLabel}`,
     `الوضع: ${modeLabel}`,
-    `الـ Preset: ${preset.av1_preset}`,
+    `السرعة: ${preset.preset || preset.av1_preset || "8"}`,
     `الطريقة: ${methodLabel}`,
     `القيمة: ${preset.target_value}`,
   ];
@@ -424,7 +482,8 @@ async function triggerGitHub(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, session
       password: session.password || "",
       filename: session.filename || "",
       encode_mode: session.encode_mode,
-      av1_preset: session.av1_preset,
+      codec: session.codec || "av1",
+      preset: session.preset || session.av1_preset || "8",
       encode_method: session.encode_method,
       target_value: String(session.target_value),
     },
@@ -459,35 +518,45 @@ async function promptFilename(BOT_TOKEN, chatId, editMessageId, defaultName, isE
     ? `الاسم المرفق: ${defaultName}\n\n✏️ أرسل اسماً جديداً الآن، أو اضغط استخدام المرفق.\n*(ملاحظة: العداد التلقائي سيُضاف للاسم إن كان مفعلاً)*`
     : `✏️ أرسل اسم الملف الجديد الآن:`;
   const keyboard = defaultName ? { inline_keyboard: [[{ text: "✅ استخدام الاسم المرفق", callback_data: "name_skip" }]] } : null;
-  
+
   if (isEdit && editMessageId) await editMessage(BOT_TOKEN, chatId, editMessageId, text, keyboard);
   else await sendMessage(BOT_TOKEN, chatId, text, keyboard);
 }
 
 // ===== لوحات المفاتيح =====
+async function sendCodecKeyboard(BOT_TOKEN, chatId) {
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "⚡ AV1", callback_data: "codec_av1" }, { text: "🧪 H.266 / VVC", callback_data: "codec_vvc" }],
+      [{ text: "🎵 صوت فقط", callback_data: "codec_audio" }],
+      [{ text: "إلغاء", callback_data: "cancel" }]
+    ]
+  };
+  await sendMessage(BOT_TOKEN, chatId, "⚙️ اختر المرّمّز أو الصوت:", keyboard);
+}
+
 async function sendEncodeModeKeyboard(BOT_TOKEN, chatId) {
   const keyboard = {
     inline_keyboard: [
-      [{ text: "🎬 إدخال مع فلاتر (للمسلسلات)", callback_data: "mode_filters" }],
-      [{ text: "🌸 إدخال بدون فلاتر (للأنمي)", callback_data: "mode_nofilters" }],
-      [{ text: "🎵 صوت فقط (استخراج الصوت)", callback_data: "mode_audio" }],
+      [{ text: "🛠️ إدخال مع فلاتر عند الحاجة", callback_data: "mode_filters" }],
+      [{ text: "✨ إدخال بدون فلاتر", callback_data: "mode_nofilters" }],
       [{ text: "إلغاء", callback_data: "cancel" }]
     ]
   };
-  await sendMessage(BOT_TOKEN, chatId, "⚙️ اختر نوع المعالجة:", keyboard);
+  await sendMessage(BOT_TOKEN, chatId, "⚙️ اختر وضع الصورة:", keyboard);
 }
 
-function presetKeyboardMarkup() {
-  return {
-    inline_keyboard: [
-      [{ text: "8 (سريع)", callback_data: "preset_8" }, { text: "7 (متوسط)", callback_data: "preset_7" }],
-      [{ text: "6 (بطيء)", callback_data: "preset_6" }, { text: "4 (أقصى ضغط)", callback_data: "preset_4" }],
-      [{ text: "إلغاء", callback_data: "cancel" }]
-    ]
-  };
-}
 
-function encodeMethodKeyboardMarkup() {
+function encodeMethodKeyboardMarkup(codec = "av1") {
+  if (codec === "vvc") {
+    return {
+      inline_keyboard: [
+        [{ text: "🎛️ جودة ثابتة (QP)", callback_data: "encmethod_qp" }],
+        [{ text: "📊 معدل بت (VBR)", callback_data: "encmethod_vbr" }],
+        [{ text: "إلغاء", callback_data: "cancel" }]
+      ]
+    };
+  }
   return {
     inline_keyboard: [
       [{ text: "🎛️ ضغط ذكي (CRF)", callback_data: "encmethod_crf" }],
