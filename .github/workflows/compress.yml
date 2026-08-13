@@ -210,6 +210,9 @@ jobs:
             sudo apt update
             sudo apt install -y ffmpeg libopus0
           else
+            # FFmpeg بُني مع libopus، وهذه المكتبة لا تنتقل داخل Cache البناء.
+            sudo apt update
+            sudo apt install -y libopus0
             test -x "$HOME/codec-build/bin/ffmpeg"
             export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
             if [ "$CODEC" = "av1" ]; then ENCODER='libsvtav1'; else ENCODER='libvvenc'; fi
