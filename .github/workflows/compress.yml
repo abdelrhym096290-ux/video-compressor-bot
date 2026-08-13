@@ -303,9 +303,9 @@ jobs:
           else
             if [ "$ENCODE_METHOD" = "qp" ]; then
               [[ "$TARGET_VALUE" =~ ^([0-9]|[1-5][0-9]|6[0-3])$ ]] || { echo 'VVC QP يجب أن يكون رقماً من 0 إلى 63.' >&2; exit 1; }
-              ffmpeg -y -i "$IN" -vf "$VF_CHAIN" -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -qp "$TARGET_VALUE" -g 240 -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+              ffmpeg -y -i "$IN" -vf "$VF_CHAIN" -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -qp "$TARGET_VALUE" -g 240 -tag:v vvc1 -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
             else
-              ffmpeg -y -i "$IN" -vf "$VF_CHAIN" -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+              ffmpeg -y -i "$IN" -vf "$VF_CHAIN" -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 -tag:v vvc1 -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
             fi
           fi
 
