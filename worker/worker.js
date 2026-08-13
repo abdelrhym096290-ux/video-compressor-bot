@@ -42,8 +42,6 @@ export default {
             encode_method: preset.encode_method,
             target_value: preset.target_value,
             resolution: preset.resolution,
-            isPrivate: false,
-            password: "",
             filename: finalName,
           };
           await sendMessage(BOT_TOKEN, chatId, `📤 جاري الإرسال تلقائيًا: ${finalName}`);
@@ -186,7 +184,6 @@ export default {
         if (session.awaiting_target_value) {
           session.target_value = text;
           session.awaiting_target_value = false;
-          session.isPrivate = false;
 
           if (session.encode_mode === "audio") {
             await sendMessage(BOT_TOKEN, chatId, `✅ القيمة المسجلة: ${text}`);
@@ -210,7 +207,6 @@ export default {
           if (/^\d+$/.test(text)) {
             session.resolution = text;
             session.awaiting_res = false;
-            session.isPrivate = false;
 
             if (session.configuring_preset) {
               await savePresetAndConfirm(env, BOT_TOKEN, chatId, session);
@@ -342,7 +338,6 @@ export default {
 
         if (data.startsWith("res_")) {
           session.resolution = data.split("_")[1];
-          session.isPrivate = false;
 
           await editMessage(BOT_TOKEN, chatId, query.message.message_id, `🎯 الجودة: ${session.resolution}p`, null);
 
@@ -415,8 +410,6 @@ async function savePresetAndConfirm(env, BOT_TOKEN, chatId, session, editMessage
     encode_method: session.encode_method,
     target_value: session.target_value,
     resolution: session.resolution || "none",
-    isPrivate: false,
-    password: "",
     active: true,
   };
   const oldPreset = await getPreset(env, chatId);
@@ -464,8 +457,6 @@ async function triggerGitHub(GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, session
       message_id: session.message_id ? String(session.message_id) : "",
       resolution: session.resolution || "audio",
       chat_id: String(chatId),
-      private: "false", // تم التثبيت على عام دائماً
-      password: "",
       filename: session.filename || "",
       encode_mode: session.encode_mode,
       codec: session.codec || "av1",
