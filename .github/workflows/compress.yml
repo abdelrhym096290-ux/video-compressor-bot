@@ -346,7 +346,9 @@ jobs:
           set -euo pipefail
           IN="chunks_raw/chunk_${CHUNK_ID}.mkv"
           OUT_DIR="chunks_encoded"
-          OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
+          # VVC يستخدم MP4 لأفضل توافق عملي؛ AV1 والصوت يبقيان على MKV.
+          if [ "$CODEC" = "vvc" ]; then EXT=mp4; else EXT=mkv; fi
+          OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.${EXT}"
           mkdir -p "$OUT_DIR"
           test -s "$IN"
 
@@ -415,7 +417,8 @@ jobs:
             fi
 
             # cropdetect طبق في split، وهنا نطبق قيمة crop المكتشفة فعلياً.
-            FILTERS=()
+            # تصفير طابع الفيديو قبل القص أو تغيير الدقة يمنع انتقال إزاحة الجزء الخام إلى الناتج.
+            FILTERS=("setpts=PTS-STARTPTS")
             if [ -n "$CROP_FILTER" ] && [ "$CROP_FILTER" != "none" ]; then
               FILTERS+=("$CROP_FILTER")
             fi
@@ -439,36 +442,42 @@ jobs:
 
               if [ "$ENCODE_METHOD" = "crf" ]; then
                 "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
-                  -vf "$VF_CHAIN" -r "$FRAME_RATE" \
+                  -vf "$VF_CHAIN" -r "$FRAME_RATE" -fps_mode cfr \
                   -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -crf "$TARGET_VALUE" -g 240 \
                   $SVT_PARAMS \
-                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+                  -af 'asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0' \
+                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 -shortest "$OUT_FILE"
               else
                 [[ "$TARGET_VALUE" =~ ^[1-9][0-9]{0,5}([kKmM])?$ ]] || { echo 'معدل بت Two-Pass غير صحيح.' >&2; exit 1; }
                 PASSLOG="${OUT_DIR}/passlog_${CHUNK_ID}"
                 "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
-                  -vf "$VF_CHAIN" -r "$FRAME_RATE" \
+                  -vf "$VF_CHAIN" -r "$FRAME_RATE" -fps_mode cfr \
                   -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 \
                   -pass 1 -passlogfile "$PASSLOG" -an -f null /dev/null
                 "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
-                  -vf "$VF_CHAIN" -r "$FRAME_RATE" \
+                  -vf "$VF_CHAIN" -r "$FRAME_RATE" -fps_mode cfr \
                   -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 \
                   -pass 2 -passlogfile "$PASSLOG" $SVT_PARAMS \
-                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+                  -af 'asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0' \
+                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 -shortest "$OUT_FILE"
               fi
             else
               if [ "$ENCODE_METHOD" = "qp" ]; then
                 [[ "$TARGET_VALUE" =~ ^([0-9]|[1-5][0-9]|6[0-3])$ ]] || { echo 'VVC QP يجب أن يكون من 0 إلى 63.' >&2; exit 1; }
                 "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
-                  -vf "$VF_CHAIN" -r "$FRAME_RATE" \
+                  -vf "$VF_CHAIN" -r "$FRAME_RATE" -fps_mode cfr \
                   -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -qp "$TARGET_VALUE" -g 240 \
-                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+                  -tag:v vvc1 -movflags +faststart \
+                  -af 'asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0' \
+                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 -shortest "$OUT_FILE"
               else
                 [[ "$TARGET_VALUE" =~ ^[1-9][0-9]{0,5}([kKmM])?$ ]] || { echo 'VVC VBR غير صحيح.' >&2; exit 1; }
                 "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
-                  -vf "$VF_CHAIN" -r "$FRAME_RATE" \
+                  -vf "$VF_CHAIN" -r "$FRAME_RATE" -fps_mode cfr \
                   -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 \
-                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+                  -tag:v vvc1 -movflags +faststart \
+                  -af 'asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0' \
+                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 -shortest "$OUT_FILE"
               fi
             fi
           fi
@@ -492,7 +501,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: encoded-${{ matrix.chunk }}
-          path: chunks_encoded/encoded_${{ matrix.chunk }}.mkv
+          path: chunks_encoded/encoded_${{ matrix.chunk }}.*
           retention-days: 1
           if-no-files-found: error
 
@@ -538,22 +547,26 @@ jobs:
           fi
 
           cd all_encoded
-          find . -maxdepth 1 -type f -name 'encoded_*.mkv' | sort > /tmp/encoded_files.txt
+          if [ "$CODEC" = "vvc" ]; then EXT=mp4; else EXT=mkv; fi
+          find . -maxdepth 1 -type f -name "encoded_*.${EXT}" | sort > /tmp/encoded_files.txt
           test -s /tmp/encoded_files.txt
           sed "s#^./#file '#; s#\$#'#" /tmp/encoded_files.txt > concat_list.txt
-          "$FFMPEG" -hide_banner -nostdin -y -f concat -safe 0 -i concat_list.txt -map 0 -c copy ../output.mkv
-          test -s ../output.mkv
+          "$FFMPEG" -hide_banner -nostdin -y -f concat -safe 0 -i concat_list.txt -map 0 -c copy "../output.${EXT}"
+          test -s "../output.${EXT}"
 
           if [ "$CODEC" != "audio" ]; then
-            "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 ../output.mkv \
+            "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "../output.${EXT}" \
               | grep -Eq '^(av1|vvc)$' || { echo 'الدمج فقد مسار الفيديو.' >&2; exit 1; }
           fi
 
       - name: استخراج معلومات الناتج
         id: videoinfo
+        env:
+          CODEC: ${{ github.event.inputs.codec }}
         run: |
           set -euo pipefail
-          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
+          if [ "$CODEC" = "vvc" ]; then EXT=mp4; else EXT=mkv; fi
+          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "output.${EXT}" | cut -d. -f1)
           H=$((DURATION_SEC / 3600))
           M=$(((DURATION_SEC % 3600) / 60))
           S=$((DURATION_SEC % 60))
@@ -562,7 +575,7 @@ jobs:
           if [ "${{ github.event.inputs.codec }}" = "audio" ]; then
             echo 'actual_res=صوت فقط' >> "$GITHUB_OUTPUT"
           else
-            ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.mkv)
+            ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "output.${EXT}")
             echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
           fi
 
@@ -594,8 +607,9 @@ jobs:
           FILTER_PROFILE: ${{ github.event.inputs.filter_profile }}
         run: |
           set -euo pipefail
-          UPLOAD_FILE="${FINAL_NAME}.mkv"
-          mv output.mkv "$UPLOAD_FILE"
+          if [ "$CODEC" = "vvc" ]; then EXT=mp4; else EXT=mkv; fi
+          UPLOAD_FILE="${FINAL_NAME}.${EXT}"
+          mv "output.${EXT}" "$UPLOAD_FILE"
           FILE_SIZE=$(stat -c%s "$UPLOAD_FILE")
           SIZE_MB=$(awk -v size="$FILE_SIZE" 'BEGIN {printf "%.1f", size / 1048576}')
           CAPTION=$(printf '🎬 %s\n📦 %s MB\n📐 %s\n⏱️ %s\n🎞️ %s\n⚙️ فلاتر: %s' \
