@@ -1,179 +1,312 @@
-/**
- * Cloudflare Worker: Telegram Video Compressor Bot
- * Version: 3.0 (Unified AV1/VVC with Filter Support)
- */
+name: Cloud Video Compressor (Unified AV1 & VVC)
 
-const BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';
-const GH_TOKEN = 'YOUR_GITHUB_TOKEN';
-const GH_REPO = 'username/repo-name'; // e.g., "myuser/vid-compressor"
-const TG_CHANNEL_ID = 'YOUR_CHANNEL_ID'; // e.g., "-100123456789"
+on:
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: 'Direct video download URL'
+        required: true
+      codec:
+        description: 'Target Codec (av1, vvc, audio)'
+        required: true
+      preset_input:
+        description: 'Speed/Preset value'
+        required: true
+      encode_method:
+        description: 'Encoding method (crf, qp, twopass, vbr, audio)'
+        required: true
+      target_value:
+        description: 'Quality or Bitrate value'
+        required: true
+      resolution:
+        description: 'Target resolution height'
+        required: true
+      encode_mode:
+        description: 'Filter mode (filters, nofilters, anime, realistic)'
+        required: true
+      chat_id:
+        description: 'Telegram Chat ID'
+        required: true
 
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request));
-});
+env:
+  BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+  CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
 
-async function handleRequest(request) {
-  if (request.method === 'POST') {
-    try {
-      const update = await request.json();
-      if (update.message) {
-        await handleMessage(update.message);
-      } else if (update.callback_query) {
-        await handleCallback(update.callback_query);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }
-  return new Response('OK');
-}
+jobs:
+  prepare-ffmpeg:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake nasm yasm git pkg-config libopus-dev libdav1d-dev libogg-dev
 
-async function handleMessage(msg) {
-  const chatId = msg.chat.id;
-  const text = msg.text;
+      - name: Cache Codec Build
+        id: cache-codec
+        uses: actions/cache@v4
+        with:
+          path: ~/codec-build
+          key: codec-universal-v3-final
 
-  if (text === '/start') {
-    await sendTelegram(chatId, "🚀 مرحباً بك في بوت الضغط السحابي الموحد!\n\nأرسل رابط الفيديو المباشر (Direct Link) للبدء.");
-  } else if (text && text.startsWith('http')) {
-    // Step 1: Select Codec
-    const keyboard = {
-      inline_keyboard: [
-        [{ text: "💎 AV1 (أصغر حجم)", callback_data: `c:av1:${text}` }],
-        [{ text: "⚡ VVC/H.266 (أحدث تقنية)", callback_data: `c:vvc:${text}` }],
-        [{ text: "🎵 صوت فقط (Opus)", callback_data: `c:audio:${text}` }]
-      ]
-    };
-    await sendTelegram(chatId, "1️⃣ اختر المرمّز المطلوب:", keyboard);
-  }
-}
+      - name: Build Unified FFmpeg
+        if: steps.cache-codec.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/codec-sources ~/codec-build
 
-async function handleCallback(query) {
-  const chatId = query.message.chat.id;
-  const data = query.data.split(':');
-  const action = data[0];
+          # 1. Build SVT-AV1
+          cd ~/codec-sources
+          git clone --depth 1 https://gitlab.com/AOMediaCodec/SVT-AV1.git
+          cd SVT-AV1 && mkdir build && cd build
+          cmake .. -DCMAKE_INSTALL_PREFIX="$HOME/codec-build" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+          make -j"$(nproc)" && make install
 
-  if (action === 'c') { // Codec selected
-    const codec = data[1];
-    const url = data.slice(2).join(':');
-    
-    let keyboard;
-    if (codec === 'av1') {
-      keyboard = {
-        inline_keyboard: [
-          [{ text: "أسرع (10)", callback_data: `p:av1:10:${url}` }, { text: "متوازن (6)", callback_data: `p:av1:6:${url}` }],
-          [{ text: "جودة عالية (4)", callback_data: `p:av1:4:${url}` }]
-        ]
-      };
-    } else if (codec === 'vvc') {
-      keyboard = {
-        inline_keyboard: [
-          [{ text: "الأسرع (4)", callback_data: `p:vvc:4:${url}` }, { text: "سريع (3)", callback_data: `p:vvc:3:${url}` }],
-          [{ text: "بطيء (2)", callback_data: `p:vvc:2:${url}` }]
-        ]
-      };
-    } else {
-      // Audio selection
-      return await triggerGitHub(chatId, url, 'audio', '0', 'vbr', '32k', 'nofilters');
-    }
-    await sendTelegram(chatId, `2️⃣ اختر سرعة الضغط (Preset) لـ ${codec.toUpperCase()}:`, keyboard);
+          # 2. Build VVenC
+          cd ~/codec-sources
+          git clone --depth 1 https://github.com/fraunhoferhhi/vvenc.git
+          cd vvenc && mkdir build && cd build
+          cmake .. -DCMAKE_INSTALL_PREFIX="$HOME/codec-build" -DCMAKE_BUILD_TYPE=Release
+          make -j"$(nproc)" && make install
 
-  } else if (action === 'p') { // Preset selected
-    const codec = data[1];
-    const preset = data[2];
-    const url = data.slice(3).join(':');
-    
-    const keyboard = {
-      inline_keyboard: [
-        [{ text: "أنمي 🌸 (فلاتر تنعيم)", callback_data: `f:${codec}:${preset}:anime:${url}` }],
-        [{ text: "واقعي 🎬 (فلاتر تنظيف)", callback_data: `f:${codec}:${preset}:realistic:${url}` }],
-        [{ text: "بدون فلاتر 🚫", callback_data: `f:${codec}:${preset}:none:${url}` }]
-      ]
-    };
-    await sendTelegram(chatId, "3️⃣ اختر نوع المحتوى لتطبيق الفلاتر المناسبة:", keyboard);
+          # 3. Build FFmpeg with libdav1d (AV1 Decoder)
+          cd ~/codec-sources
+          git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git ffmpeg
+          cd ffmpeg
+          export PKG_CONFIG_PATH="$HOME/codec-build/lib/pkgconfig"
+          ./configure \
+            --prefix="$HOME/codec-build" \
+            --pkg-config-flags="--static" \
+            --extra-cflags="-I$HOME/codec-build/include" \
+            --extra-ldflags="-L$HOME/codec-build/lib" \
+            --enable-gpl --enable-version3 --enable-nonfree \
+            --enable-libopus --enable-libdav1d --enable-libsvtav1 --enable-libvvenc
+          make -j"$(nproc)" && make install
 
-  } else if (action === 'f') { // Filter selected -> Now select Resolution
-    const codec = data[1];
-    const preset = data[2];
-    const filter = data[3];
-    const url = data.slice(4).join(':');
-    
-    const keyboard = {
-      inline_keyboard: [
-        [{ text: "480p", callback_data: `r:${codec}:${preset}:${filter}:480:${url}` }, { text: "720p", callback_data: `r:${codec}:${preset}:${filter}:720:${url}` }],
-        [{ text: "1080p", callback_data: `r:${codec}:${preset}:${filter}:1080:${url}` }]
-      ]
-    };
-    await sendTelegram(chatId, "4️⃣ اختر الدقة المطلوبة:", keyboard);
+  split:
+    needs: prepare-ffmpeg
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.gen-matrix.outputs.matrix }}
+      crop: ${{ steps.detect-crop.outputs.crop }}
+    steps:
+      - name: Restore Codec Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/codec-build
+          key: codec-universal-v3-final
 
-  } else if (action === 'r') { // Resolution selected -> Final step: Quality
-    const codec = data[1];
-    const preset = data[2];
-    const filter = data[3];
-    const res = data[4];
-    const url = data.slice(5).join(':');
+      - name: Download Video
+        run: |
+          set -euo pipefail
+          mkdir -p chunks_raw
+          curl -fL --retry 3 "${{ inputs.download_url }}" -o raw_input.mp4
+          test -s raw_input.mp4 || { echo "❌ فشل تحميل الفيديو أو الملف فارغ"; exit 1; }
 
-    let prompt = codec === 'av1' ? "أدخل قيمة CRF (مثلاً 35):" : "أدخل قيمة QP (مثلاً 38):";
-    // For simplicity in this demo, we'll use a few buttons for quality
-    const keyboard = {
-      inline_keyboard: [
-        [{ text: "جودة ممتازة (28)", callback_data: `g:${codec}:${preset}:${filter}:${res}:28:${url}` }],
-        [{ text: "متوازنة (35)", callback_data: `g:${codec}:${preset}:${filter}:${res}:35:${url}` }],
-        [{ text: "حجم صغير (42)", callback_data: `g:${codec}:${preset}:${filter}:${res}:42:${url}` }]
-      ]
-    };
-    await sendTelegram(chatId, `5️⃣ ${prompt}`, keyboard);
+      - name: Detect Black Bars (Crop)
+        id: detect-crop
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/codec-build/bin:$PATH"
+          export LD_LIBRARY_PATH="$HOME/codec-build/lib"
+          CROP=$(ffmpeg -i raw_input.mp4 -vframes 100 -vf cropdetect=24:16:0 -f null - 2>&1 \
+            | grep -o 'crop=[0-9:]*' | tail -1)
+          if [ -z "$CROP" ]; then
+            echo "⚠️ تعذر اكتشاف قيمة القص، سيتم تجاهل القص"
+            CROP=""
+          else
+            echo "✅ قيمة القص المكتشفة: $CROP"
+          fi
+          echo "crop=$CROP" >> "$GITHUB_OUTPUT"
 
-  } else if (action === 'g') { // Quality selected -> Trigger GitHub
-    const codec = data[1];
-    const preset = data[2];
-    const filter = data[3];
-    const res = data[4];
-    const val = data[5];
-    const url = data.slice(6).join(':');
-    
-    await triggerGitHub(chatId, url, codec, preset, (codec === 'av1' ? 'crf' : 'qp'), val, res, filter);
-  }
-}
+      - name: Split Video (300s chunks)
+        run: |
+          set -euo pipefail
+          ffmpeg -i raw_input.mp4 -c copy -f segment -segment_time 300 -reset_timestamps 1 chunks_raw/chunk_%03d.mp4
+          [ -n "$(ls chunks_raw/chunk_*.mp4 2>/dev/null)" ] || { echo "❌ فشل التقطيع، لا توجد أجزاء"; exit 1; }
 
-async function triggerGitHub(chatId, url, codec, preset, method, val, res, filter) {
-  await sendTelegram(chatId, "⏳ جاري إرسال المهمة إلى GitHub Actions... ستصلك النتيجة في القناة عند الانتهاء.");
-  
-  const resGH = await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/video_compressor.yml/dispatches`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `token ${GH_TOKEN}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'Manus-Bot'
-    },
-    body: JSON.stringify({
-      ref: 'main',
-      inputs: {
-        download_url: url,
-        codec: codec,
-        preset: preset,
-        encode_method: method,
-        target_value: val,
-        resolution: res,
-        content_type: filter,
-        chat_id: chatId.toString()
-      }
-    })
-  });
+      - name: Generate Matrix
+        id: gen-matrix
+        run: |
+          set -euo pipefail
+          CHUNKS=$(ls chunks_raw/chunk_*.mp4 | sed 's/chunks_raw\/chunk_\(.*\).mp4/"\1"/' | paste -sd "," - | sed 's/^/[/' | sed 's/$/]/')
+          echo "matrix=$CHUNKS" >> "$GITHUB_OUTPUT"
 
-  if (resGH.status === 204) {
-    await sendTelegram(chatId, "✅ تم بدء المهمة بنجاح! يمكنك متابعة التقدم من مستودع GitHub الخاص بك.");
-  } else {
-    await sendTelegram(chatId, "❌ فشل إرسال المهمة. تأكد من صحة الـ Token واسم المستودع.");
-  }
-}
+      - name: Upload Raw Chunks
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-chunks
+          path: chunks_raw/
+          retention-days: 1
 
-async function sendTelegram(chatId, text, keyboard = null) {
-  const body = { chat_id: chatId, text: text };
-  if (keyboard) body.reply_markup = keyboard;
-  
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-}
+  encode:
+    needs: [prepare-ffmpeg, split]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        chunk_id: ${{ fromJson(needs.split.outputs.matrix) }}
+    steps:
+      - name: Download Raw Chunk
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-chunks
+          path: chunks_raw
+
+      - name: Restore Codec Cache
+        uses: actions/cache@v4
+        with:
+          path: ~/codec-build
+          key: codec-universal-v3-final
+
+      - name: Run Encoding
+        env:
+          CODEC: ${{ inputs.codec }}
+          PRESET_INPUT: ${{ inputs.preset_input }}
+          ENCODE_MODE: ${{ inputs.encode_mode }}
+          ENCODE_METHOD: ${{ inputs.encode_method }}
+          TARGET_VALUE: ${{ inputs.target_value }}
+          RESOLUTION: ${{ inputs.resolution }}
+          CHUNK_ID: ${{ matrix.chunk_id }}
+          CROP_VALUE: ${{ needs.split.outputs.crop }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/codec-build/bin:$PATH"
+          export LD_LIBRARY_PATH="$HOME/codec-build/lib"
+
+          echo "🔍 القيم المستلمة: codec=$CODEC preset=$PRESET_INPUT mode=$ENCODE_MODE method=$ENCODE_METHOD value=$TARGET_VALUE res=$RESOLUTION crop=$CROP_VALUE"
+
+          IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
+          OUT_DIR="chunks_encoded"
+          mkdir -p "$OUT_DIR"
+          test -s "$IN" || { echo "❌ الجزء المصدر غير موجود: $IN"; exit 1; }
+
+          # الحاوية موحّدة MKV لكلا الكوديكين
+          EXT="mkv"
+          OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.${EXT}"
+
+          # سلسلة القص (تُطبّق فقط إذا اكتُشفت قيمة فعلية)
+          if [ -n "$CROP_VALUE" ]; then
+            CROP_FILTER="${CROP_VALUE},"
+          else
+            CROP_FILTER=""
+          fi
+
+          # إعداد الفلاتر (Anime / Realistic / Basic)
+          case "$ENCODE_MODE" in
+            anime)
+              VF_CHAIN="${CROP_FILTER}scale=-2:${RESOLUTION}:flags=lanczos,hqdn3d=1.5:1.0:1.5:1.0,deband=1thr=0.02:2thr=0.02:3thr=0.02:range=16,format=yuv420p10le"
+              ;;
+            realistic)
+              VF_CHAIN="${CROP_FILTER}scale=-2:${RESOLUTION}:flags=lanczos,hqdn3d=0.5:0.5:0.5:0.5,format=yuv420p10le"
+              ;;
+            filters)
+              VF_CHAIN="${CROP_FILTER}scale=-2:${RESOLUTION}:flags=lanczos,hqdn3d=1.0:0.5:1.0:0.5,deband=1thr=0.015:2thr=0.015:3thr=0.015:range=16,format=yuv420p10le"
+              ;;
+            nofilters)
+              VF_CHAIN="${CROP_FILTER}scale=-2:${RESOLUTION}:flags=lanczos,format=yuv420p10le"
+              ;;
+            *)
+              echo "❌ encode_mode غير معروف: $ENCODE_MODE"
+              exit 1
+              ;;
+          esac
+
+          if [ "$CODEC" = "av1" ]; then
+            [[ "$PRESET_INPUT" =~ ^([0-9]|1[0-3])$ ]] || { echo "❌ preset AV1 يجب أن يكون رقماً من 0 إلى 13"; exit 1; }
+            VIDEO_CODEC='libsvtav1'
+            VIDEO_PRESET="$PRESET_INPUT"
+            SVT_PARAMS='-svtav1-params tune=0:enable-qm=1:qm-min=0'
+            [ "$ENCODE_MODE" = "anime" ] && SVT_PARAMS='-svtav1-params tune=0:enable-qm=1:qm-min=0:enable-overlays=1:film-grain=6:film-grain-denoise=0'
+
+            if [ "$ENCODE_METHOD" = "crf" ]; then
+              ffmpeg -hwaccel none -y -i "$IN" -vf "$VF_CHAIN" -r 24 -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -crf "$TARGET_VALUE" -g 240 $SVT_PARAMS -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+            elif [ "$ENCODE_METHOD" = "twopass" ]; then
+              PASSLOG="${OUT_DIR}/passlog_${CHUNK_ID}"
+              ffmpeg -hwaccel none -y -i "$IN" -vf "$VF_CHAIN" -r 24 -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 -pass 1 -passlogfile "$PASSLOG" -an -f null /dev/null
+              ffmpeg -hwaccel none -y -i "$IN" -vf "$VF_CHAIN" -r 24 -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 -pass 2 -passlogfile "$PASSLOG" $SVT_PARAMS -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+            else
+              echo "❌ طريقة AV1 يجب أن تكون crf أو twopass"; exit 1
+            fi
+
+          elif [ "$CODEC" = "vvc" ]; then
+            case "$PRESET_INPUT" in
+              1) P='slower' ;; 2) P='slow' ;; 3) P='fast' ;; 4) P='faster' ;;
+              *) echo "❌ preset VVC يجب أن يكون 1 أو 2 أو 3 أو 4"; exit 1 ;;
+            esac
+            if [ "$ENCODE_METHOD" = "qp" ]; then
+              ffmpeg -hwaccel none -y -i "$IN" -vf "$VF_CHAIN" -r 24 -c:v libvvenc -preset "$P" -qp "$TARGET_VALUE" -g 240 -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+            elif [ "$ENCODE_METHOD" = "vbr" ]; then
+              ffmpeg -hwaccel none -y -i "$IN" -vf "$VF_CHAIN" -r 24 -c:v libvvenc -preset "$P" -b:v "$TARGET_VALUE" -g 240 -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+            else
+              echo "❌ طريقة VVC يجب أن تكون qp أو vbr"; exit 1
+            fi
+
+          elif [ "$CODEC" = "audio" ]; then
+            ffmpeg -y -i "$IN" -vn -c:a libopus -b:a "$TARGET_VALUE" -ac 2 "$OUT_FILE"
+          else
+            echo "❌ codec غير مدعوم: $CODEC"; exit 1
+          fi
+
+          if [ "$CODEC" != "audio" ]; then
+            ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1 "$OUT_FILE" | grep -q 'vvc\|av1' || { echo "❌ لم يتم تضمين تدفق الفيديو في الناتج"; exit 1; }
+          fi
+          test -s "$OUT_FILE"
+          echo "✅ تم إنشاء $OUT_FILE ($(stat -c%s "$OUT_FILE") بايت)"
+
+      - name: Upload Encoded Chunk
+        uses: actions/upload-artifact@v4
+        with:
+          name: encoded-chunk-${{ matrix.chunk_id }}
+          path: chunks_encoded/encoded_${{ matrix.chunk_id }}.*
+          retention-days: 1
+
+  merge:
+    needs: [prepare-ffmpeg, split, encode]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Encoded Chunks
+        uses: actions/download-artifact@v4
+        with:
+          pattern: encoded-chunk-*
+          path: all_encoded
+          merge-multiple: true
+
+      - name: Merge & Send
+        run: |
+          set -euo pipefail
+          cd all_encoded
+          ls encoded_*.mkv 2>/dev/null | sort | sed "s/^/file '/;s/$/'/" > list.txt
+          [ -s list.txt ] || { echo "❌ لا توجد أجزاء مضغوطة للدمج"; exit 1; }
+          ffmpeg -f concat -safe 0 -i list.txt -c copy ../final_output.mkv
+          cd ..
+          test -s final_output.mkv || { echo "❌ فشل الدمج"; exit 1; }
+
+          SIZE=$(du -h final_output.mkv | cut -f1)
+          CAPTION=$(printf '✅ تم الضغط بنجاح!\n\n📦 الحجم: %s\n🎬 الترميز: %s\n⚙️ الوضع: %s' \
+            "$SIZE" "${{ inputs.codec }}" "${{ inputs.encode_mode }}")
+
+          curl -sf -F "chat_id=${{ inputs.chat_id }}" -F "document=@final_output.mkv" -F "caption=$CAPTION" \
+            "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
+
+          if [ -n "${CHANNEL_ID:-}" ]; then
+            curl -sf -F "chat_id=${CHANNEL_ID}" -F "document=@final_output.mkv" -F "caption=$CAPTION" \
+              "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
+          fi
+
+  notify-failure:
+    needs: [prepare-ffmpeg, split, encode, merge]
+    if: failure()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Send Failure Notification
+        run: |
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          TEXT=$(printf '❌ فشلت عملية الضغط.\n📋 التفاصيل: %s' "$RUN_URL")
+          curl -sf -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${{ inputs.chat_id }}" \
+            --data-urlencode text="$TEXT"
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
