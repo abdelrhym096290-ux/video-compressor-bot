@@ -1,4 +1,4 @@
-name: ضغط الفيديو الشخصي (AV1 و H.266/VVC)
+name: ضغط الفيديو السحابي (AV1 & VVC)
 
 on:
   workflow_dispatch:
@@ -18,36 +18,28 @@ on:
         description: 'الاسم النهائي للملف'
         required: false
         default: ''
-      private:
-        description: 'خصوصي: true أو false'
-        required: true
-        default: 'false'
-      password:
-        description: 'كلمة مرور الأرشيف الخاص'
-        required: false
-        default: ''
       codec:
         description: 'av1 أو vvc أو audio'
         required: true
         default: 'av1'
       preset:
-        description: 'AV1: رقم 0-13 | VVC: 1 أبطأ، 2 بطيء، 3 سريع، 4 الأسرع'
+        description: 'رقم السرعة'
         required: true
         default: '8'
       encode_mode:
-        description: 'filters أو nofilters أو audio'
+        description: 'series, anime, nofilters, audio'
         required: true
-        default: 'nofilters'
+        default: 'series'
       encode_method:
-        description: 'AV1: crf أو twopass | VVC: qp أو vbr | صوت: audio'
+        description: 'crf, twopass, qp, vbr, audio'
         required: true
         default: 'crf'
       target_value:
-        description: 'CRF أو QP أو معدل البت، مثل 28 أو 32 أو 250k'
+        description: 'قيمة الجودة أو معدل البت'
         required: true
         default: '28'
       resolution:
-        description: 'الارتفاع النهائي، مثل 480 أو 720 أو 1080'
+        description: 'الارتفاع النهائي (مثل 480 أو 720)'
         required: true
         default: '480'
 
@@ -65,6 +57,7 @@ jobs:
     timeout-minutes: 360
     outputs:
       chunks: ${{ steps.segment.outputs.chunks }}
+      crop: ${{ steps.cropdetect.outputs.crop }}
     steps:
       - name: استنساخ المستودع
         uses: actions/checkout@v4
@@ -87,6 +80,10 @@ jobs:
           VIDEO_URL: ${{ github.event.inputs.url }}
         run: |
           set -euo pipefail
+          echo "==== بدء التشخيص ===="
+          echo "الوضع: ${{ github.event.inputs.encode_mode }} | المرمز: ${{ github.event.inputs.codec }}"
+          echo "====================="
+          
           if [ -n "$MESSAGE_ID" ]; then
             python3 <<'PYEOF'
           import os, asyncio, sys
@@ -117,18 +114,27 @@ jobs:
           fi
           test -s raw_input.mp4
 
-      - name: تقطيع المصدر إلى أجزاء مستقلة
+      - name: اكتشاف الحواف السوداء (Cropdetect)
+        id: cropdetect
+        run: |
+          set -euo pipefail
+          CROP_VAL=$(ffmpeg -hwaccel none -i raw_input.mp4 -vf "cropdetect=24:16:0" -frames:v 100 -f null - 2>&1 | awk '/crop=/ {print $NF}' | tail -n1 || true)
+          echo "crop=${CROP_VAL}" >> "$GITHUB_OUTPUT"
+          echo "تم اكتشاف أبعاد القص: ${CROP_VAL}"
+
+      - name: تقطيع المصدر إلى أجزاء MKV مستقلة (300 ثانية)
         id: segment
         run: |
           set -euo pipefail
           mkdir -p chunks_raw
           DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 raw_input.mp4 | cut -d. -f1)
-          if [ "$DURATION" -gt 1200 ]; then
-            ffmpeg -y -i raw_input.mp4 -c copy -f segment -segment_time 600 -reset_timestamps 1 "chunks_raw/chunk_%03d.mp4"
+          # تقطيع كل 300 ثانية (5 دقائق) وتحويلها إلى MKV لضمان التزامن
+          if [ "$DURATION" -gt 350 ]; then
+            ffmpeg -y -hwaccel none -i raw_input.mp4 -c copy -f segment -segment_time 300 -reset_timestamps 1 "chunks_raw/chunk_%03d.mkv"
           else
-            cp raw_input.mp4 chunks_raw/chunk_000.mp4
+            ffmpeg -y -hwaccel none -i raw_input.mp4 -c copy "chunks_raw/chunk_000.mkv"
           fi
-          CHUNKS_JSON=$(ls chunks_raw/chunk_*.mp4 | sed 's#chunks_raw/chunk_##' | sed 's/\.mp4//' | jq -R . | jq -s -c .)
+          CHUNKS_JSON=$(ls chunks_raw/chunk_*.mkv | sed 's#chunks_raw/chunk_##' | sed 's/\.mkv//' | jq -R . | jq -s -c .)
           echo "chunks=$CHUNKS_JSON" >> "$GITHUB_OUTPUT"
 
       - name: رفع الأجزاء الخام
@@ -148,18 +154,16 @@ jobs:
         id: cache-build
         with:
           path: ~/codec-build
-          key: codec-ffmpeg-${{ github.event.inputs.codec }}-ubuntu-v2
+          key: codec-ffmpeg-${{ github.event.inputs.codec }}-universal-v3
 
-      - name: بناء AV1 أو VVC مرة واحدة
+      - name: بناء AV1 أو VVC مع مكتبة DAV1D
         if: github.event.inputs.codec != 'audio' && steps.cache-build.outputs.cache-hit != 'true'
         env:
           CODEC: ${{ github.event.inputs.codec }}
         run: |
           set -euo pipefail
-          case "$CODEC" in av1|vvc) ;; *) echo "مرمّز غير مدعوم: $CODEC" >&2; exit 1 ;; esac
-
           sudo apt update
-          sudo apt install -y cmake nasm pkg-config libopus-dev
+          sudo apt install -y cmake nasm pkg-config libopus-dev libdav1d-dev
           rm -rf SVT-AV1 vvenc FFmpeg "$HOME/codec-build"
 
           if [ "$CODEC" = "av1" ]; then
@@ -180,7 +184,8 @@ jobs:
           export PKG_CONFIG_PATH="$HOME/codec-build/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           cd FFmpeg
-          ./configure --prefix="$HOME/codec-build" --enable-gpl --enable-version3 "$ENABLE_CODEC" --enable-libopus
+          # تفعيل libdav1d لضمان فك تشفير الفيديوهات المصدر بصيغة AV1
+          ./configure --prefix="$HOME/codec-build" --enable-gpl --enable-version3 "$ENABLE_CODEC" --enable-libopus --enable-libdav1d
           make -j"$(nproc)"
           make install
 
@@ -199,7 +204,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-ffmpeg-${{ github.event.inputs.codec }}-ubuntu-v2
+          key: codec-ffmpeg-${{ github.event.inputs.codec }}-universal-v3
 
       - name: تجهيز FFmpeg
         env:
@@ -211,11 +216,9 @@ jobs:
             sudo apt install -y ffmpeg libopus0
           else
             sudo apt update
-            sudo apt install -y libopus0
+            sudo apt install -y libopus0 libdav1d7
             test -x "$HOME/codec-build/bin/ffmpeg"
             export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
-            if [ "$CODEC" = "av1" ]; then ENCODER='libsvtav1'; else ENCODER='libvvenc'; fi
-            "$HOME/codec-build/bin/ffmpeg" -hide_banner -encoders | grep -q "$ENCODER"
             echo "$HOME/codec-build/bin" >> "$GITHUB_PATH"
             echo "LD_LIBRARY_PATH=$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
           fi
@@ -226,7 +229,7 @@ jobs:
           name: raw-chunks
           path: chunks_raw
 
-      - name: ضغط الجزء
+      - name: ضغط الجزء وتركيب الفلاتر
         env:
           CODEC: ${{ github.event.inputs.codec }}
           PRESET_INPUT: ${{ github.event.inputs.preset }}
@@ -235,32 +238,24 @@ jobs:
           TARGET_VALUE: ${{ github.event.inputs.target_value }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
           CHUNK_ID: ${{ matrix.chunk }}
+          CROP_VAL: ${{ needs.split-video.outputs.crop }}
         run: |
           set -euo pipefail
-          IN="chunks_raw/chunk_${CHUNK_ID}.mp4"
+          IN="chunks_raw/chunk_${CHUNK_ID}.mkv"
           OUT_DIR="chunks_encoded"
-          
-          if [ "$CODEC" = "vvc" ]; then
-            EXT="mp4"
-          else
-            EXT="mkv"
-          fi
-          
-          OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.${EXT}"
+          OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
           mkdir -p "$OUT_DIR"
           test -s "$IN"
 
           if [ "$CODEC" = "audio" ]; then
-            test "$ENCODE_METHOD" = "audio"
             ffmpeg -y -i "$IN" -vn -c:a libopus -b:a "$TARGET_VALUE" -ac 2 "$OUT_FILE"
             test -s "$OUT_FILE"
             exit 0
           fi
 
+          # التحقق من المدخلات الأساسية
           case "$CODEC" in
             av1)
-              [[ "$PRESET_INPUT" =~ ^([0-9]|1[0-3])$ ]] || { echo 'AV1 preset يجب أن يكون رقماً من 0 إلى 13.' >&2; exit 1; }
-              test "$ENCODE_METHOD" = "crf" || test "$ENCODE_METHOD" = "twopass" || { echo 'طريقة AV1 يجب أن تكون crf أو twopass.' >&2; exit 1; }
               VIDEO_CODEC='libsvtav1'
               VIDEO_PRESET="$PRESET_INPUT"
               ;;
@@ -270,54 +265,65 @@ jobs:
                 2) VIDEO_PRESET='slow' ;;
                 3) VIDEO_PRESET='fast' ;;
                 4) VIDEO_PRESET='faster' ;;
-                *) echo 'VVC preset يجب أن يكون 1 أو 2 أو 3 أو 4.' >&2; exit 1 ;;
+                *) VIDEO_PRESET='fast' ;;
               esac
-              test "$ENCODE_METHOD" = "qp" || test "$ENCODE_METHOD" = "vbr" || { echo 'طريقة VVC يجب أن تكون qp أو vbr.' >&2; exit 1; }
               VIDEO_CODEC='libvvenc'
               ;;
-            *) echo "مرمّز غير مدعوم: $CODEC" >&2; exit 1 ;;
           esac
 
-          if [ "$ENCODE_MODE" = "nofilters" ]; then
-            VF_CHAIN="scale=-2:${RESOLUTION}:flags=lanczos,format=yuv420p10le"
-          elif [ "$ENCODE_MODE" = "filters" ]; then
-            VF_CHAIN="scale=-2:${RESOLUTION}:flags=lanczos,hqdn3d=1.0:0.5:1.0:0.5,deband=1thr=0.015:2thr=0.015:3thr=0.015:range=16,format=yuv420p10le"
-          else
-            echo 'encode_mode يجب أن يكون filters أو nofilters.' >&2
-            exit 1
+          # بناء الفلاتر بناءً على الـ Crop ونوع المحتوى (ذكاء الفلاتر)
+          CROP_FILTER=""
+          if [ -n "$CROP_VAL" ] && [[ "$CROP_VAL" == crop=* ]]; then
+            CROP_FILTER="${CROP_VAL},"
           fi
 
+          if [ "$ENCODE_MODE" = "series" ]; then
+            # مسلسلات: تنعيم خفيف + تصغير، وحذف unsharp لتقليل الحجم
+            VF_CHAIN="${CROP_FILTER}hqdn3d=1.5:1.5:6:6,scale=-2:${RESOLUTION}:flags=lanczos,format=yuv420p10le"
+          elif [ "$ENCODE_MODE" = "anime" ]; then
+            # أنمي: تنعيم أقوى + deband لتنظيف المساحات اللونية وتقليل الحجم + تصغير
+            VF_CHAIN="${CROP_FILTER}hqdn3d=4.0:3.0:6.0:4.5,deband=1thr=0.015:2thr=0.015:3thr=0.015:range=16,scale=-2:${RESOLUTION}:flags=lanczos,format=yuv420p10le"
+          else
+            # بدون فلاتر: قص + تصغير فقط
+            VF_CHAIN="${CROP_FILTER}scale=-2:${RESOLUTION}:flags=lanczos,format=yuv420p10le"
+          fi
+
+          # إعدادات متقدمة لـ AV1
+          SVT_PARAMS=""
           if [ "$CODEC" = "av1" ]; then
             SVT_PARAMS='-svtav1-params tune=0:enable-qm=1:qm-min=0'
-            if [ "$ENCODE_MODE" = "filters" ]; then
-              SVT_PARAMS='-svtav1-params tune=0:enable-qm=1:qm-min=0:enable-overlays=1:film-grain=6:film-grain-denoise=0'
-            fi
-
-            if [ "$ENCODE_METHOD" = "crf" ]; then
-              ffmpeg -y -i "$IN" -vf "$VF_CHAIN" -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -crf "$TARGET_VALUE" -g 240 $SVT_PARAMS -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
-            else
-              PASSLOG="${OUT_DIR}/passlog_${CHUNK_ID}"
-              ffmpeg -y -i "$IN" -vf "$VF_CHAIN" -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 -pass 1 -passlogfile "$PASSLOG" -an -f null /dev/null
-              ffmpeg -y -i "$IN" -vf "$VF_CHAIN" -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 -pass 2 -passlogfile "$PASSLOG" $SVT_PARAMS -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
-            fi
-          else
-            if [ "$ENCODE_METHOD" = "qp" ]; then
-              [[ "$TARGET_VALUE" =~ ^([0-9]|[1-5][0-9]|6[0-3])$ ]] || { echo 'VVC QP يجب أن يكون رقماً من 0 إلى 63.' >&2; exit 1; }
-              ffmpeg -y -i "$IN" -vf "$VF_CHAIN" -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -qp "$TARGET_VALUE" -g 240 -tag:v vvc1 -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
-            else
-              ffmpeg -y -i "$IN" -vf "$VF_CHAIN" -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 -tag:v vvc1 -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+            if [ "$ENCODE_MODE" = "series" ] || [ "$ENCODE_MODE" = "anime" ]; then
+              SVT_PARAMS='-svtav1-params tune=0:enable-qm=1:qm-min=0:enable-overlays=1:film-grain=4:film-grain-denoise=0'
             fi
           fi
 
-          # التحقق الحاسم: هل تم توليد مسار فيديو وصوت معاً؟
-          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1 "$OUT_FILE" | grep -q 'vvc\|av1' || { echo 'خطأ: لم يتم تضمين تدفق الفيديو في الناتج!' >&2; exit 1; }
+          # أمر الترميز النهائي مع فرض hwaccel none للإدخال و إجبار r 24 للإخراج
+          if [ "$CODEC" = "av1" ]; then
+            if [ "$ENCODE_METHOD" = "crf" ]; then
+              ffmpeg -y -hwaccel none -i "$IN" -vf "$VF_CHAIN" -r 24 -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -crf "$TARGET_VALUE" -g 240 $SVT_PARAMS -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+            else
+              PASSLOG="${OUT_DIR}/passlog_${CHUNK_ID}"
+              ffmpeg -y -hwaccel none -i "$IN" -vf "$VF_CHAIN" -r 24 -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 -pass 1 -passlogfile "$PASSLOG" -an -f null /dev/null
+              ffmpeg -y -hwaccel none -i "$IN" -vf "$VF_CHAIN" -r 24 -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 -pass 2 -passlogfile "$PASSLOG" $SVT_PARAMS -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+            fi
+          else
+            # ترميز VVC
+            if [ "$ENCODE_METHOD" = "qp" ]; then
+              ffmpeg -y -hwaccel none -i "$IN" -vf "$VF_CHAIN" -r 24 -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -qp "$TARGET_VALUE" -g 240 -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+            else
+              ffmpeg -y -hwaccel none -i "$IN" -vf "$VF_CHAIN" -r 24 -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 -c:a libopus -b:a 32k -ac 2 "$OUT_FILE"
+            fi
+          fi
+
+          # التحقق من نجاح الترميز وتواجد تدفق الفيديو
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1 "$OUT_FILE" | grep -q 'vvc\|av1' || { echo 'خطأ: تدفق الفيديو غير موجود!' >&2; exit 1; }
           test -s "$OUT_FILE"
 
       - name: رفع الجزء المضغوط
         uses: actions/upload-artifact@v4
         with:
           name: encoded-${{ matrix.chunk }}
-          path: chunks_encoded/encoded_${{ matrix.chunk }}.*
+          path: chunks_encoded/encoded_${{ matrix.chunk }}.mkv
           retention-days: 1
 
   merge-and-send:
@@ -325,61 +331,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - name: استعادة بناء المرّمّز وFFmpeg
-        if: github.event.inputs.codec != 'audio'
-        uses: actions/cache@v4
-        with:
-          path: ~/codec-build
-          key: codec-ffmpeg-${{ github.event.inputs.codec }}-ubuntu-v2
-
       - name: تجهيز أدوات الدمج والإرسال
         env:
           CODEC: ${{ github.event.inputs.codec }}
         run: |
           set -euo pipefail
           sudo apt update
-          sudo apt install -y ffmpeg p7zip-full libopus0
+          sudo apt install -y ffmpeg libopus0
           pip install telethon
-          if [ "$CODEC" != "audio" ]; then
-            echo "$HOME/codec-build/bin" >> "$GITHUB_PATH"
-            echo "LD_LIBRARY_PATH=$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          fi
 
-      - name: تنزيل جميع الأجزاء المضغوطة
+      - name: تنزيل الأجزاء المُعَالَجَة
         uses: actions/download-artifact@v4
         with:
           pattern: encoded-*
           path: all_encoded
           merge-multiple: true
 
-      - name: دمج الأجزاء
-        env:
-          CODEC: ${{ github.event.inputs.codec }}
+      - name: دمج الأجزاء النهائية (MKV Container)
         run: |
           set -euo pipefail
           cd all_encoded
-          if [ "$CODEC" = "vvc" ]; then
-            EXT="mp4"
-          else
-            EXT="mkv"
-          fi
           rm -f concat_list.txt
-          for f in $(ls encoded_*.$EXT | sort); do echo "file '$f'" >> concat_list.txt; done
-          ffmpeg -f concat -safe 0 -i concat_list.txt -c copy -y ../output.$EXT
+          for f in $(ls encoded_*.mkv | sort); do echo "file '$f'" >> concat_list.txt; done
+          ffmpeg -f concat -safe 0 -i concat_list.txt -c copy -y ../output.mkv
 
       - name: استخراج معلومات الناتج
         id: videoinfo
         env:
           CODEC: ${{ github.event.inputs.codec }}
         run: |
-          if [ "$CODEC" = "vvc" ]; then EXT="mp4"; else EXT="mkv"; fi
-          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.$EXT | cut -d. -f1)
+          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
           H=$((DURATION_SEC/3600)); M=$(((DURATION_SEC%3600)/60)); S=$((DURATION_SEC%60))
           echo "duration_fmt=$(printf '%02d:%02d:%02d' $H $M $S)" >> "$GITHUB_OUTPUT"
+          
           if [ "$CODEC" = "audio" ]; then
             echo 'actual_res=صوت فقط 🎵' >> "$GITHUB_OUTPUT"
           else
-            ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.$EXT)
+            ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.mkv)
             echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
           fi
 
@@ -392,18 +380,6 @@ jobs:
           SAFE_FILENAME=$(sanitize "$FILENAME")
           echo "final_name=${SAFE_FILENAME:-video}" >> "$GITHUB_OUTPUT"
 
-      - name: تشفير الناتج الخاص
-        if: github.event.inputs.private == 'true'
-        env:
-          USER_PASSWORD: ${{ github.event.inputs.password }}
-          FINAL_NAME: ${{ steps.naming.outputs.final_name }}
-          CODEC: ${{ github.event.inputs.codec }}
-        run: |
-          set -euo pipefail
-          if [ "$CODEC" = "vvc" ]; then EXT="mp4"; else EXT="mkv"; fi
-          mv output.$EXT "${FINAL_NAME}.${EXT}"
-          7z a -p"$USER_PASSWORD" -mhe=on "${FINAL_NAME}.7z" "${FINAL_NAME}.${EXT}"
-
       - name: رفع الناتج إلى تيليجرام
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
@@ -413,19 +389,13 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ github.event.inputs.chat_id }}
           FINAL_NAME: ${{ steps.naming.outputs.final_name }}
-          PRIVATE: ${{ github.event.inputs.private }}
           DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
           ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
-          CODEC: ${{ github.event.inputs.codec }}
         run: |
           set -euo pipefail
-          if [ "$CODEC" = "vvc" ]; then EXT="mp4"; else EXT="mkv"; fi
-          if [ "$PRIVATE" = "true" ]; then
-            UPLOAD_FILE="${FINAL_NAME}.7z"
-          else
-            UPLOAD_FILE="${FINAL_NAME}.${EXT}"
-            mv output.$EXT "$UPLOAD_FILE"
-          fi
+          UPLOAD_FILE="${FINAL_NAME}.mkv"
+          mv output.mkv "$UPLOAD_FILE"
+          
           FILE_SIZE=$(stat -c%s "$UPLOAD_FILE")
           SIZE_MB=$(awk -v size="$FILE_SIZE" 'BEGIN {printf "%.1f", size/1048576}')
           export UPLOAD_FILE SIZE_MB
@@ -434,12 +404,15 @@ jobs:
           import os, asyncio
           from telethon import TelegramClient
           from telethon.sessions import StringSession
+          
           api_id = int(os.environ["TG_API_ID"])
           api_hash = os.environ["TG_API_HASH"]
           session = os.environ["TG_SESSION"]
           channel_id = int(os.environ["TG_CHANNEL_ID"])
           file = os.environ["UPLOAD_FILE"]
+          
           caption = f"🎬 {os.environ['FINAL_NAME']}\n📐 {os.environ['ACTUAL_RES']}\n⏱️ {os.environ['DURATION_FMT']}"
+          
           async def main():
               client = TelegramClient(StringSession(session), api_id, api_hash)
               await client.start()
@@ -449,7 +422,7 @@ jobs:
 
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d chat_id="${CHAT_ID}" \
-            -d text="✅ تم الضغط بنجاح!%0A%0A🎬 ${FINAL_NAME}%0A📦 ${SIZE_MB} MB%0A📐 ${ACTUAL_RES}%0A⏱️ ${DURATION_FMT}"
+            -d text="✅ تم الضغط والإرسال للقناة بنجاح!%0A%0A🎬 ${FINAL_NAME}%0A📦 ${SIZE_MB} MB%0A📐 ${ACTUAL_RES}%0A⏱️ ${DURATION_FMT}"
 
       - name: إشعار الفشل
         if: failure()
@@ -462,4 +435,4 @@ jobs:
           run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d chat_id="${CHAT_ID}" \
-            -d text="❌ فشلت العملية.%0A📋 التفاصيل: ${run_url}"
+            -d text="❌ فشلت العملية في المصنع (GitHub Actions).%0A📋 راجع التفاصيل هنا: ${run_url}"
