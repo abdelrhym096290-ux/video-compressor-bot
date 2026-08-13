@@ -547,6 +547,13 @@ async function sendEncodeModeKeyboard(BOT_TOKEN, chatId) {
 }
 
 
+async function sendEncodeMethodKeyboard(BOT_TOKEN, chatId, codec = "av1") {
+  const text = codec === "vvc"
+    ? "⚙️ اختر طريقة ترميز H.266 / VVC:"
+    : "⚙️ اختر طريقة ترميز AV1:";
+  await sendMessage(BOT_TOKEN, chatId, text, encodeMethodKeyboardMarkup(codec));
+}
+
 function encodeMethodKeyboardMarkup(codec = "av1") {
   if (codec === "vvc") {
     return {
