@@ -25,7 +25,7 @@ export default {
         const isAuthorized = await env.SESSIONS.get(`authorized:${chatId}`);
 
         if (!isAuthorized) {
-          await sendMessage(BOT_TOKEN, chatId, "هذا البوت خاص. أرسل كلمة المرور للمتابعة:");
+          await sendMessage(BOT_TOKEN, chatId, "🔒 هذا البوت خاص. أرسل كلمة المرور للمتابعة:");
           return ok();
         }
 
@@ -57,7 +57,7 @@ export default {
             filename: finalName,
           };
 
-          await sendMessage(BOT_TOKEN, chatId, `جارٍ إرسال المهمة تلقائياً: ${finalName}`);
+          await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ إرسال المهمة تلقائياً: ${finalName}`);
           await finalizeAndTrigger(
             env,
             BOT_TOKEN,
@@ -88,9 +88,9 @@ export default {
         if (!isAuthorized) {
           if (text === BOT_PASSWORD) {
             await env.SESSIONS.put(`authorized:${chatId}`, "true");
-            await sendMessage(BOT_TOKEN, chatId, "تم التحقق بنجاح. أرسل /start للبدء.");
+            await sendMessage(BOT_TOKEN, chatId, "✅ تم التحقق بنجاح. أرسل /start للبدء.");
           } else {
-            await sendMessage(BOT_TOKEN, chatId, "هذا البوت خاص. أرسل كلمة المرور للمتابعة:");
+            await sendMessage(BOT_TOKEN, chatId, "🔒 هذا البوت خاص. أرسل كلمة المرور للمتابعة:");
           }
           return ok();
         }
@@ -120,7 +120,7 @@ export default {
           } else {
             preset.active = false;
             await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, "تم إيقاف الوضع التلقائي. أرسل فيديو وستُسأل عن الإعدادات.");
+            await sendMessage(BOT_TOKEN, chatId, "⏸️ تم إيقاف الوضع التلقائي. أرسل فيديو وستُسأل عن الإعدادات.");
           }
           return ok();
         }
@@ -132,7 +132,7 @@ export default {
           } else {
             preset.active = true;
             await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, `تم تفعيل الوضع التلقائي.\n${presetStatusText(preset)}`);
+            await sendMessage(BOT_TOKEN, chatId, `▶️ تم تفعيل الوضع التلقائي.\n${presetStatusText(preset)}`);
           }
           return ok();
         }
@@ -143,7 +143,7 @@ export default {
             const preset = (await getPreset(env, chatId)) || {};
             preset.next_episode = Number.parseInt(parts[1], 10);
             await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, `تم تشغيل العداد. الحلقة القادمة: ${preset.next_episode}`);
+            await sendMessage(BOT_TOKEN, chatId, `🎬 تم تشغيل العداد. الحلقة القادمة: ${preset.next_episode}`);
           } else {
             await sendMessage(BOT_TOKEN, chatId, "الصيغة الصحيحة: /setepisode <رقم>\nمثال: /setepisode 1");
           }
@@ -158,7 +158,7 @@ export default {
             const preset = (await getPreset(env, chatId)) || {};
             preset.episode_prefix = prefix;
             await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, `تم تعيين بادئة العداد: ${prefix}`);
+            await sendMessage(BOT_TOKEN, chatId, `🏷️ تم تعيين بادئة العداد: ${prefix}`);
           }
           return ok();
         }
@@ -170,7 +170,7 @@ export default {
             delete preset.episode_prefix;
             await setPreset(env, chatId, preset);
           }
-          await sendMessage(BOT_TOKEN, chatId, "تم إلغاء العداد التلقائي.");
+          await sendMessage(BOT_TOKEN, chatId, "🛑 تم إلغاء العداد التلقائي.");
           return ok();
         }
 
@@ -192,7 +192,7 @@ export default {
           await sendMessage(
             BOT_TOKEN,
             chatId,
-            codec === "vvc" ? `تم تسجيل سرعة VVC: ${text}` : `تم تسجيل AV1 preset: ${text}`,
+            codec === "vvc" ? `✅ تم تسجيل سرعة VVC: ${text}` : `✅ تم تسجيل AV1 preset: ${text}`,
           );
           await sendEncodeMethodKeyboard(BOT_TOKEN, chatId, codec);
           return ok();
@@ -218,7 +218,7 @@ export default {
               await promptFilename(BOT_TOKEN, chatId, null, session.default_name, false);
             }
           } else {
-            await sendMessage(BOT_TOKEN, chatId, `تم تسجيل القيمة: ${text}`);
+            await sendMessage(BOT_TOKEN, chatId, `✅ تم تسجيل القيمة: ${text}`);
             await sendQualityKeyboard(BOT_TOKEN, chatId, RESOLUTIONS);
           }
           return ok();
@@ -255,7 +255,7 @@ export default {
           return ok();
         }
 
-        await sendMessage(BOT_TOKEN, chatId, "أرسل فيديو مباشرة للبدء، أو استخدم /setup لحفظ إعداد تلقائي.");
+        await sendMessage(BOT_TOKEN, chatId, "📤 أرسل فيديو مباشرة للبدء، أو استخدم /setup لحفظ إعداد تلقائي.");
         return ok();
       }
 
@@ -273,7 +273,7 @@ export default {
 
         if (data === "cancel") {
           await deleteSession(env, chatId);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "تم إلغاء العملية.");
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "🚫 تم إلغاء العملية.");
           return ok();
         }
 
@@ -297,7 +297,7 @@ export default {
               BOT_TOKEN,
               chatId,
               query.message.message_id,
-              `المرمّز المختار: ${codec === "vvc" ? "H.266 / VVC" : "AV1"}`,
+              `🎞️ المرمّز المختار: ${codec === "vvc" ? "H.266 / VVC" : "AV1"}`,
             );
             await sendEncodeModeKeyboard(BOT_TOKEN, chatId);
           }
@@ -318,7 +318,7 @@ export default {
               BOT_TOKEN,
               chatId,
               query.message.message_id,
-              "اختر نوع الفلاتر. اختر الأنمي للرسوم والمساحات اللونية، والواقعي للتصوير الحقيقي:",
+              "🧩 اختر نوع الفلاتر: الأنمي للرسوم والمساحات اللونية، والواقعي للتصوير الحقيقي:",
               filterProfileKeyboardMarkup(),
             );
           } else {
@@ -341,7 +341,7 @@ export default {
             BOT_TOKEN,
             chatId,
             query.message.message_id,
-            `${profile === "anime" ? "تم اختيار فلاتر الأنمي." : "تم اختيار فلاتر المحتوى الواقعي."}\n${presetPrompt(session.codec)}`,
+            `${profile === "anime" ? "🌸 تم اختيار فلاتر الأنمي." : "🎬 تم اختيار فلاتر المحتوى الواقعي."}\n${presetPrompt(session.codec)}`,
           );
           return ok();
         }
@@ -356,7 +356,7 @@ export default {
             BOT_TOKEN,
             chatId,
             query.message.message_id,
-            `تم تسجيل السرعة: ${presetValue}\nاختر طريقة الضغط:`,
+            `🏎️ تم تسجيل السرعة: ${presetValue}\n🎛️ اختر طريقة الضغط:`,
             encodeMethodKeyboardMarkup(session.codec || "av1"),
           );
           return ok();
@@ -378,7 +378,7 @@ export default {
         if (data === "custom_res") {
           session.awaiting_res = true;
           await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "أرسل الارتفاع المطلوب رقماً فقط، مثال: 550:");
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "📐 أرسل الارتفاع المطلوب رقماً فقط، مثال: 550:");
           return ok();
         }
 
@@ -387,7 +387,7 @@ export default {
           if (!isValidResolution(resolution)) return ok();
           session.resolution = resolution;
           await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `تم اختيار الدقة: ${resolution}p`);
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `🎯 تم اختيار الدقة: ${resolution}p`);
           await continueAfterResolution(env, BOT_TOKEN, chatId, session);
           return ok();
         }
@@ -397,7 +397,7 @@ export default {
           session.filename = await applyCounterToName(env, chatId, session.default_name || "video");
           session.awaiting_filename = false;
           await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `جارٍ إرسال المهمة: ${session.filename}`);
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `⏳ جارٍ إرسال المهمة: ${session.filename}`);
           await finalizeAndTrigger(
             env,
             BOT_TOKEN,
@@ -486,7 +486,7 @@ async function savePresetAndConfirm(env, botToken, chatId, session) {
 
   await setPreset(env, chatId, preset);
   await deleteSession(env, chatId);
-  await sendMessage(botToken, chatId, `تم حفظ الإعداد وتفعيل الوضع التلقائي.\n${presetStatusText(preset)}\nاستخدم /auto_off لإيقافه.`);
+  await sendMessage(botToken, chatId, `✅ تم حفظ الإعداد وتفعيل الوضع التلقائي.\n${presetStatusText(preset)}\n⏸️ استخدم /auto_off لإيقافه.`);
 }
 
 function presetStatusText(preset) {
@@ -527,7 +527,7 @@ function presetStatusText(preset) {
 
 function startMessage(preset) {
   return [
-    "أرسل فيديو مباشرة للبدء.",
+    "🚀 أرسل فيديو مباشرة للبدء.",
     "",
     "الأوامر:",
     "/setup لحفظ إعداد تلقائي",
@@ -537,7 +537,7 @@ function startMessage(preset) {
     "/setprefix حلقة لإضافة بادئة",
     "/stopepisode لإلغاء العداد",
     preset?.active ? "" : null,
-    preset?.active ? "الوضع التلقائي مفعّل حالياً." : null,
+    preset?.active ? "▶️ الوضع التلقائي مفعّل حالياً." : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -636,9 +636,9 @@ async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, c
 async function finalizeAndTrigger(env, botToken, githubToken, githubRepo, githubWorkflow, chatId, session) {
   const success = await triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId);
   if (success) {
-    await sendMessage(botToken, chatId, "تم إرسال المهمة إلى مصنع الضغط السحابي.");
+    await sendMessage(botToken, chatId, "✅ تم إرسال المهمة إلى مصنع الضغط السحابي.");
   } else {
-    await sendMessage(botToken, chatId, "فشل إرسال المهمة إلى GitHub. تحقق من سجل العامل ورمز GitHub." );
+    await sendMessage(botToken, chatId, "❌ فشل إرسال المهمة إلى GitHub. تحقق من سجل العامل ورمز GitHub." );
   }
   await deleteSession(env, chatId);
 }
@@ -651,10 +651,10 @@ function extractDefaultName(message) {
 
 async function promptFilename(botToken, chatId, editMessageId, defaultName, useEdit) {
   const text = defaultName
-    ? `الاسم المرفق: ${defaultName}\n\nأرسل اسماً جديداً، أو اضغط «استخدام الاسم المرفق».`
+    ? `الاسم المرفق: ${defaultName}\n\nأرسل اسماً جديداً، أو اضغط «✅ استخدام الاسم المرفق».`
     : "أرسل الاسم النهائي للملف:";
   const keyboard = defaultName
-    ? { inline_keyboard: [[{ text: "استخدام الاسم المرفق", callback_data: "name_skip" }]] }
+    ? { inline_keyboard: [[{ text: "✅ استخدام الاسم المرفق", callback_data: "name_skip" }]] }
     : null;
 
   if (useEdit && editMessageId) {
@@ -668,39 +668,39 @@ async function sendCodecKeyboard(botToken, chatId) {
   const keyboard = {
     inline_keyboard: [
       [
-        { text: "AV1", callback_data: "codec_av1" },
-        { text: "H.266 / VVC", callback_data: "codec_vvc" },
+        { text: "⚡ AV1", callback_data: "codec_av1" },
+        { text: "🧪 H.266 / VVC", callback_data: "codec_vvc" },
       ],
-      [{ text: "صوت فقط", callback_data: "codec_audio" }],
-      [{ text: "إلغاء", callback_data: "cancel" }],
+      [{ text: "🎵 صوت فقط", callback_data: "codec_audio" }],
+      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
     ],
   };
-  await sendMessage(botToken, chatId, "اختر المرمّز أو استخراج الصوت:", keyboard);
+  await sendMessage(botToken, chatId, "⚙️ اختر المرمّز أو استخراج الصوت:", keyboard);
 }
 
 async function sendEncodeModeKeyboard(botToken, chatId) {
   const keyboard = {
     inline_keyboard: [
-      [{ text: "مع فلاتر", callback_data: "mode_filters" }],
-      [{ text: "بدون فلاتر", callback_data: "mode_nofilters" }],
-      [{ text: "إلغاء", callback_data: "cancel" }],
+      [{ text: "🛠️ مع فلاتر", callback_data: "mode_filters" }],
+      [{ text: "✨ بدون فلاتر", callback_data: "mode_nofilters" }],
+      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
     ],
   };
-  await sendMessage(botToken, chatId, "اختر وضع الصورة:", keyboard);
+  await sendMessage(botToken, chatId, "🖼️ اختر وضع الصورة:", keyboard);
 }
 
 function filterProfileKeyboardMarkup() {
   return {
     inline_keyboard: [
-      [{ text: "أنمي", callback_data: "filter_anime" }],
-      [{ text: "محتوى واقعي", callback_data: "filter_realistic" }],
-      [{ text: "إلغاء", callback_data: "cancel" }],
+      [{ text: "🌸 أنمي", callback_data: "filter_anime" }],
+      [{ text: "🎬 محتوى واقعي", callback_data: "filter_realistic" }],
+      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
     ],
   };
 }
 
 async function sendEncodeMethodKeyboard(botToken, chatId, codec) {
-  const text = codec === "vvc" ? "اختر طريقة ترميز H.266 / VVC:" : "اختر طريقة ترميز AV1:";
+  const text = codec === "vvc" ? "🎛️ اختر طريقة ترميز H.266 / VVC:" : "🎛️ اختر طريقة ترميز AV1:";
   await sendMessage(botToken, chatId, text, encodeMethodKeyboardMarkup(codec));
 }
 
@@ -708,17 +708,17 @@ function encodeMethodKeyboardMarkup(codec) {
   if (codec === "vvc") {
     return {
       inline_keyboard: [
-        [{ text: "جودة ثابتة (QP)", callback_data: "encmethod_qp" }],
-        [{ text: "معدل بت (VBR)", callback_data: "encmethod_vbr" }],
-        [{ text: "إلغاء", callback_data: "cancel" }],
+        [{ text: "🎚️ جودة ثابتة (QP)", callback_data: "encmethod_qp" }],
+        [{ text: "📊 معدل بت (VBR)", callback_data: "encmethod_vbr" }],
+        [{ text: "🚫 إلغاء", callback_data: "cancel" }],
       ],
     };
   }
   return {
     inline_keyboard: [
-      [{ text: "ضغط ذكي (CRF)", callback_data: "encmethod_crf" }],
-      [{ text: "حجم مضبوط (Two-Pass)", callback_data: "encmethod_twopass" }],
-      [{ text: "إلغاء", callback_data: "cancel" }],
+      [{ text: "🎚️ ضغط ذكي (CRF)", callback_data: "encmethod_crf" }],
+      [{ text: "⚖️ حجم مضبوط (Two-Pass)", callback_data: "encmethod_twopass" }],
+      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
     ],
   };
 }
@@ -733,8 +733,8 @@ async function sendQualityKeyboard(botToken, chatId, resolutions) {
       })),
     );
   }
-  rows.push([{ text: "دقة مخصصة", callback_data: "custom_res" }]);
-  await sendMessage(botToken, chatId, "اختر الدقة النهائية:", { inline_keyboard: rows });
+  rows.push([{ text: "✏️ دقة مخصصة", callback_data: "custom_res" }]);
+  await sendMessage(botToken, chatId, "🎯 اختر الدقة النهائية:", { inline_keyboard: rows });
 }
 
 async function sendTelegram(botToken, method, body) {
