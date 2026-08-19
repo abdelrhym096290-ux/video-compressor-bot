@@ -51,8 +51,11 @@ on:
         required: true
         default: '24'
 
+# مهمة واحدة تعمل لكل دردشة؛ والبقية تنتظر بالترتيب بدلاً من إلغائها.
+# queue: max يسمح حتى 100 مهمة معلقة في المجموعة نفسها.
 concurrency:
   group: video-compression-${{ github.event.inputs.chat_id }}
+  queue: max
   cancel-in-progress: false
 
 permissions:
