@@ -34,13 +34,8 @@ export default {
 
         // وضع الإعداد التلقائي: يستعمل الإعداد المحفوظ مباشرة.
         if (preset && preset.active) {
-          let finalName = defaultName || "video";
-          if (preset.next_episode !== undefined && preset.next_episode !== null) {
-            const prefix = preset.episode_prefix ? `${preset.episode_prefix} ` : "";
-            finalName = `${finalName} - ${prefix}${preset.next_episode}`.trim();
-            preset.next_episode += 1;
-            await setPreset(env, chatId, preset);
-          }
+          const finalName = buildAutomaticName(preset, defaultName);
+          // لا نزيد العداد إلا بعد قبول GitHub للمهمة، حتى لا تضيع حلقة عند فشل الإرسال.
 
           const autoSession = {
             message_id: update.message.message_id,
@@ -55,6 +50,7 @@ export default {
             target_value: preset.target_value || "28",
             resolution: preset.resolution || "480",
             filename: finalName,
+            auto_advance_episode: preset.auto_naming === "series",
           };
 
           await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ إرسال المهمة تلقائياً: ${finalName}`);
@@ -137,40 +133,31 @@ export default {
           return ok();
         }
 
-        if (text.startsWith("/setepisode")) {
-          const parts = text.split(/\s+/);
-          if (parts.length === 2 && /^\d+$/.test(parts[1])) {
-            const preset = (await getPreset(env, chatId)) || {};
-            preset.next_episode = Number.parseInt(parts[1], 10);
-            await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, `🎬 تم تشغيل العداد. الحلقة القادمة: ${preset.next_episode}`);
-          } else {
-            await sendMessage(BOT_TOKEN, chatId, "الصيغة الصحيحة: /setepisode <رقم>\nمثال: /setepisode 1");
+        // الاسم الذي سيظهر في تسمية مسلسل تلقائية ضمن /setup.
+        if (session.awaiting_series_title) {
+          const seriesTitle = cleanFileName(text);
+          if (!seriesTitle) {
+            await sendMessage(BOT_TOKEN, chatId, "📝 أرسل اسماً صحيحاً للمسلسل، مثل: Solo Leveling S02");
+            return ok();
           }
+          session.series_title = seriesTitle;
+          session.awaiting_series_title = false;
+          session.awaiting_episode_start = true;
+          await setSession(env, chatId, session);
+          await sendMessage(BOT_TOKEN, chatId, `✅ اسم السلسلة: ${seriesTitle}\n🔢 أرسل رقم الحلقة الأولى، مثل: 1`);
           return ok();
         }
 
-        if (text.startsWith("/setprefix")) {
-          const prefix = text.slice("/setprefix".length).trim();
-          if (!prefix) {
-            await sendMessage(BOT_TOKEN, chatId, "أرسل نص البادئة بعد الأمر. مثال: /setprefix حلقة");
-          } else {
-            const preset = (await getPreset(env, chatId)) || {};
-            preset.episode_prefix = prefix;
-            await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, `🏷️ تم تعيين بادئة العداد: ${prefix}`);
+        // رقم أول حلقة في تسمية مسلسل تلقائية ضمن /setup.
+        if (session.awaiting_episode_start) {
+          if (!/^[1-9]\d{0,5}$/.test(text)) {
+            await sendMessage(BOT_TOKEN, chatId, "🔢 أرسل رقم حلقة موجباً فقط، مثل: 1 أو 12.");
+            return ok();
           }
-          return ok();
-        }
-
-        if (text === "/stopepisode") {
-          const preset = await getPreset(env, chatId);
-          if (preset) {
-            delete preset.next_episode;
-            delete preset.episode_prefix;
-            await setPreset(env, chatId, preset);
-          }
-          await sendMessage(BOT_TOKEN, chatId, "🛑 تم إلغاء العداد التلقائي.");
+          session.next_episode = Number.parseInt(text, 10);
+          session.awaiting_episode_start = false;
+          await setSession(env, chatId, session);
+          await savePresetAndConfirm(env, BOT_TOKEN, chatId, session);
           return ok();
         }
 
@@ -211,7 +198,7 @@ export default {
 
           if (session.codec === "audio") {
             if (session.configuring_preset) {
-              await savePresetAndConfirm(env, BOT_TOKEN, chatId, session);
+              await sendAutoNamingKeyboard(BOT_TOKEN, chatId);
             } else {
               session.awaiting_filename = true;
               await setSession(env, chatId, session);
@@ -374,7 +361,31 @@ export default {
           return ok();
         }
 
-        // 5. اختيار الدقة.
+        // 5. إعداد التسمية التلقائية كجزء من /setup.
+        if (data === "autoname_keep") {
+          session.auto_naming = "source";
+          delete session.series_title;
+          delete session.next_episode;
+          await setSession(env, chatId, session);
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "📄 سيحتفظ كل ملف باسمه المرفق تلقائياً.");
+          await savePresetAndConfirm(env, BOT_TOKEN, chatId, session);
+          return ok();
+        }
+
+        if (data === "autoname_series") {
+          session.auto_naming = "series";
+          session.awaiting_series_title = true;
+          await setSession(env, chatId, session);
+          await editMessage(
+            BOT_TOKEN,
+            chatId,
+            query.message.message_id,
+            "📝 أرسل اسم السلسلة كما تريد ظهوره.\nمثال: Solo Leveling S02\n\nسيكون الناتج: Solo Leveling S02 - E01",
+          );
+          return ok();
+        }
+
+        // 6. اختيار الدقة.
         if (data === "custom_res") {
           session.awaiting_res = true;
           await setSession(env, chatId, session);
@@ -444,21 +455,38 @@ async function setPreset(env, chatId, preset) {
   await env.SESSIONS.put(`preset:${chatId}`, JSON.stringify(preset));
 }
 
-async function applyCounterToName(env, chatId, baseName) {
-  let finalName = baseName;
-  const preset = await getPreset(env, chatId);
-  if (preset && preset.next_episode !== undefined && preset.next_episode !== null) {
-    const prefix = preset.episode_prefix ? `${preset.episode_prefix} ` : "";
-    finalName = `${baseName} - ${prefix}${preset.next_episode}`.trim();
-    preset.next_episode += 1;
-    await setPreset(env, chatId, preset);
+async function applyCounterToName(_env, _chatId, baseName) {
+  // يبقى الاسم اليدوي مستقلاً؛ عداد المسلسل يعمل حصراً في الوضع التلقائي بعد /setup.
+  return cleanFileName(baseName) || "video";
+}
+
+function cleanFileName(value) {
+  return String(value || "")
+    .replace(/\.[^/.]+$/, "")
+    .replace(/[\\/:*?"<>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatEpisode(value) {
+  return String(Number.parseInt(value, 10)).padStart(2, "0");
+}
+
+function buildAutomaticName(preset, sourceName) {
+  if (
+    preset?.auto_naming === "series" &&
+    preset.series_title &&
+    Number.isInteger(preset.next_episode) &&
+    preset.next_episode > 0
+  ) {
+    return `${cleanFileName(preset.series_title)} - E${formatEpisode(preset.next_episode)}`;
   }
-  return finalName;
+  return cleanFileName(sourceName) || "video";
 }
 
 async function continueAfterResolution(env, botToken, chatId, session) {
   if (session.configuring_preset) {
-    await savePresetAndConfirm(env, botToken, chatId, session);
+    await sendAutoNamingKeyboard(botToken, chatId);
     return;
   }
 
@@ -478,11 +506,14 @@ async function savePresetAndConfirm(env, botToken, chatId, session) {
     encode_method: session.encode_method || "crf",
     target_value: session.target_value || "28",
     resolution: session.resolution || "480",
+    auto_naming: session.auto_naming || "source",
     active: true,
   };
 
-  if (oldPreset?.next_episode !== undefined) preset.next_episode = oldPreset.next_episode;
-  if (oldPreset?.episode_prefix) preset.episode_prefix = oldPreset.episode_prefix;
+  if (session.auto_naming === "series") {
+    preset.series_title = cleanFileName(session.series_title);
+    preset.next_episode = Number.parseInt(session.next_episode, 10);
+  }
 
   await setPreset(env, chatId, preset);
   await deleteSession(env, chatId);
@@ -521,7 +552,11 @@ function presetStatusText(preset) {
     `القيمة: ${preset.target_value}`,
   ];
   if (preset.codec !== "audio") lines.push(`الدقة: ${preset.resolution}p`);
-  if (preset.next_episode !== undefined) lines.push(`العداد: الحلقة القادمة ${preset.next_episode}`);
+  if (preset.auto_naming === "series" && preset.series_title && preset.next_episode) {
+    lines.push(`التسمية: ${preset.series_title} - E${formatEpisode(preset.next_episode)}`);
+  } else {
+    lines.push("التسمية: الاحتفاظ باسم الفيديو المرفق");
+  }
   return lines.join("\n");
 }
 
@@ -533,9 +568,7 @@ function startMessage(preset) {
     "/setup لحفظ إعداد تلقائي",
     "/preset لعرض الإعداد المحفوظ",
     "/auto_on و /auto_off لتشغيل أو إيقاف الوضع التلقائي",
-    "/setepisode 1 لبدء العداد",
-    "/setprefix حلقة لإضافة بادئة",
-    "/stopepisode لإلغاء العداد",
+    "إعداد اسم السلسلة وعدّاد الحلقات موجود ضمن /setup.",
     preset?.active ? "" : null,
     preset?.active ? "▶️ الوضع التلقائي مفعّل حالياً." : null,
   ]
@@ -630,12 +663,38 @@ async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, c
       body: JSON.stringify(body),
     },
   );
-  return response.status === 204;
+
+  // لا نطبع الرمز أبداً؛ نسجل فقط رمز الاستجابة ورسالة GitHub لتشخيص الربط.
+  // GitHub قد يعيد 200 أو 204 عند نجاح workflow_dispatch؛ Response.ok يقبل كل رموز 2xx.
+  const responseText = await response.text();
+  if (!response.ok) {
+    console.error("GitHub workflow dispatch failed:", {
+      status: response.status,
+      repository: githubRepo,
+      workflow: githubWorkflow,
+      detail: responseText.slice(0, 1500),
+    });
+    return false;
+  }
+
+  console.log("GitHub workflow dispatched:", {
+    status: response.status,
+    repository: githubRepo,
+    workflow: githubWorkflow,
+  });
+  return true;
 }
 
 async function finalizeAndTrigger(env, botToken, githubToken, githubRepo, githubWorkflow, chatId, session) {
   const success = await triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId);
   if (success) {
+    if (session.auto_advance_episode) {
+      const preset = await getPreset(env, chatId);
+      if (preset?.auto_naming === "series" && Number.isInteger(preset.next_episode)) {
+        preset.next_episode += 1;
+        await setPreset(env, chatId, preset);
+      }
+    }
     await sendMessage(botToken, chatId, "✅ تم إرسال المهمة إلى مصنع الضغط السحابي.");
   } else {
     await sendMessage(botToken, chatId, "❌ فشل إرسال المهمة إلى GitHub. تحقق من سجل العامل ورمز GitHub." );
@@ -721,6 +780,22 @@ function encodeMethodKeyboardMarkup(codec) {
       [{ text: "🚫 إلغاء", callback_data: "cancel" }],
     ],
   };
+}
+
+async function sendAutoNamingKeyboard(botToken, chatId) {
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: "📄 الاحتفاظ باسم كل فيديو", callback_data: "autoname_keep" }],
+      [{ text: "📺 اسم مسلسل + عداد حلقات", callback_data: "autoname_series" }],
+      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
+    ],
+  };
+  await sendMessage(
+    botToken,
+    chatId,
+    "🏷️ اختر التسمية التلقائية للوضع التلقائي:\n\n📄 الاحتفاظ بالاسم: يستعمل اسم الفيديو المرفق.\n📺 مسلسل: تسمي كل نتيجة مثل: اسم السلسلة - E01 ثم E02.",
+    keyboard,
+  );
 }
 
 async function sendQualityKeyboard(botToken, chatId, resolutions) {
