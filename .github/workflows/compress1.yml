@@ -1,65 +1,49 @@
-name: تجربة الترميز بالخريطة المتحركة مقابل AV1
+name: بوت الضغط الشخصي - AV1 مع طبقة الخريطة التكيفية
 
 on:
   workflow_dispatch:
     inputs:
-      video_url:
-        description: 'رابط مباشر لفيديو تجريبي (mp4/mkv)'
+      url:
+        description: 'رابط مباشر للفيديو المصدر'
         required: true
-      start_time:
-        description: 'بداية العينة، مثل 00:00:10'
+      filename:
+        description: 'الاسم النهائي، من دون امتداد'
         required: true
-        default: '00:00:00'
-      duration:
-        description: 'مدة العينة بالثواني (يُنصح بـ 5-15 لتجربة أولى سريعة)'
-        required: true
-        default: '10'
       resolution:
-        description: 'الارتفاع النهائي للعينة، مثل 480'
+        description: 'الارتفاع النهائي، مثل 480 أو 720 أو 1080'
         required: true
         default: '480'
-      frame_rate:
-        description: 'معدل الإطارات للعينة'
-        required: true
-        default: '12'
-      block_size:
-        description: 'حجم كتلة الخريطة بالبكسل'
-        required: true
-        default: '16'
-      flat_threshold:
-        description: 'أقصى انحراف لاعتبار الكتلة مسطحة'
-        required: true
-        default: '6.0'
-      gradient_threshold:
-        description: 'أقصى خطأ لاعتبار الكتلة متدرجة خطيًا'
-        required: true
-        default: '10.0'
-      av1_crf:
-        description: 'قيمة CRF لترميز AV1 المرجعي للمقارنة (0-63)'
+      crf:
+        description: 'قيمة CRF لـ AV1 (0-63، أقل = جودة أعلى وحجم أكبر)'
         required: true
         default: '28'
-      av1_preset:
-        description: 'رقم preset لـ SVT-AV1 (0-13)'
+      preset:
+        description: 'رقم preset لـ SVT-AV1 (0-13، أقل = أبطأ وأفضل ضغطًا)'
         required: true
         default: '8'
+
+# مهمة واحدة في كل مرة لهذا المستودع، والبقية تنتظر بالترتيب.
+concurrency:
+  group: video-compression-map-layer
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  run-experiment:
-    name: تشغيل التجربة ومقارنتها بـ AV1
+  prepare-codec-build:
+    name: بناء FFmpeg وSVT-AV1
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 360
     steps:
-      - name: استعادة بناء FFmpeg/SVT-AV1 الموحد إن وُجد
+      - name: استعادة بناء FFmpeg/SVT-AV1
         id: cache-build
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-universal-av1-vvc-dav1d-ubuntu-24.04-v4
+          key: codec-map-layer-av1-dav1d-ubuntu-24.04-v1
 
-      - name: بناء AV1 فقط إذا لم يوجد الكاش (أخف من البناء الكامل مع VVC)
+      - name: بناء SVT-AV1 وFFmpeg إذا لم يوجد الكاش
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -82,110 +66,321 @@ jobs:
           make -j"$(nproc)"
           make install
 
-      - name: تجهيز أدوات بايثون
+      - name: فحص البناء
+        run: |
+          set -euo pipefail
+          sudo apt update
+          sudo apt install -y libdav1d-dev libopus0
+          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+          test -x "$HOME/codec-build/bin/ffmpeg"
+          "$HOME/codec-build/bin/ffmpeg" -hide_banner -encoders | grep -q 'libsvtav1'
+
+  split-video:
+    name: تحميل المصدر وتقطيعه
+    needs: prepare-codec-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    outputs:
+      chunks: ${{ steps.segment.outputs.chunks }}
+      crop: ${{ steps.detect_crop.outputs.crop }}
+    steps:
+      - name: تجهيز الأدوات
+        run: |
+          set -euo pipefail
+          sudo apt update
+          sudo apt install -y ffmpeg jq libdav1d-dev libopus0
+
+      - name: استعادة FFmpeg الموحد
+        uses: actions/cache@v4
+        with:
+          path: ~/codec-build
+          key: codec-map-layer-av1-dav1d-ubuntu-24.04-v1
+
+      - name: تحميل الفيديو المصدر
+        env:
+          VIDEO_URL: ${{ github.event.inputs.url }}
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 -o raw_input.mp4 "$VIDEO_URL"
+          test -s raw_input.mp4
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 raw_input.mp4 >/dev/null
+
+      - name: اكتشاف الأشرطة السوداء
+        id: detect_crop
+        run: |
+          set -euo pipefail
+          FFMPEG="$HOME/codec-build/bin/ffmpeg"
+          FFPROBE="$HOME/codec-build/bin/ffprobe"
+          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+          SOURCE_CODEC=$("$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 raw_input.mp4 || true)
+          DECODER_ARGS=()
+          if [ "$SOURCE_CODEC" = "av1" ]; then DECODER_ARGS=(-c:v libdav1d); fi
+          CROP=$("$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -i raw_input.mp4 \
+            -frames:v 100 -an -vf 'cropdetect=24:16:0' -f null - 2>&1 \
+            | grep -oE 'crop=[0-9]+:[0-9]+:[0-9]+:[0-9]+' | tail -n 1 || true)
+          if [ -z "$CROP" ]; then CROP=none; fi
+          echo "crop=$CROP" >> "$GITHUB_OUTPUT"
+
+      - name: تقسيم المصدر إلى أجزاء MKV
+        id: segment
+        run: |
+          set -euo pipefail
+          mkdir -p chunks_raw
+          FFPROBE="$HOME/codec-build/bin/ffprobe"
+          FFMPEG="$HOME/codec-build/bin/ffmpeg"
+          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+          DURATION=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 raw_input.mp4 | cut -d. -f1)
+          test -n "$DURATION"
+          if [ "$DURATION" -gt 1200 ]; then
+            "$FFMPEG" -hide_banner -nostdin -y -i raw_input.mp4 \
+              -map 0 -c copy -f segment -segment_time 300 \
+              -reset_timestamps 1 -avoid_negative_ts make_zero \
+              'chunks_raw/chunk_%03d.mkv'
+          else
+            "$FFMPEG" -hide_banner -nostdin -y -i raw_input.mp4 \
+              -map 0 -c copy -avoid_negative_ts make_zero \
+              chunks_raw/chunk_000.mkv
+          fi
+          find chunks_raw -maxdepth 1 -type f -name 'chunk_*.mkv' -size +0c | sort >/tmp/chunks.txt
+          test -s /tmp/chunks.txt
+          CHUNKS_JSON=$(sed 's#^.*/chunk_##; s#\.mkv$##' /tmp/chunks.txt | jq -R . | jq -s -c .)
+          echo "chunks=$CHUNKS_JSON" >> "$GITHUB_OUTPUT"
+
+      - name: رفع الأجزاء الخام
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-chunks
+          path: chunks_raw/
+          retention-days: 1
+          if-no-files-found: error
+
+  encode-chunks:
+    name: معالجة مسبقة بالخريطة + ترميز AV1
+    needs: [prepare-codec-build, split-video]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
+    steps:
+      - name: تنزيل الجزء الخام
+        uses: actions/download-artifact@v4
+        with:
+          name: raw-chunks
+          path: chunks_raw
+
+      - name: استعادة FFmpeg الموحد
+        uses: actions/cache@v4
+        with:
+          path: ~/codec-build
+          key: codec-map-layer-av1-dav1d-ubuntu-24.04-v1
+
+      - name: تجهيز بايثون وFFmpeg
         run: |
           set -euo pipefail
           sudo apt update
           sudo apt install -y ffmpeg libdav1d-dev libopus0
           pip install --user --break-system-packages numpy pillow
 
-      - name: كتابة سكربت الترميز التجريبي (base64 بسطر واحد لتفادي أي مشاكل إزاحة)
+      - name: كتابة فلتر المعالجة المسبقة الموجّه بالخريطة
         run: |
-          echo "IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiIKcmVnaW9uX21hcF9jb2RlYy5weQotLS0tLS0tLS0tLS0tLS0tLS0tLQrZhtmF2YjYsNisINij2YjZhNmKINit2KrZhdmKICjYqNiv2YjZhiDYsNmD2KfYoSDYp9i12LfZhtin2LnZiiDYqtmI2YTZitiv2YopINmE2YHZg9ix2KkgItin2YTYrtix2YrYt9ipICsg2KfZhNio2YrYp9mG2KfYqiDYp9mE2YbYtNi32KkiLgoK2KfZhNmB2YPYsdipINmH2YbYpyDZhdio2LPZkdi32Kkg2LnZhdiv2YvYpyDZhNmC2YrYp9izINij2YjZhNmKOgogIDEpINmK2Y/Zgtiz2Y7ZkdmFINmD2YQg2KXYt9in2LEg2KXZhNmJINmD2KrZhCDYqNit2KzZhSDYq9in2KjYqiAoYmxvY2tfc2l6ZSkuCiAgMikg2YTZg9mEINmD2KrZhNipINmG2YHYrdi1INmH2YQg2YfZijoKICAgICAgIC0gImZsYXQiICAgICA6INmE2YjZhiDYtNio2Ycg2KvYp9io2KogKNin2YbYrdix2KfZgSDYqNiz2YrYtykgLT4g2KrZj9iu2LLZjtmR2YYg2KjZhNmI2YYg2YjYp9it2K8gKDMg2KjYp9mK2KopLgogICAgICAgLSAiZ3JhZGllbnQiIDog2KrYr9ix2ZHYrCDYrti32Yog2KjYs9mK2Lcg2KjZitmGINin2YTYstmI2KfZitinIC0+INiq2Y/Yrtiy2Y7ZkdmGINio2KPYsdio2LnYqSDYo9mE2YjYp9mGINiy2YjYp9mK2KcgKDEyINio2KfZitiqKS4KICAgICAgIC0gImRldGFpbCIgICA6INij2Yog2LTZitihINii2K7YsSAo2KrZgdin2LXZitmEL9it2YjYp9mBL9i22YjYttin2KEpIC0+INiq2Y/Yrtiy2Y7ZkdmGINmD2KjZitin2YbYp9iqINiu2KfZhSDZhdi22LrZiNi32KkgKHpsaWIpLgogIDMpINin2YTZg9iq2YQgImZsYXQiINin2YTZhdiq2KzYp9mI2LHYqSDYo9mB2YLZitmL2Kcg2KjZhtmB2LMg2KfZhNmE2YjZhiDYqtmP2K/ZhdisIChSTEUg2KjYs9mK2LcpINmE2KrZgtmE2YrZhCDYrdis2YUg2KfZhNiu2LHZiti32KkKICAgICDZgdmKINin2YTZhdmG2KfYt9mCINin2YTZiNin2LPYudipINin2YTYqNiz2YrYt9ipICjZhdir2YQg2KfZhNiz2YXYp9ihKSAtINmI2YfZhtinINin2YTZgdix2YIg2KfZhNij2YPYqNixINin2YTZhdiq2YjZgti5INi52YYgQVYxLgogIDQpINmK2Y/Yudin2K8g2KjZhtin2KEg2KfZhNi12YjYsdipINmF2YYg2KfZhNiu2LHZiti32KkgKyDYp9mE2KjZitin2YbYp9iqINin2YTYqtmB2LXZitmE2YrYqdiMINmI2KrZj9mC2KfYszoKICAgICAgIC0g2KfZhNit2KzZhSDYp9mE2YPZhNmKICjYrtix2YrYt9ipICsg2KrZgdin2LXZitmEKSDYqNin2YTYqNin2YrYqgogICAgICAgLSBQU05SINio2YrZhiDYp9mE2KPYtdmEINmI2KXYudin2K/YqSDYp9mE2KjZhtin2KEKICAgICDZh9iw2Kcg2KfZhNmC2YrYp9izICrYrdiq2YXZiiDYqNin2YTZg9in2YXZhCo6INmG2YHYsyDYp9mE2YXYr9iu2YQg2YrZhtiq2Kwg2YbZgdizINin2YTZhtin2KrYrCDYr9in2KbZhdmL2KfYjCDZgdmE2Kcg2KrZiNis2K8KICAgICDZhdi02YPZhNipICLZh9mE2YjYs9ipIiDZh9mG2Kcg2YTYo9mG2YbYpyDZhNinINmG2LPYqtiu2K/ZhSDYo9mKINmG2YXZiNiw2Kwg2KrZiNmE2YrYr9mKLgoK2YfYsNinINin2YTZhdmE2YEg2YXYs9iq2YLZhCDYqtmF2KfZhdmL2KcgKG51bXB5ICsgemxpYiDZgdmC2Lcp2Iwg2YTZiti52YXZhCDYr9in2K7ZhCBHaXRIdWIgQWN0aW9ucyDYqNiv2YjZhgrYp9i52KrZhdin2K/Zitin2Kog2KXYttin2YHZitip2Iwg2YjZitmP2LPYqtiu2K/ZhSDZhdmGINmC2KjZhCBtYXAtZXhwZXJpbWVudC55bWwg2YTZhNmF2YLYp9ix2YbYqSDZhdi5IEFWMS4KIiIiCgpmcm9tIF9fZnV0dXJlX18gaW1wb3J0IGFubm90YXRpb25zCgppbXBvcnQgYXJncGFyc2UKaW1wb3J0IGpzb24KaW1wb3J0IHN0cnVjdAppbXBvcnQgc3lzCmltcG9ydCB6bGliCmZyb20gZGF0YWNsYXNzZXMgaW1wb3J0IGRhdGFjbGFzcywgZmllbGQKZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgppbXBvcnQgbnVtcHkgYXMgbnAKCnRyeToKICAgIGZyb20gUElMIGltcG9ydCBJbWFnZQpleGNlcHQgSW1wb3J0RXJyb3I6ICAjIHByYWdtYTogbm8gY292ZXIKICAgIHByaW50KCLZitiq2LfZhNioINmH2LDYpyDYp9mE2LPZg9ix2KjYqiDZhdmD2KrYqNipIFBpbGxvdzogcGlwIGluc3RhbGwgcGlsbG93IiwgZmlsZT1zeXMuc3RkZXJyKQogICAgcmFpc2UKCiMgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQojINin2YTYpdi52K/Yp9iv2KfYqgojIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KCkJMT0NLX1NJWkVfREVGQVVMVCA9IDE2CkZMQVRfVEhSRVNIT0xEX0RFRkFVTFQgPSA2LjAgICAgICAjINij2YLYtdmJINin2YbYrdix2KfZgSDYudmGINin2YTZhdiq2YjYs9i3INmE2YrZj9i52KrYqNixIGZsYXQKR1JBRElFTlRfVEhSRVNIT0xEX0RFRkFVTFQgPSAxMC4wICAjINij2YLYtdmJINiu2LfYoyDYudmGINmG2YXZiNiw2Kwg2KfZhNiq2K/YsdisINin2YTYrti32Yog2YTZitmP2LnYqtio2LEgZ3JhZGllbnQKCkJMT0NLX1RZUEVfRkxBVCA9IDAKQkxPQ0tfVFlQRV9HUkFESUVOVCA9IDEKQkxPQ0tfVFlQRV9ERVRBSUwgPSAyCgoKIyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCiMg2KrYrdmE2YrZhCDZg9iq2YTYqSDZiNin2K3Yr9ipCiMgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQoKQGRhdGFjbGFzcwpjbGFzcyBCbG9ja1Jlc3VsdDoKICAgIGJ0eXBlOiBpbnQKICAgIHBheWxvYWQ6IGJ5dGVzICAgICAgICAgICAjINin2YTYqNmK2KfZhtin2Kog2KfZhNmF2K7YstmO2ZHZhtipINmE2YfYsNmHINin2YTZg9iq2YTYqSAo2YLYqNmEINij2Yog2K/ZhdisIFJMRSkKICAgIHJlY29uc3RydWN0ZWQ6IG5wLm5kYXJyYXkgICMg2KfZhNmD2KrZhNipINmD2YXYpyDYs9iq2Y/Yudin2K8g2KjZhtin2KTZh9inICjZhNmC2YrYp9izINin2YTYrNmI2K/YqSkKCgpkZWYgX2ZsYXRfY29sb3IoYmxvY2s6IG5wLm5kYXJyYXkpIC0+IHR1cGxlW25wLm5kYXJyYXksIGZsb2F0XToKICAgIG1lYW4gPSBibG9jay5yZXNoYXBlKC0xLCBibG9jay5zaGFwZVstMV0pLm1lYW4oYXhpcz0wKQogICAgZGV2ID0gbnAuYWJzKGJsb2NrLmFzdHlwZShucC5mbG9hdDMyKSAtIG1lYW4pLm1heCgpCiAgICByZXR1cm4gbWVhbiwgZGV2CgoKZGVmIF9iaWxpbmVhcl9maXQoYmxvY2s6IG5wLm5kYXJyYXkpIC0+IHR1cGxlW25wLm5kYXJyYXksIG5wLm5kYXJyYXksIGZsb2F0XToKICAgICIiItmK2YLYp9ix2Kgg2KfZhNmD2KrZhNipINio2KrYr9ix2ZHYrCDYq9mG2KfYptmKINin2YTYrti32YrYqSDYqNmK2YYg2KfZhNiy2YjYp9mK2Kcg2KfZhNij2LHYqNi52Iwg2YjZiti52YrYryDYp9mE2K7Yt9ijINin2YTYo9mC2LXZiS4iIiIKICAgIGgsIHcsIGMgPSBibG9jay5zaGFwZQogICAgeXksIHh4ID0gbnAubWdyaWRbMDpoLCAwOnddLmFzdHlwZShucC5mbG9hdDMyKQogICAgaWYgaCA+IDE6CiAgICAgICAgeXkgPSB5eSAvIChoIC0gMSkKICAgIGlmIHcgPiAxOgogICAgICAgIHh4ID0geHggLyAodyAtIDEpCgogICAgdGwgPSBibG9ja1swLCAwXS5hc3R5cGUobnAuZmxvYXQzMikKICAgIHRyID0gYmxvY2tbMCwgLTFdLmFzdHlwZShucC5mbG9hdDMyKQogICAgYmwgPSBibG9ja1stMSwgMF0uYXN0eXBlKG5wLmZsb2F0MzIpCiAgICBiciA9IGJsb2NrWy0xLCAtMV0uYXN0eXBlKG5wLmZsb2F0MzIpCgogICAgY29ybmVycyA9IG5wLnN0YWNrKFt0bCwgdHIsIGJsLCBicl0pICAjICg0LCBjKQoKICAgIGFwcHJveCA9ICgKICAgICAgICB0bFtOb25lLCBOb25lLCA6XSAqICgxIC0geHhbLi4uLCBOb25lXSkgKiAoMSAtIHl5Wy4uLiwgTm9uZV0pCiAgICAgICAgKyB0cltOb25lLCBOb25lLCA6XSAqIHh4Wy4uLiwgTm9uZV0gKiAoMSAtIHl5Wy4uLiwgTm9uZV0pCiAgICAgICAgKyBibFtOb25lLCBOb25lLCA6XSAqICgxIC0geHhbLi4uLCBOb25lXSkgKiB5eVsuLi4sIE5vbmVdCiAgICAgICAgKyBicltOb25lLCBOb25lLCA6XSAqIHh4Wy4uLiwgTm9uZV0gKiB5eVsuLi4sIE5vbmVdCiAgICApCiAgICBlcnIgPSBucC5hYnMoYmxvY2suYXN0eXBlKG5wLmZsb2F0MzIpIC0gYXBwcm94KS5tYXgoKQogICAgcmV0dXJuIGNvcm5lcnMsIGFwcHJveCwgZXJyCgoKZGVmIGFuYWx5emVfYmxvY2soCiAgICBibG9jazogbnAubmRhcnJheSwKICAgIGZsYXRfdGhyZXNob2xkOiBmbG9hdCwKICAgIGdyYWRpZW50X3RocmVzaG9sZDogZmxvYXQsCikgLT4gQmxvY2tSZXN1bHQ6CiAgICBtZWFuLCBmbGF0X2RldiA9IF9mbGF0X2NvbG9yKGJsb2NrKQogICAgaWYgZmxhdF9kZXYgPD0gZmxhdF90aHJlc2hvbGQ6CiAgICAgICAgY29sb3IgPSBucC5jbGlwKG5wLnJvdW5kKG1lYW4pLCAwLCAyNTUpLmFzdHlwZShucC51aW50OCkKICAgICAgICBwYXlsb2FkID0gYnl0ZXMoY29sb3IudG9saXN0KCkpCiAgICAgICAgcmVjb24gPSBucC50aWxlKGNvbG9yLCAoYmxvY2suc2hhcGVbMF0sIGJsb2NrLnNoYXBlWzFdLCAxKSkKICAgICAgICByZXR1cm4gQmxvY2tSZXN1bHQoQkxPQ0tfVFlQRV9GTEFULCBwYXlsb2FkLCByZWNvbikKCiAgICBjb3JuZXJzLCBhcHByb3gsIGdyYWRfZGV2ID0gX2JpbGluZWFyX2ZpdChibG9jaykKICAgIGlmIGdyYWRfZGV2IDw9IGdyYWRpZW50X3RocmVzaG9sZDoKICAgICAgICBjb3JuZXJfYnl0ZXMgPSBucC5jbGlwKG5wLnJvdW5kKGNvcm5lcnMpLCAwLCAyNTUpLmFzdHlwZShucC51aW50OCkudG9ieXRlcygpCiAgICAgICAgcmVjb24gPSBucC5jbGlwKG5wLnJvdW5kKGFwcHJveCksIDAsIDI1NSkuYXN0eXBlKG5wLnVpbnQ4KQogICAgICAgIHJldHVybiBCbG9ja1Jlc3VsdChCTE9DS19UWVBFX0dSQURJRU5ULCBjb3JuZXJfYnl0ZXMsIHJlY29uKQoKICAgIHJhdyA9IGJsb2NrLmFzdHlwZShucC51aW50OCkudG9ieXRlcygpCiAgICBjb21wcmVzc2VkID0gemxpYi5jb21wcmVzcyhyYXcsIGxldmVsPTkpCiAgICAjINmE2Kcg2YHYp9im2K/YqSDZhdmGINin2YTYtti62Lcg2KXYsNinINmD2KfZhiDYo9mD2KjYsSDZhdmGINin2YTYrtin2YUgKNmD2KrZhCDYtdi62YrYsdipINis2K/Zi9inINij2K3Zitin2YbZi9inKQogICAgaWYgbGVuKGNvbXByZXNzZWQpID49IGxlbihyYXcpOgogICAgICAgIGNvbXByZXNzZWQgPSBiIlx4MDAiICsgcmF3CiAgICBlbHNlOgogICAgICAgIGNvbXByZXNzZWQgPSBiIlx4MDEiICsgY29tcHJlc3NlZAogICAgcmV0dXJuIEJsb2NrUmVzdWx0KEJMT0NLX1RZUEVfREVUQUlMLCBjb21wcmVzc2VkLCBibG9jay5jb3B5KCkpCgoKIyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCiMg2KrYsdmF2YrYsiDYpdi32KfYsSDZg9in2YXZhAojIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KCkBkYXRhY2xhc3MKY2xhc3MgRnJhbWVFbmNvZGVSZXN1bHQ6CiAgICB3aWR0aDogaW50CiAgICBoZWlnaHQ6IGludAogICAgYmxvY2tfc2l6ZTogaW50CiAgICBtYXBfYnl0ZXM6IGludCAgICAgICAgICAjINit2KzZhSDYp9mE2K7YsdmK2LfYqSAo2KfZhNij2YjYtdin2YEgKyDYp9mE2K/ZhdisIFJMRSkg2KjYp9mE2KjYp9mK2KoKICAgIGRldGFpbF9ieXRlczogaW50ICAgICAgICMg2K3YrNmFINio2YrYp9mG2KfYqiDYp9mE2KrZgdin2LXZitmEINin2YTYrtin2YUg2KfZhNmF2LbYutmI2LfYqSDYqNin2YTYqNin2YrYqgogICAgdG90YWxfYnl0ZXM6IGludAogICAgcmVjb25zdHJ1Y3RlZDogbnAubmRhcnJheQogICAgYmxvY2tfdHlwZV9jb3VudHM6IGRpY3QgPSBmaWVsZChkZWZhdWx0X2ZhY3Rvcnk9ZGljdCkKCgpkZWYgZW5jb2RlX2ZyYW1lKAogICAgZnJhbWU6IG5wLm5kYXJyYXksCiAgICBibG9ja19zaXplOiBpbnQgPSBCTE9DS19TSVpFX0RFRkFVTFQsCiAgICBmbGF0X3RocmVzaG9sZDogZmxvYXQgPSBGTEFUX1RIUkVTSE9MRF9ERUZBVUxULAogICAgZ3JhZGllbnRfdGhyZXNob2xkOiBmbG9hdCA9IEdSQURJRU5UX1RIUkVTSE9MRF9ERUZBVUxULAopIC0+IEZyYW1lRW5jb2RlUmVzdWx0OgogICAgaCwgdywgYyA9IGZyYW1lLnNoYXBlCiAgICBuX3Jvd3MgPSAoaCArIGJsb2NrX3NpemUgLSAxKSAvLyBibG9ja19zaXplCiAgICBuX2NvbHMgPSAodyArIGJsb2NrX3NpemUgLSAxKSAvLyBibG9ja19zaXplCgogICAgcmVjb24gPSBucC56ZXJvc19saWtlKGZyYW1lKQogICAgbWFwX3N0cmVhbSA9IGJ5dGVhcnJheSgpICAgIyDZiNi12YEg2YPZhCDZg9iq2YTYqSAo2KjYudivINiv2YXYrCBSTEUg2YTZhNi12YHZiNmBKQogICAgZGV0YWlsX3N0cmVhbSA9IGJ5dGVhcnJheSgpCiAgICBjb3VudHMgPSB7ImZsYXQiOiAwLCAiZ3JhZGllbnQiOiAwLCAiZGV0YWlsIjogMH0KCiAgICBmb3IgciBpbiByYW5nZShuX3Jvd3MpOgogICAgICAgIHkwLCB5MSA9IHIgKiBibG9ja19zaXplLCBtaW4oKHIgKyAxKSAqIGJsb2NrX3NpemUsIGgpCiAgICAgICAgIyDYr9mF2KwgUkxFINij2YHZgtmKOiDZg9iq2YQgZmxhdCDZhdiq2KrYp9mE2YrYqSDYqNmG2YHYsyDYp9mE2YTZiNmGINiq2Y/Yrtiy2Y7ZkdmGINmF2LHYqSDZiNin2K3Yr9ipCiAgICAgICAgY29sID0gMAogICAgICAgIHdoaWxlIGNvbCA8IG5fY29sczoKICAgICAgICAgICAgeDAsIHgxID0gY29sICogYmxvY2tfc2l6ZSwgbWluKChjb2wgKyAxKSAqIGJsb2NrX3NpemUsIHcpCiAgICAgICAgICAgIGJsb2NrID0gZnJhbWVbeTA6eTEsIHgwOngxXQogICAgICAgICAgICByZXN1bHQgPSBhbmFseXplX2Jsb2NrKGJsb2NrLCBmbGF0X3RocmVzaG9sZCwgZ3JhZGllbnRfdGhyZXNob2xkKQogICAgICAgICAgICByZWNvblt5MDp5MSwgeDA6eDFdID0gcmVzdWx0LnJlY29uc3RydWN0ZWQKCiAgICAgICAgICAgIGlmIHJlc3VsdC5idHlwZSA9PSBCTE9DS19UWVBFX0ZMQVQ6CiAgICAgICAgICAgICAgICBjb3VudHNbImZsYXQiXSArPSAxCiAgICAgICAgICAgICAgICBydW5fbGVuID0gMQogICAgICAgICAgICAgICAgIyDYrdin2YjZhCDYqtmF2K/ZitivINin2YTYqti02LrZitmE2Kkg2KPZgdmC2YrZi9inINio2YbZgdizINin2YTZhNmI2YYg2KjYp9mE2LbYqNi3CiAgICAgICAgICAgICAgICBuZXh0X2NvbCA9IGNvbCArIDEKICAgICAgICAgICAgICAgIHdoaWxlIG5leHRfY29sIDwgbl9jb2xzOgogICAgICAgICAgICAgICAgICAgIG54MCwgbngxID0gbmV4dF9jb2wgKiBibG9ja19zaXplLCBtaW4oKG5leHRfY29sICsgMSkgKiBibG9ja19zaXplLCB3KQogICAgICAgICAgICAgICAgICAgIG5ibG9jayA9IGZyYW1lW3kwOnkxLCBueDA6bngxXQogICAgICAgICAgICAgICAgICAgIG5yZXN1bHQgPSBhbmFseXplX2Jsb2NrKG5ibG9jaywgZmxhdF90aHJlc2hvbGQsIGdyYWRpZW50X3RocmVzaG9sZCkKICAgICAgICAgICAgICAgICAgICBpZiBucmVzdWx0LmJ0eXBlID09IEJMT0NLX1RZUEVfRkxBVCBhbmQgbnJlc3VsdC5wYXlsb2FkID09IHJlc3VsdC5wYXlsb2FkOgogICAgICAgICAgICAgICAgICAgICAgICByZWNvblt5MDp5MSwgbngwOm54MV0gPSBucmVzdWx0LnJlY29uc3RydWN0ZWQKICAgICAgICAgICAgICAgICAgICAgICAgcnVuX2xlbiArPSAxCiAgICAgICAgICAgICAgICAgICAgICAgIGNvdW50c1siZmxhdCJdICs9IDEKICAgICAgICAgICAgICAgICAgICAgICAgbmV4dF9jb2wgKz0gMQogICAgICAgICAgICAgICAgICAgIGVsc2U6CiAgICAgICAgICAgICAgICAgICAgICAgIGJyZWFrCiAgICAgICAgICAgICAgICAjINiz2KzZhDog2KfZhNmG2YjYuSArINi32YjZhCDYp9mE2KrYtNi62YrZhNipICsg2KfZhNmE2YjZhiAo2KjYp9mK2Kog2YjYp9it2K8g2YTZhNmG2YjYudiMINio2KfZitiqINmE2YTYt9mI2YTYjCAzINmE2YTZiNmGKQogICAgICAgICAgICAgICAgbWFwX3N0cmVhbSArPSBieXRlcyhbQkxPQ0tfVFlQRV9GTEFULCBtaW4ocnVuX2xlbiwgMjU1KV0pICsgcmVzdWx0LnBheWxvYWQKICAgICAgICAgICAgICAgIGNvbCA9IG5leHRfY29sCiAgICAgICAgICAgICAgICBjb250aW51ZQoKICAgICAgICAgICAgZWxpZiByZXN1bHQuYnR5cGUgPT0gQkxPQ0tfVFlQRV9HUkFESUVOVDoKICAgICAgICAgICAgICAgIGNvdW50c1siZ3JhZGllbnQiXSArPSAxCiAgICAgICAgICAgICAgICBtYXBfc3RyZWFtICs9IGJ5dGVzKFtCTE9DS19UWVBFX0dSQURJRU5UXSkgKyByZXN1bHQucGF5bG9hZAogICAgICAgICAgICBlbHNlOgogICAgICAgICAgICAgICAgY291bnRzWyJkZXRhaWwiXSArPSAxCiAgICAgICAgICAgICAgICBsZW5ndGhfcHJlZml4ID0gc3RydWN0LnBhY2soIj5JIiwgbGVuKHJlc3VsdC5wYXlsb2FkKSkKICAgICAgICAgICAgICAgIG1hcF9zdHJlYW0gKz0gYnl0ZXMoW0JMT0NLX1RZUEVfREVUQUlMXSkgKyBsZW5ndGhfcHJlZml4CiAgICAgICAgICAgICAgICBkZXRhaWxfc3RyZWFtICs9IHJlc3VsdC5wYXlsb2FkCgogICAgICAgICAgICBjb2wgKz0gMQoKICAgIG1hcF9ieXRlcyA9IGxlbihtYXBfc3RyZWFtKQogICAgZGV0YWlsX2J5dGVzID0gbGVuKGRldGFpbF9zdHJlYW0pCiAgICByZXR1cm4gRnJhbWVFbmNvZGVSZXN1bHQoCiAgICAgICAgd2lkdGg9dywKICAgICAgICBoZWlnaHQ9aCwKICAgICAgICBibG9ja19zaXplPWJsb2NrX3NpemUsCiAgICAgICAgbWFwX2J5dGVzPW1hcF9ieXRlcywKICAgICAgICBkZXRhaWxfYnl0ZXM9ZGV0YWlsX2J5dGVzLAogICAgICAgIHRvdGFsX2J5dGVzPW1hcF9ieXRlcyArIGRldGFpbF9ieXRlcywKICAgICAgICByZWNvbnN0cnVjdGVkPXJlY29uLAogICAgICAgIGJsb2NrX3R5cGVfY291bnRzPWNvdW50cywKICAgICkKCgojIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KIyDZgtmK2KfYsyDYp9mE2KzZiNiv2KkKIyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCgpkZWYgcHNucihvcmlnaW5hbDogbnAubmRhcnJheSwgcmVjb25zdHJ1Y3RlZDogbnAubmRhcnJheSkgLT4gZmxvYXQ6CiAgICBtc2UgPSBucC5tZWFuKChvcmlnaW5hbC5hc3R5cGUobnAuZmxvYXQ2NCkgLSByZWNvbnN0cnVjdGVkLmFzdHlwZShucC5mbG9hdDY0KSkgKiogMikKICAgIGlmIG1zZSA9PSAwOgogICAgICAgIHJldHVybiBmbG9hdCgiaW5mIikKICAgIHJldHVybiAyMCAqIG5wLmxvZzEwKDI1NS4wKSAtIDEwICogbnAubG9nMTAobXNlKQoKCiMgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQojINmI2KfYrNmH2Kkg2LPYt9ixINin2YTYo9mI2KfZhdixOiDZiti52KfZhNisINi12YjYsdipINmI2KfYrdiv2Kkg2KPZiCDZhdis2YTYryDYpdi32KfYsdin2KogKFBORykKIyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCgpkZWYgcHJvY2Vzc19pbWFnZSgKICAgIHBhdGg6IFBhdGgsCiAgICBibG9ja19zaXplOiBpbnQsCiAgICBmbGF0X3RocmVzaG9sZDogZmxvYXQsCiAgICBncmFkaWVudF90aHJlc2hvbGQ6IGZsb2F0LAogICAgc2F2ZV9yZWNvbnN0cnVjdGlvbjogUGF0aCB8IE5vbmUsCikgLT4gZGljdDoKICAgIGltZyA9IEltYWdlLm9wZW4ocGF0aCkuY29udmVydCgiUkdCIikKICAgIGZyYW1lID0gbnAuYXJyYXkoaW1nKQogICAgcmVzdWx0ID0gZW5jb2RlX2ZyYW1lKGZyYW1lLCBibG9ja19zaXplLCBmbGF0X3RocmVzaG9sZCwgZ3JhZGllbnRfdGhyZXNob2xkKQogICAgcXVhbGl0eSA9IHBzbnIoZnJhbWUsIHJlc3VsdC5yZWNvbnN0cnVjdGVkKQoKICAgIGlmIHNhdmVfcmVjb25zdHJ1Y3Rpb24gaXMgbm90IE5vbmU6CiAgICAgICAgSW1hZ2UuZnJvbWFycmF5KHJlc3VsdC5yZWNvbnN0cnVjdGVkKS5zYXZlKHNhdmVfcmVjb25zdHJ1Y3Rpb24pCgogICAgcmF3X3BuZ19ieXRlcyA9IHBhdGguc3RhdCgpLnN0X3NpemUgICMg2K3YrNmFIFBORyDYp9mE2KPYtdmE2Yog2YPZhdix2KzYuSDYs9ix2YrYuSDZgdmC2LcKCiAgICByZXR1cm4gewogICAgICAgICJmaWxlIjogc3RyKHBhdGgpLAogICAgICAgICJ3aWR0aCI6IHJlc3VsdC53aWR0aCwKICAgICAgICAiaGVpZ2h0IjogcmVzdWx0LmhlaWdodCwKICAgICAgICAiYmxvY2tfc2l6ZSI6IGJsb2NrX3NpemUsCiAgICAgICAgImZsYXRfdGhyZXNob2xkIjogZmxhdF90aHJlc2hvbGQsCiAgICAgICAgImdyYWRpZW50X3RocmVzaG9sZCI6IGdyYWRpZW50X3RocmVzaG9sZCwKICAgICAgICAibWFwX2J5dGVzIjogcmVzdWx0Lm1hcF9ieXRlcywKICAgICAgICAiZGV0YWlsX2J5dGVzIjogcmVzdWx0LmRldGFpbF9ieXRlcywKICAgICAgICAidG90YWxfYnl0ZXMiOiByZXN1bHQudG90YWxfYnl0ZXMsCiAgICAgICAgInNvdXJjZV9wbmdfYnl0ZXMiOiByYXdfcG5nX2J5dGVzLAogICAgICAgICJwc25yX2RiIjogTm9uZSBpZiBxdWFsaXR5ID09IGZsb2F0KCJpbmYiKSBlbHNlIHJvdW5kKGZsb2F0KHF1YWxpdHkpLCAyKSwKICAgICAgICAicHNucl9pbmYiOiBib29sKHF1YWxpdHkgPT0gZmxvYXQoImluZiIpKSwKICAgICAgICAiYmxvY2tfY291bnRzIjogcmVzdWx0LmJsb2NrX3R5cGVfY291bnRzLAogICAgfQoKCmRlZiBtYWluKCkgLT4gTm9uZToKICAgIHBhcnNlciA9IGFyZ3BhcnNlLkFyZ3VtZW50UGFyc2VyKGRlc2NyaXB0aW9uPSLYqtix2YXZitiyINiq2KzYsdmK2KjZiiDYqNiu2LHZiti32Kkg2YXZhtin2LfZgiDYrdiq2YXZitipIikKICAgIHBhcnNlci5hZGRfYXJndW1lbnQoImlucHV0IiwgdHlwZT1QYXRoLCBoZWxwPSLYtdmI2LHYqSBQTkcg2YjYp9it2K/YqSDYo9mIINmF2KzZhNivINil2LfYp9ix2KfYqiBQTkciKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgiLS1ibG9jay1zaXplIiwgdHlwZT1pbnQsIGRlZmF1bHQ9QkxPQ0tfU0laRV9ERUZBVUxUKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgiLS1mbGF0LXRocmVzaG9sZCIsIHR5cGU9ZmxvYXQsIGRlZmF1bHQ9RkxBVF9USFJFU0hPTERfREVGQVVMVCkKICAgIHBhcnNlci5hZGRfYXJndW1lbnQoIi0tZ3JhZGllbnQtdGhyZXNob2xkIiwgdHlwZT1mbG9hdCwgZGVmYXVsdD1HUkFESUVOVF9USFJFU0hPTERfREVGQVVMVCkKICAgIHBhcnNlci5hZGRfYXJndW1lbnQoIi0tc2F2ZS1yZWNvbi1kaXIiLCB0eXBlPVBhdGgsIGRlZmF1bHQ9Tm9uZSwKICAgICAgICAgICAgICAgICAgICAgICAgIGhlbHA9ItmF2KzZhNivINin2K7YqtmK2KfYsdmKINmE2K3Zgdi4INi12YjYsSDYpdi52KfYr9ipINin2YTYqNmG2KfYoSDZhNmE2YXZgtin2LHZhtipINin2YTYqNi12LHZitipIikKICAgIHBhcnNlci5hZGRfYXJndW1lbnQoIi0tcmVwb3J0IiwgdHlwZT1QYXRoLCBkZWZhdWx0PVBhdGgoIm1hcF9leHBlcmltZW50X3JlcG9ydC5qc29uIikpCiAgICBhcmdzID0gcGFyc2VyLnBhcnNlX2FyZ3MoKQoKICAgIGlmIGFyZ3Muc2F2ZV9yZWNvbl9kaXI6CiAgICAgICAgYXJncy5zYXZlX3JlY29uX2Rpci5ta2RpcihwYXJlbnRzPVRydWUsIGV4aXN0X29rPVRydWUpCgogICAgaWYgYXJncy5pbnB1dC5pc19kaXIoKToKICAgICAgICBmaWxlcyA9IHNvcnRlZChhcmdzLmlucHV0Lmdsb2IoIioucG5nIikpCiAgICBlbHNlOgogICAgICAgIGZpbGVzID0gW2FyZ3MuaW5wdXRdCgogICAgaWYgbm90IGZpbGVzOgogICAgICAgIHByaW50KCLZhNinINiq2YjYrNivINmF2YTZgdin2KogUE5HINmE2YXYudin2YTYrNiq2YfYpy4iLCBmaWxlPXN5cy5zdGRlcnIpCiAgICAgICAgc3lzLmV4aXQoMSkKCiAgICByZXBvcnRzID0gW10KICAgIGZvciBmIGluIGZpbGVzOgogICAgICAgIHJlY29uX3BhdGggPSBOb25lCiAgICAgICAgaWYgYXJncy5zYXZlX3JlY29uX2RpcjoKICAgICAgICAgICAgcmVjb25fcGF0aCA9IGFyZ3Muc2F2ZV9yZWNvbl9kaXIgLyBmLm5hbWUKICAgICAgICByID0gcHJvY2Vzc19pbWFnZShmLCBhcmdzLmJsb2NrX3NpemUsIGFyZ3MuZmxhdF90aHJlc2hvbGQsCiAgICAgICAgICAgICAgICAgICAgICAgICAgIGFyZ3MuZ3JhZGllbnRfdGhyZXNob2xkLCByZWNvbl9wYXRoKQogICAgICAgIHJlcG9ydHMuYXBwZW5kKHIpCiAgICAgICAgcHJpbnQoZiJ7Zi5uYW1lfTogdG90YWw9e3JbJ3RvdGFsX2J5dGVzJ119QiAiCiAgICAgICAgICAgICAgZiIobWFwPXtyWydtYXBfYnl0ZXMnXX1CLCBkZXRhaWw9e3JbJ2RldGFpbF9ieXRlcyddfUIpICIKICAgICAgICAgICAgICBmIlBTTlI9e3JbJ3BzbnJfZGInXX1kQiAiCiAgICAgICAgICAgICAgZiJibG9ja3M9e3JbJ2Jsb2NrX2NvdW50cyddfSIpCgogICAgc3VtbWFyeSA9IHsKICAgICAgICAiZnJhbWVzIjogcmVwb3J0cywKICAgICAgICAidG90YWxfYnl0ZXNfc3VtIjogc3VtKHJbInRvdGFsX2J5dGVzIl0gZm9yIHIgaW4gcmVwb3J0cyksCiAgICAgICAgIm1hcF9ieXRlc19zdW0iOiBzdW0oclsibWFwX2J5dGVzIl0gZm9yIHIgaW4gcmVwb3J0cyksCiAgICAgICAgImRldGFpbF9ieXRlc19zdW0iOiBzdW0oclsiZGV0YWlsX2J5dGVzIl0gZm9yIHIgaW4gcmVwb3J0cyksCiAgICAgICAgInNvdXJjZV9wbmdfYnl0ZXNfc3VtIjogc3VtKHJbInNvdXJjZV9wbmdfYnl0ZXMiXSBmb3IgciBpbiByZXBvcnRzKSwKICAgIH0KICAgIGFyZ3MucmVwb3J0LndyaXRlX3RleHQoanNvbi5kdW1wcyhzdW1tYXJ5LCBlbnN1cmVfYXNjaWk9RmFsc2UsIGluZGVudD0yKSkKICAgIHByaW50KGYiXG7Zg9mP2KrYqCDYp9mE2KrZgtix2YrYsSDYpdmE2Yk6IHthcmdzLnJlcG9ydH0iKQoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBtYWluKCkK" | base64 -d > region_map_codec.py
-          python3 -c "import ast; ast.parse(open('region_map_codec.py').read())"
-          echo 'تم فك ترميز السكربت والتحقق من صحته نحويًا.'
-      - name: تحميل عينة الفيديو المصدر
-        env:
-          VIDEO_URL: ${{ github.event.inputs.video_url }}
-        run: |
-          set -euo pipefail
-          curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 -o raw_input.mp4 "$VIDEO_URL"
-          test -s raw_input.mp4
+          echo "IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiIKbWFwX3ByZWZpbHRlci5weQotLS0tLS0tLS0tLS0tLS0tLS0K2YHZhNiq2LEg2YXYudin2YTYrNipINmF2LPYqNmC2KkgKNmC2KjZhCBBVjEpINmF2YjYrNmR2Ycg2KjYrtix2YrYt9ipINiq2LXZhtmK2YEg2YPYqtmEINit2KrZhdmK2Kk6CgogIDEpINmE2YPZhCDYpdi32KfYsdiMINmK2Y/Zgtiz2Y7ZkdmFINil2YTZiSDZg9iq2YQgKGJsb2NrX3NpemUp2Iwg2YjZhNmD2YQg2YPYqtmE2Kkg2YrZj9it2LPYqCDYp9mG2K3Ysdin2YHZh9inCiAgICAg2KfZhNij2YLYtdmJINi52YYg2YXYqtmI2LPYtyDZhNmI2YbZh9inICjZhdmC2YrYp9izICLZhdiz2LfYrdipIiDYqNiz2YrYtyDZiNiz2LHZiti52Iwg2YXZj9iq2Y7Zkdis2Y7ZhyDYqNin2YTZg9in2YXZhAogICAgINi52KjYsSBudW1weSDYqNiv2YjZhiDYo9mKINit2YTZgtipINio2KfZitir2YjZhiDYudmE2Ykg2YXYs9iq2YjZiSDYp9mE2YPYqtmE2Kkv2KfZhNio2YPYs9mEKS4KICAyKSDYp9mE2YPYqtmEICLYp9mE2YXYs9i32K3YqSIgKNin2YbYrdix2KfZgSDiiaQgdGhyZXNob2xkKSDYqtmP2LnZhNmO2ZHZhSDZgdmKINmC2YbYp9i5LgogIDMpINmK2Y/ZhdmI2Y7ZkdmHINin2YTZgtmG2KfYuSAoR2F1c3NpYW4pINmE2KrZgdin2K/ZiiDYrdmI2KfZgSDYtdmG2KfYudmK2Kkg2K3Yp9iv2Kkg2KjZitmGINin2YTZhdmG2KfYt9mCLgogIDQpINmK2Y/Zhtiq2Y7YrCDYpdi32KfYsdin2YY6INmG2LPYrtipINmF2YXZiNmO2ZHZh9ipINio2YLZiNipIChHYXVzc2lhbiBibHVyKSDZhdmGINin2YTYpdi32KfYsSDZg9in2YXZhNin2YvYjAogICAgINmI2YbYs9iu2Kkg2KfZhNil2LfYp9ixINin2YTYo9i12YTZii4g2YrZj9iv2YXZjtis2KfZhiDYrdiz2Kgg2KfZhNmC2YbYp9i5INin2YTZhdmF2YjZjtmR2Yc6CiAgICAgICDYp9mE2YbYp9iq2KwgPSDZgtmG2KfYuSDDlyDZhtiz2K7YqSDZhdmF2YjZjtmR2YfYqSArICgxLdmC2YbYp9i5KSDDlyDYp9mE2KPYtdmECiAgICAg2KPZijog2KfZhNmF2YbYp9i32YIg2KfZhNmF2LPYt9it2Kkg2KrZj9mG2LjZjtmR2YEg2KjZgtmI2KkgKNmB2KrYtdio2K0g2KPYsdiu2LUg2YTYtti62LcgQVYxINmE2KfYrdmC2YvYpynYjAogICAgINmI2KfZhNmF2YbYp9i32YIg2KfZhNmF2LnZgtiv2Kkg2KrYqNmC2Ykg2YPZhdinINmH2Yog2K/ZiNmGINij2Yog2KrYutmK2YrYsSDYqtmC2LHZitio2YvYpy4KCiAg2YfYsNinINmE2Kcg2YrYs9iq2KjYr9mEIEFWMSDYpdi32YTYp9mC2YvYpyAtINmH2Ygg2LfYqNmC2Kkg2YXYudin2YTYrNipINmF2LPYqNmC2Kkg2YHZgti32Iwg2KrZj9i62LDZkdmKINmB2YrYr9mK2YgKICAi2YXZhti42ZHZgSDYp9mG2KrZgtin2KbZitmL2KciINmE2YXYsdmF2ZHYsiBBVjEg2KfZhNmC2YrYp9iz2YogKGxpYnN2dGF2MSkg2K/ZiNmGINij2Yog2KrYutmK2YrYsSDYudmE2YkKICDYqtmG2LPZitmCINin2YTZhdmE2YEg2KfZhNmG2KfYqtisLgoK2KfZhNin2LPYqtiu2K/Yp9mFOgogICAgcHl0aG9uMyBtYXBfcHJlZmlsdGVyLnB5IGlucHV0Lm1wNCBvdXRwdXQubXA0IFwKICAgICAgICAtLWJsb2NrLXNpemUgMTYgLS1mbGF0LXRocmVzaG9sZCA2LjAgLS1ibHVyLXJhZGl1cyAzLjAKCtmK2KrYt9mE2Kg6IG51bXB5LCBQaWxsb3csIGZmbXBlZyDZgdmKIFBBVEguCiIiIgoKZnJvbSBfX2Z1dHVyZV9fIGltcG9ydCBhbm5vdGF0aW9ucwoKaW1wb3J0IGFyZ3BhcnNlCmltcG9ydCBzdWJwcm9jZXNzCmltcG9ydCBzeXMKZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgppbXBvcnQgbnVtcHkgYXMgbnAKZnJvbSBQSUwgaW1wb3J0IEltYWdlLCBJbWFnZUZpbHRlcgoKCmRlZiBwcm9iZV92aWRlbyhwYXRoOiBQYXRoKSAtPiB0dXBsZVtpbnQsIGludCwgc3RyXToKICAgICIiItmK2LnZitivICh3aWR0aCwgaGVpZ2h0LCBmcHMpINmD2YbYtSDYudio2LEgZmZwcm9iZS4iIiIKICAgIGNtZCA9IFsKICAgICAgICAiZmZwcm9iZSIsICItdiIsICJlcnJvciIsICItc2VsZWN0X3N0cmVhbXMiLCAidjowIiwKICAgICAgICAiLXNob3dfZW50cmllcyIsICJzdHJlYW09d2lkdGgsaGVpZ2h0LHJfZnJhbWVfcmF0ZSIsCiAgICAgICAgIi1vZiIsICJjc3Y9cD0wIiwgc3RyKHBhdGgpLAogICAgXQogICAgb3V0ID0gc3VicHJvY2Vzcy5ydW4oY21kLCBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUsIGNoZWNrPVRydWUpLnN0ZG91dC5zdHJpcCgpCiAgICB3LCBoLCBmcHMgPSBvdXQuc3BsaXQoIiwiKQogICAgcmV0dXJuIGludCh3KSwgaW50KGgpLCBmcHMKCgpkZWYgYmxvY2tfZmxhdF9tYXNrKGZyYW1lOiBucC5uZGFycmF5LCBibG9ja19zaXplOiBpbnQsIHRocmVzaG9sZDogZmxvYXQpIC0+IG5wLm5kYXJyYXk6CiAgICAiIiIKICAgINmK2LnZitivINmC2YbYp9i5IGZsb2F0MzIg2KjYrdis2YUg2KfZhNil2LfYp9ixINin2YTZg9in2YXZhCAoSCwgVyk6IDEuMCDYrdmK2Ksg2KfZhNmD2KrZhNipINmF2LPYt9it2KnYjCAwLjAg2LrZitixINiw2YTZgy4KICAgINmF2Y/YqtmO2ZHYrNmO2Ycg2KjYp9mE2YPYp9mF2YQgKNio2K/ZiNmGINit2YTZgtin2Kog2KjYp9mK2KvZiNmGKSDYudio2LEg2KXYudin2K/YqSDYqti02YPZitmEINin2YTYtdmB2YrZgSDYpdmE2Ykg2YPYqtmELgogICAgIiIiCiAgICBoLCB3LCBjID0gZnJhbWUuc2hhcGUKICAgIGJzID0gYmxvY2tfc2l6ZQogICAgIyDZhtmC2LXZkSDYp9mE2KPYqNi52KfYryDZhNiq2YPZiNmGINmC2KfYqNmE2Kkg2YTZhNmC2LPZhdipINi52YTZiSBicyDYqNin2YTYttio2LcgKNin2YTZh9in2YXYtCDYp9mE2YXYqtio2YLZiiDZitmP2LnYp9mF2YQg2YPYutmK2LEg2YXYs9i32K0g2KrZhNmC2KfYptmK2YvYpykKICAgIGhfdHJpbSA9IChoIC8vIGJzKSAqIGJzCiAgICB3X3RyaW0gPSAodyAvLyBicykgKiBicwoKICAgIG1hc2sgPSBucC56ZXJvcygoaCwgdyksIGR0eXBlPW5wLmZsb2F0MzIpCiAgICBpZiBoX3RyaW0gPT0gMCBvciB3X3RyaW0gPT0gMDoKICAgICAgICByZXR1cm4gbWFzawoKICAgIHJlZ2lvbiA9IGZyYW1lWzpoX3RyaW0sIDp3X3RyaW0sIDpdLmFzdHlwZShucC5mbG9hdDMyKQogICAgbl9yb3dzID0gaF90cmltIC8vIGJzCiAgICBuX2NvbHMgPSB3X3RyaW0gLy8gYnMKCiAgICAjINil2LnYp9iv2Kkg2KrYtNmD2YrZhCDYpdmE2YkgKNi12YHZiNmBX9mD2KrZhCwgYnMsINij2LnZhdiv2Klf2YPYqtmELCBicywg2YLZhtmI2KfYqikKICAgIGJsb2NrcyA9IHJlZ2lvbi5yZXNoYXBlKG5fcm93cywgYnMsIG5fY29scywgYnMsIGMpCiAgICAjINmG2YLZhCDYp9mE2YXYrdin2YjYsSDZhNiq2LXYqNitICjYtdmB2YjZgV/Zg9iq2YQsINij2LnZhdiv2Klf2YPYqtmELCBicywgYnMsINmC2YbZiNin2KopCiAgICBibG9ja3MgPSBibG9ja3MudHJhbnNwb3NlKDAsIDIsIDEsIDMsIDQpCgogICAgYmxvY2tfbWVhbiA9IGJsb2Nrcy5tZWFuKGF4aXM9KDIsIDMpLCBrZWVwZGltcz1UcnVlKQogICAgZGV2aWF0aW9uID0gbnAuYWJzKGJsb2NrcyAtIGJsb2NrX21lYW4pLm1heChheGlzPSgyLCAzLCA0KSkgICMgKNi12YHZiNmBX9mD2KrZhCwg2KPYudmF2K/YqV/Zg9iq2YQpCiAgICBmbGF0X2Jsb2NrcyA9IChkZXZpYXRpb24gPD0gdGhyZXNob2xkKS5hc3R5cGUobnAuZmxvYXQzMikKCiAgICAjINix2YHYuSDYp9mE2YLZhtin2Lkg2YXZhiDYr9mC2Kkg2KfZhNmD2KrZhNipINil2YTZiSDYr9mC2Kkg2KfZhNio2YPYs9mEINin2YTZg9in2YXZhNipCiAgICB1cHNhbXBsZWQgPSBucC5rcm9uKGZsYXRfYmxvY2tzLCBucC5vbmVzKChicywgYnMpLCBkdHlwZT1ucC5mbG9hdDMyKSkKICAgIG1hc2tbOmhfdHJpbSwgOndfdHJpbV0gPSB1cHNhbXBsZWQKICAgIHJldHVybiBtYXNrCgoKZGVmIHByb2Nlc3NfZnJhbWUoZnJhbWU6IG5wLm5kYXJyYXksIGJsb2NrX3NpemU6IGludCwgZmxhdF90aHJlc2hvbGQ6IGZsb2F0LAogICAgICAgICAgICAgICAgICAgYmx1cl9yYWRpdXM6IGZsb2F0LCBtYXNrX2ZlYXRoZXI6IGZsb2F0KSAtPiB0dXBsZVtucC5uZGFycmF5LCBmbG9hdF06CiAgICBtYXNrID0gYmxvY2tfZmxhdF9tYXNrKGZyYW1lLCBibG9ja19zaXplLCBmbGF0X3RocmVzaG9sZCkKICAgIGZsYXRfcmF0aW8gPSBmbG9hdChtYXNrLm1lYW4oKSkKCiAgICAjINiq2YXZiNmK2Ycg2KfZhNmC2YbYp9i5INmG2YHYs9mHINmE2KrZgdin2K/ZiiDYrdmI2KfZgSDYtdmG2KfYudmK2Kkg2K3Yp9iv2Kkg2KjZitmGINmF2YbYp9i32YIg2YXYs9i32K3YqSDZiNij2K7YsdmJINiq2YHYtdmK2YTZitipCiAgICBtYXNrX2ltZyA9IEltYWdlLmZyb21hcnJheSgobWFzayAqIDI1NSkuYXN0eXBlKG5wLnVpbnQ4KSkKICAgIG1hc2tfaW1nID0gbWFza19pbWcuZmlsdGVyKEltYWdlRmlsdGVyLkdhdXNzaWFuQmx1cihyYWRpdXM9bWFza19mZWF0aGVyKSkKICAgIG1hc2tfc21vb3RoID0gbnAuYXNhcnJheShtYXNrX2ltZykuYXN0eXBlKG5wLmZsb2F0MzIpIC8gMjU1LjAKCiAgICBmcmFtZV9pbWcgPSBJbWFnZS5mcm9tYXJyYXkoZnJhbWUpCiAgICBibHVycmVkX2ltZyA9IGZyYW1lX2ltZy5maWx0ZXIoSW1hZ2VGaWx0ZXIuR2F1c3NpYW5CbHVyKHJhZGl1cz1ibHVyX3JhZGl1cykpCiAgICBibHVycmVkID0gbnAuYXNhcnJheShibHVycmVkX2ltZykuYXN0eXBlKG5wLmZsb2F0MzIpCgogICAgb3JpZ2luYWwgPSBmcmFtZS5hc3R5cGUobnAuZmxvYXQzMikKICAgIG1hc2szID0gbWFza19zbW9vdGhbOiwgOiwgTm9uZV0KICAgIG91dHB1dCA9IG1hc2szICogYmx1cnJlZCArICgxLjAgLSBtYXNrMykgKiBvcmlnaW5hbAogICAgb3V0cHV0ID0gbnAuY2xpcChucC5yb3VuZChvdXRwdXQpLCAwLCAyNTUpLmFzdHlwZShucC51aW50OCkKICAgIHJldHVybiBvdXRwdXQsIGZsYXRfcmF0aW8KCgpkZWYgbWFpbigpIC0+IE5vbmU6CiAgICBwYXJzZXIgPSBhcmdwYXJzZS5Bcmd1bWVudFBhcnNlcihkZXNjcmlwdGlvbj0i2YXYudin2YTYrNipINmF2LPYqNmC2Kkg2YXZiNis2ZHZh9ipINio2K7YsdmK2LfYqSDZgtio2YQgQVYxIikKICAgIHBhcnNlci5hZGRfYXJndW1lbnQoImlucHV0IiwgdHlwZT1QYXRoKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgib3V0cHV0IiwgdHlwZT1QYXRoKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgiLS1ibG9jay1zaXplIiwgdHlwZT1pbnQsIGRlZmF1bHQ9MTYpCiAgICBwYXJzZXIuYWRkX2FyZ3VtZW50KCItLWZsYXQtdGhyZXNob2xkIiwgdHlwZT1mbG9hdCwgZGVmYXVsdD02LjApCiAgICBwYXJzZXIuYWRkX2FyZ3VtZW50KCItLWJsdXItcmFkaXVzIiwgdHlwZT1mbG9hdCwgZGVmYXVsdD0zLjAsCiAgICAgICAgICAgICAgICAgICAgICAgICBoZWxwPSLZgtmI2Kkg2KrZhti42YrZgSDYp9mE2YXZhtin2LfZgiDYp9mE2YXYs9i32K3YqSAo2YbYtdmBINmC2LfYsSBHYXVzc2lhbikiKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgiLS1tYXNrLWZlYXRoZXIiLCB0eXBlPWZsb2F0LCBkZWZhdWx0PTguMCwKICAgICAgICAgICAgICAgICAgICAgICAgIGhlbHA9ItmG2LnZiNmF2Kkg2KfZhNin2YbYqtmC2KfZhCDYqNmK2YYg2KfZhNmF2YbYp9i32YIg2KfZhNmF2LPYt9it2Kkg2YjYp9mE2KrZgdi12YrZhNmK2KkiKQogICAgYXJncyA9IHBhcnNlci5wYXJzZV9hcmdzKCkKCiAgICB3LCBoLCBmcHMgPSBwcm9iZV92aWRlbyhhcmdzLmlucHV0KQogICAgZnJhbWVfYnl0ZXMgPSB3ICogaCAqIDMKCiAgICBkZWNvZGVfY21kID0gWwogICAgICAgICJmZm1wZWciLCAiLWhpZGVfYmFubmVyIiwgIi1sb2dsZXZlbCIsICJlcnJvciIsICItbm9zdGRpbiIsCiAgICAgICAgIi1pIiwgc3RyKGFyZ3MuaW5wdXQpLCAiLWYiLCAicmF3dmlkZW8iLCAiLXBpeF9mbXQiLCAicmdiMjQiLCAiLSIsCiAgICBdCiAgICBlbmNvZGVfY21kID0gWwogICAgICAgICJmZm1wZWciLCAiLWhpZGVfYmFubmVyIiwgIi1sb2dsZXZlbCIsICJlcnJvciIsICItbm9zdGRpbiIsICIteSIsCiAgICAgICAgIi1mIiwgInJhd3ZpZGVvIiwgIi1waXhfZm10IiwgInJnYjI0IiwgIi1zIiwgZiJ7d314e2h9IiwgIi1yIiwgZnBzLAogICAgICAgICItaSIsICItIiwgIi1waXhfZm10IiwgInl1djQyMHAiLCBzdHIoYXJncy5vdXRwdXQpLAogICAgXQoKICAgIGRlY29kZXIgPSBzdWJwcm9jZXNzLlBvcGVuKGRlY29kZV9jbWQsIHN0ZG91dD1zdWJwcm9jZXNzLlBJUEUpCiAgICBlbmNvZGVyID0gc3VicHJvY2Vzcy5Qb3BlbihlbmNvZGVfY21kLCBzdGRpbj1zdWJwcm9jZXNzLlBJUEUpCgogICAgbl9mcmFtZXMgPSAwCiAgICBmbGF0X3JhdGlvcyA9IFtdCiAgICB0cnk6CiAgICAgICAgd2hpbGUgVHJ1ZToKICAgICAgICAgICAgcmF3ID0gZGVjb2Rlci5zdGRvdXQucmVhZChmcmFtZV9ieXRlcykKICAgICAgICAgICAgaWYgbGVuKHJhdykgPCBmcmFtZV9ieXRlczoKICAgICAgICAgICAgICAgIGJyZWFrCiAgICAgICAgICAgIGZyYW1lID0gbnAuZnJvbWJ1ZmZlcihyYXcsIGR0eXBlPW5wLnVpbnQ4KS5yZXNoYXBlKGgsIHcsIDMpCiAgICAgICAgICAgIG91dF9mcmFtZSwgZmxhdF9yYXRpbyA9IHByb2Nlc3NfZnJhbWUoCiAgICAgICAgICAgICAgICBmcmFtZSwgYXJncy5ibG9ja19zaXplLCBhcmdzLmZsYXRfdGhyZXNob2xkLAogICAgICAgICAgICAgICAgYXJncy5ibHVyX3JhZGl1cywgYXJncy5tYXNrX2ZlYXRoZXIsCiAgICAgICAgICAgICkKICAgICAgICAgICAgZmxhdF9yYXRpb3MuYXBwZW5kKGZsYXRfcmF0aW8pCiAgICAgICAgICAgIGVuY29kZXIuc3RkaW4ud3JpdGUob3V0X2ZyYW1lLnRvYnl0ZXMoKSkKICAgICAgICAgICAgbl9mcmFtZXMgKz0gMQogICAgZmluYWxseToKICAgICAgICBlbmNvZGVyLnN0ZGluLmNsb3NlKCkKICAgICAgICBkZWNvZGVyLnN0ZG91dC5jbG9zZSgpCiAgICAgICAgZGVjb2Rlci53YWl0KCkKICAgICAgICBlbmNvZGVyLndhaXQoKQoKICAgIGlmIG5fZnJhbWVzID09IDA6CiAgICAgICAgcHJpbnQoItmE2YUg2KrYqtmFINmF2LnYp9mE2KzYqSDYo9mKINil2LfYp9ixIC0g2KrYrdmC2YIg2YXZhiDYtdit2Kkg2KfZhNmB2YrYr9mK2Ygg2KfZhNmF2K/YrtmELiIsIGZpbGU9c3lzLnN0ZGVycikKICAgICAgICBzeXMuZXhpdCgxKQoKICAgIGF2Z19mbGF0ID0gc3VtKGZsYXRfcmF0aW9zKSAvIGxlbihmbGF0X3JhdGlvcykKICAgIHByaW50KGYi2KrZhdiqINmF2LnYp9mE2KzYqSB7bl9mcmFtZXN9INil2LfYp9ix2YvYpy4g2YXYqtmI2LPYtyDZhtiz2KjYqSDYp9mE2YPYqtmEINin2YTZhdiz2LfYrdipOiB7YXZnX2ZsYXQqMTAwOi4xZn0lIikKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgbWFpbigpCg==" | base64 -d > map_prefilter.py
+          python3 -c "import ast; ast.parse(open('map_prefilter.py').read())"
 
-      - name: قص العينة القصيرة وتوحيد الدقة/الإطارات
+      - name: معالجة الجزء وترميزه
         env:
-          START_TIME: ${{ github.event.inputs.start_time }}
-          DURATION: ${{ github.event.inputs.duration }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
-          FRAME_RATE: ${{ github.event.inputs.frame_rate }}
+          CRF: ${{ github.event.inputs.crf }}
+          PRESET: ${{ github.event.inputs.preset }}
+          CROP_FILTER: ${{ needs.split-video.outputs.crop }}
+          CHUNK_ID: ${{ matrix.chunk }}
         run: |
           set -euo pipefail
-          ffmpeg -hide_banner -nostdin -y -ss "$START_TIME" -i raw_input.mp4 -t "$DURATION" \
-            -vf "scale=-2:${RESOLUTION}:flags=lanczos" -r "$FRAME_RATE" -an \
-            -c:v libx264 -crf 10 sample_clip.mp4
-          test -s sample_clip.mp4
-          ffprobe -v error -show_entries format=duration -of csv=p=0 sample_clip.mp4
+          IN="chunks_raw/chunk_${CHUNK_ID}.mkv"
+          OUT_DIR="chunks_encoded"
+          mkdir -p "$OUT_DIR"
+          test -s "$IN"
 
-      - name: استخراج إطارات PNG من العينة
-        run: |
-          set -euo pipefail
-          mkdir -p frames_png
-          ffmpeg -hide_banner -nostdin -y -i sample_clip.mp4 frames_png/frame_%04d.png
-          ls frames_png | wc -l
+          [[ "$RESOLUTION" =~ ^[0-9]{3,4}$ ]] || { echo 'الدقة يجب أن تكون رقمًا صحيحًا.' >&2; exit 1; }
+          (( RESOLUTION >= 144 && RESOLUTION <= 2160 )) || { echo 'الدقة خارج النطاق المسموح.' >&2; exit 1; }
+          [[ "$CRF" =~ ^([0-9]|[1-5][0-9]|6[0-3])$ ]] || { echo 'CRF يجب أن يكون من 0 إلى 63.' >&2; exit 1; }
+          [[ "$PRESET" =~ ^([0-9]|1[0-3])$ ]] || { echo 'preset يجب أن يكون رقمًا من 0 إلى 13.' >&2; exit 1; }
 
-      - name: تشغيل مرمّز الخريطة التجريبي على كل الإطارات
-        env:
-          BLOCK_SIZE: ${{ github.event.inputs.block_size }}
-          FLAT_THRESHOLD: ${{ github.event.inputs.flat_threshold }}
-          GRADIENT_THRESHOLD: ${{ github.event.inputs.gradient_threshold }}
-        run: |
-          set -euo pipefail
-          python3 region_map_codec.py frames_png \
-            --block-size "$BLOCK_SIZE" \
-            --flat-threshold "$FLAT_THRESHOLD" \
-            --gradient-threshold "$GRADIENT_THRESHOLD" \
-            --save-recon-dir frames_reconstructed \
-            --report map_experiment_report.json
-
-      - name: ترميز نفس العينة بـ AV1 كمرجع للمقارنة
-        env:
-          AV1_CRF: ${{ github.event.inputs.av1_crf }}
-          AV1_PRESET: ${{ github.event.inputs.av1_preset }}
-        run: |
-          set -euo pipefail
+          FFMPEG="$HOME/codec-build/bin/ffmpeg"
+          FFPROBE="$HOME/codec-build/bin/ffprobe"
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
-          "$HOME/codec-build/bin/ffmpeg" -hide_banner -nostdin -y -i sample_clip.mp4 \
-            -c:v libsvtav1 -preset "$AV1_PRESET" -crf "$AV1_CRF" -g 240 -an av1_reference.mkv
-          test -s av1_reference.mkv
 
-      - name: بناء تقرير المقارنة النهائي
-        run: |
-          set -euo pipefail
-          MAP_TOTAL=$(python3 -c "import json;print(json.load(open('map_experiment_report.json'))['total_bytes_sum'])")
-          MAP_ONLY=$(python3 -c "import json;print(json.load(open('map_experiment_report.json'))['map_bytes_sum'])")
-          DETAIL_ONLY=$(python3 -c "import json;print(json.load(open('map_experiment_report.json'))['detail_bytes_sum'])")
-          AV1_SIZE=$(stat -c%s av1_reference.mkv)
-          N_FRAMES=$(ls frames_png | wc -l)
+          # الخطوة 1: توحيد الدقة وقص الأشرطة السوداء وتوحيد الإطارات في نسخة وسيطة
+          FILTERS=("setpts=PTS-STARTPTS")
+          if [ -n "$CROP_FILTER" ] && [ "$CROP_FILTER" != "none" ]; then
+            FILTERS+=("$CROP_FILTER")
+          fi
+          FILTERS+=("scale=-2:${RESOLUTION}:flags=lanczos")
+          VF_CHAIN=$(IFS=,; printf '%s' "${FILTERS[*]}")
 
-          {
-            echo "## نتيجة تجربة الخريطة المتحركة مقابل AV1"
-            echo ""
-            echo "| المقياس | القيمة |"
-            echo "|---|---|"
-            echo "| عدد الإطارات | $N_FRAMES |"
-            echo "| حجم AV1 المرجعي (الفيديو كاملاً بترميز الحركة الحقيقي) | $AV1_SIZE بايت |"
-            echo "| حجم إطارات الخريطة+التفاصيل (بدون ترميز حركة بين الإطارات، كل إطار مستقل) | $MAP_TOTAL بايت |"
-            echo "| — منه: حجم الخريطة وحدها | $MAP_ONLY بايت |"
-            echo "| — منه: حجم بيانات التفاصيل | $DETAIL_ONLY بايت |"
-            echo ""
-            echo "**تنبيه منهجي مهم:** هذه المقارنة الأولية *غير عادلة تمامًا* لصالح AV1، لأن AV1 يستفيد"
-            echo "من التنبؤ الزمني بين الإطارات المتتالية (inter-frame prediction)، بينما هذا النموذج الأولي"
-            echo "يرمّز كل إطار بمعزل عن الإطارات الأخرى (intra-only). لذلك إن كان حجم AV1 أصغر هنا، فهذا"
-            echo "متوقع ولا ينفي الفكرة؛ المقارنة الأدق تكون بين هذا النموذج و AV1 بترميز all-intra، أو"
-            echo "بإضافة تنبؤ زمني بسيط بين إطارات الخريطة كخطوة تالية."
-          } >> "$GITHUB_STEP_SUMMARY"
+          INPUT_CODEC=$("$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$IN")
+          DECODER_ARGS=()
+          if [ "$INPUT_CODEC" = "av1" ]; then DECODER_ARGS=(-c:v libdav1d); fi
 
-          cp map_experiment_report.json comparison_summary.json
-          python3 -c "import json; d = json.load(open('map_experiment_report.json')); d['av1_reference_bytes'] = $AV1_SIZE; d['note'] = 'مقارنة intra-only للخريطة مقابل AV1 بترميز حركة كامل - غير متكافئة منهجيًا، انظر ملخص المهمة'; json.dump(d, open('comparison_summary.json', 'w'), ensure_ascii=False, indent=2)"
+          "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
+            -vf "$VF_CHAIN" -r 24 -fps_mode cfr -an \
+            -c:v libx264 -preset ultrafast -crf 0 -pix_fmt yuv420p \
+            "${OUT_DIR}/normalized_${CHUNK_ID}.mp4"
 
-      - name: رفع نتائج التجربة كملفات
+          # الخطوة 2: المعالجة المسبقة الموجّهة بالخريطة (تنظيف المناطق المسطحة فقط قبل AV1)
+          export PATH="$HOME/codec-build/bin:$PATH"
+          python3 map_prefilter.py \
+            "${OUT_DIR}/normalized_${CHUNK_ID}.mp4" \
+            "${OUT_DIR}/filtered_${CHUNK_ID}.mp4" \
+            --block-size 16 --flat-threshold 6.0 --blur-radius 3.0 --mask-feather 8.0
+
+          # الخطوة 3: ترميز AV1 النهائي على النسخة المُنظَّفة
+          "$FFMPEG" -hide_banner -nostdin -y -i "${OUT_DIR}/filtered_${CHUNK_ID}.mp4" \
+            -i "$IN" \
+            -map 0:v:0 -map 1:a:0? \
+            -c:v libsvtav1 -preset "$PRESET" -crf "$CRF" -g 240 \
+            -svtav1-params tune=0:enable-qm=1:qm-min=0 \
+            -c:a libopus -b:a 32k -ac 2 -shortest \
+            "${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
+
+          test -s "${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
+          "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" \
+            | grep -q '^av1$' || { echo 'خطأ: الناتج لا يحتوي مسار فيديو AV1.' >&2; exit 1; }
+
+          rm -f "${OUT_DIR}/normalized_${CHUNK_ID}.mp4" "${OUT_DIR}/filtered_${CHUNK_ID}.mp4"
+
+      - name: رفع الجزء المضغوط
         uses: actions/upload-artifact@v4
         with:
-          name: map-experiment-results
-          path: |
-            comparison_summary.json
-            map_experiment_report.json
-            av1_reference.mkv
-            sample_clip.mp4
-            frames_reconstructed/
-          retention-days: 7
+          name: encoded-${{ matrix.chunk }}
+          path: chunks_encoded/encoded_${{ matrix.chunk }}.mkv
+          retention-days: 1
+          if-no-files-found: error
+
+  merge-and-send:
+    name: دمج الناتج ورفعه لقناة تيليجرام
+    needs: [prepare-codec-build, split-video, encode-chunks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: استعادة FFmpeg الموحد
+        uses: actions/cache@v4
+        with:
+          path: ~/codec-build
+          key: codec-map-layer-av1-dav1d-ubuntu-24.04-v1
+
+      - name: تجهيز أدوات الدمج والإرسال
+        run: |
+          set -euo pipefail
+          sudo apt update
+          sudo apt install -y ffmpeg libdav1d-dev libopus0
+          python3 -m pip install --user telethon
+
+      - name: تنزيل جميع الأجزاء المضغوطة
+        uses: actions/download-artifact@v4
+        with:
+          pattern: encoded-*
+          path: all_encoded
+          merge-multiple: true
+
+      - name: دمج الأجزاء
+        run: |
+          set -euo pipefail
+          FFMPEG="$HOME/codec-build/bin/ffmpeg"
+          FFPROBE="$HOME/codec-build/bin/ffprobe"
+          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+          cd all_encoded
+          find . -maxdepth 1 -type f -name "encoded_*.mkv" | sort > /tmp/encoded_files.txt
+          test -s /tmp/encoded_files.txt
+          sed "s#^./#file '#; s#\$#'#" /tmp/encoded_files.txt > concat_list.txt
+          "$FFMPEG" -hide_banner -nostdin -y -f concat -safe 0 -i concat_list.txt -map 0 -c copy "../output.mkv"
+          test -s "../output.mkv"
+          "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "../output.mkv" \
+            | grep -q '^av1$' || { echo 'الدمج فقد مسار الفيديو.' >&2; exit 1; }
+
+      - name: إعداد الاسم النهائي
+        id: naming
+        env:
+          FILENAME: ${{ github.event.inputs.filename }}
+        run: |
+          set -euo pipefail
+          sanitize() {
+            printf '%s' "$1" | head -n1 | tr -d '\r' \
+              | sed 's#[/\\:*?"<>|]# #g; s/  */ /g; s/^ *//; s/ *$//'
+          }
+          SAFE_FILENAME=$(sanitize "$FILENAME")
+          echo "final_name=${SAFE_FILENAME:-video}" >> "$GITHUB_OUTPUT"
+
+      - name: استخراج معلومات الناتج
+        id: videoinfo
+        run: |
+          set -euo pipefail
+          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
+          H=$((DURATION_SEC / 3600)); M=$(((DURATION_SEC % 3600) / 60)); S=$((DURATION_SEC % 60))
+          echo "duration_fmt=$(printf '%02d:%02d:%02d' "$H" "$M" "$S")" >> "$GITHUB_OUTPUT"
+          ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.mkv)
+          echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
+
+      - name: رفع الناتج إلى قناة تيليجرام
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
+          TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
+          FINAL_NAME: ${{ steps.naming.outputs.final_name }}
+          DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
+          ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
+        run: |
+          set -euo pipefail
+          UPLOAD_FILE="${FINAL_NAME}.mkv"
+          mv output.mkv "$UPLOAD_FILE"
+          FILE_SIZE=$(stat -c%s "$UPLOAD_FILE")
+          SIZE_MB=$(awk -v size="$FILE_SIZE" 'BEGIN {printf "%.1f", size / 1048576}')
+          CAPTION=$(printf '🎬 %s (طبقة الخريطة + AV1)\n📦 %s MB\n📐 %s\n⏱️ %s' \
+            "$FINAL_NAME" "$SIZE_MB" "$ACTUAL_RES" "$DURATION_FMT")
+          export UPLOAD_FILE CAPTION
+
+          python3 << 'PYEOF'
+          import asyncio
+          import os
+          from telethon import TelegramClient
+          from telethon.sessions import StringSession
+
+          async def main():
+              client = TelegramClient(
+                  StringSession(os.environ["TG_SESSION"]),
+                  int(os.environ["TG_API_ID"]),
+                  os.environ["TG_API_HASH"],
+              )
+              await client.start()
+              async with client:
+                  await client.send_file(
+                      int(os.environ["TG_CHANNEL_ID"]),
+                      os.environ["UPLOAD_FILE"],
+                      caption=os.environ["CAPTION"],
+                      force_document=True,
+                  )
+
+          asyncio.run(main())
+          PYEOF
+
+  notify-failure:
+    name: إشعار فشل العملية
+    needs: [prepare-codec-build, split-video, encode-chunks, merge-and-send]
+    if: >-
+      ${{ always() && (
+        needs.prepare-codec-build.result == 'failure' ||
+        needs.split-video.result == 'failure' ||
+        needs.encode-chunks.result == 'failure' ||
+        needs.merge-and-send.result == 'failure'
+      ) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: طباعة رابط السجل
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "فشلت العملية. افتح السجل: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
