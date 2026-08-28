@@ -41,7 +41,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v1
+          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v2
 
       - name: بناء SVT-AV1 وFFmpeg إذا لم يوجد الكاش
         if: steps.cache-build.outputs.cache-hit != 'true'
@@ -95,7 +95,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v1
+          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v2
 
       - name: تحميل الفيديو المصدر
         env:
@@ -176,7 +176,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v1
+          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v2
 
       - name: تجهيز بايثون وFFmpeg
         run: |
@@ -213,7 +213,7 @@ jobs:
           FFPROBE="$HOME/codec-build/bin/ffprobe"
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
 
-          # الخطوة 1: توحيد الدقة وقص الأشرطة السوداء وتوحيد الإطارات في نسخة وسيطة
+          # إعداد الفلاتر المشتركة
           FILTERS=("setpts=PTS-STARTPTS")
           if [ -n "$CROP_FILTER" ] && [ "$CROP_FILTER" != "none" ]; then
             FILTERS+=("$CROP_FILTER")
@@ -225,38 +225,77 @@ jobs:
           DECODER_ARGS=()
           if [ "$INPUT_CODEC" = "av1" ]; then DECODER_ARGS=(-c:v libdav1d); fi
 
+          # المسار 1: الترميز التقليدي (AV1 مباشرة)
+          echo "=== بدء الترميز التقليدي (بدون تهجين) ==="
+          START_TRADITIONAL=$(date +%s)
+          "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
+            -vf "$VF_CHAIN" -r 24 -fps_mode cfr \
+            -c:v libsvtav1 -preset "$PRESET" -crf "$CRF" -g 240 \
+            -svtav1-params tune=0:enable-qm=1:qm-min=0 \
+            -c:a libopus -b:a 32k -ac 2 \
+            "${OUT_DIR}/traditional_${CHUNK_ID}.mkv"
+          END_TRADITIONAL=$(date +%s)
+          TIME_TRADITIONAL=$((END_TRADITIONAL - START_TRADITIONAL))
+          echo "الترميز التقليدي استغرق: ${TIME_TRADITIONAL} ثانية"
+
+          # المسار 2: الترميز المهجن (مع المعالجة المسبقة)
+          echo "=== بدء الترميز المهجن (مع التهجين) ==="
+          START_HYBRID=$(date +%s)
+
+          # الخطوة 1: توحيد الدقة وقص الأشرطة السوداء وتوحيد الإطارات
           "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
             -vf "$VF_CHAIN" -r 24 -fps_mode cfr -an \
             -c:v libx264 -preset ultrafast -crf 0 -pix_fmt yuv420p \
             "${OUT_DIR}/normalized_${CHUNK_ID}.mp4"
 
-          # الخطوة 2: المعالجة المسبقة الموجّهة بالخريطة (تنظيف المناطق المسطحة فقط قبل AV1)
+          # الخطوة 2: المعالجة المسبقة الموجّهة بالخريطة
           export PATH="$HOME/codec-build/bin:$PATH"
           python3 map_prefilter.py \
             "${OUT_DIR}/normalized_${CHUNK_ID}.mp4" \
             "${OUT_DIR}/filtered_${CHUNK_ID}.mp4" \
             --block-size 16 --flat-threshold 6.0 --blur-radius 3.0 --mask-feather 8.0
 
-          # الخطوة 3: ترميز AV1 النهائي على النسخة المُنظَّفة
+          # الخطوة 3: ترميز AV1 على النسخة المُنظَّفة
           "$FFMPEG" -hide_banner -nostdin -y -i "${OUT_DIR}/filtered_${CHUNK_ID}.mp4" \
             -i "$IN" \
             -map 0:v:0 -map 1:a:0? \
             -c:v libsvtav1 -preset "$PRESET" -crf "$CRF" -g 240 \
             -svtav1-params tune=0:enable-qm=1:qm-min=0 \
             -c:a libopus -b:a 32k -ac 2 -shortest \
-            "${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
+            "${OUT_DIR}/hybrid_${CHUNK_ID}.mkv"
+          END_HYBRID=$(date +%s)
+          TIME_HYBRID=$((END_HYBRID - START_HYBRID))
+          echo "الترميز المهجن استغرق: ${TIME_HYBRID} ثانية"
 
-          test -s "${OUT_DIR}/encoded_${CHUNK_ID}.mkv"
-          "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${OUT_DIR}/encoded_${CHUNK_ID}.mkv" \
-            | grep -q '^av1$' || { echo 'خطأ: الناتج لا يحتوي مسار فيديو AV1.' >&2; exit 1; }
+          # التحقق من النواتج
+          test -s "${OUT_DIR}/traditional_${CHUNK_ID}.mkv"
+          test -s "${OUT_DIR}/hybrid_${CHUNK_ID}.mkv"
+          "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${OUT_DIR}/traditional_${CHUNK_ID}.mkv" \
+            | grep -q '^av1$' || { echo 'خطأ: الترميز التقليدي لا يحتوي AV1.' >&2; exit 1; }
+          "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${OUT_DIR}/hybrid_${CHUNK_ID}.mkv" \
+            | grep -q '^av1$' || { echo 'خطأ: الترميز المهجن لا يحتوي AV1.' >&2; exit 1; }
 
+          # حساب الأحجام
+          SIZE_TRADITIONAL=$(stat -c%s "${OUT_DIR}/traditional_${CHUNK_ID}.mkv")
+          SIZE_HYBRID=$(stat -c%s "${OUT_DIR}/hybrid_${CHUNK_ID}.mkv")
+
+          # حفظ معلومات المقارنة
+          echo "traditional_size=${SIZE_TRADITIONAL}" > "${OUT_DIR}/compare_${CHUNK_ID}.txt"
+          echo "hybrid_size=${SIZE_HYBRID}" >> "${OUT_DIR}/compare_${CHUNK_ID}.txt"
+          echo "traditional_time=${TIME_TRADITIONAL}" >> "${OUT_DIR}/compare_${CHUNK_ID}.txt"
+          echo "hybrid_time=${TIME_HYBRID}" >> "${OUT_DIR}/compare_${CHUNK_ID}.txt"
+
+          # تنظيف الملفات المؤقتة
           rm -f "${OUT_DIR}/normalized_${CHUNK_ID}.mp4" "${OUT_DIR}/filtered_${CHUNK_ID}.mp4"
 
-      - name: رفع الجزء المضغوط
+      - name: رفع الأجزاء المضغوطة
         uses: actions/upload-artifact@v4
         with:
           name: encoded-${{ matrix.chunk }}
-          path: chunks_encoded/encoded_${{ matrix.chunk }}.mkv
+          path: |
+            chunks_encoded/traditional_${{ matrix.chunk }}.mkv
+            chunks_encoded/hybrid_${{ matrix.chunk }}.mkv
+            chunks_encoded/compare_${{ matrix.chunk }}.txt
           retention-days: 1
           if-no-files-found: error
 
@@ -270,7 +309,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v1
+          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v2
 
       - name: تجهيز أدوات الدمج والإرسال
         run: |
@@ -286,20 +325,67 @@ jobs:
           path: all_encoded
           merge-multiple: true
 
-      - name: دمج الأجزاء
+      - name: دمج الأجزاء وحساب المقارنة
         run: |
           set -euo pipefail
           FFMPEG="$HOME/codec-build/bin/ffmpeg"
           FFPROBE="$HOME/codec-build/bin/ffprobe"
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           cd all_encoded
-          find . -maxdepth 1 -type f -name "encoded_*.mkv" | sort > /tmp/encoded_files.txt
-          test -s /tmp/encoded_files.txt
-          sed "s#^./#file '#; s#\$#'#" /tmp/encoded_files.txt > concat_list.txt
-          "$FFMPEG" -hide_banner -nostdin -y -f concat -safe 0 -i concat_list.txt -map 0 -c copy "../output.mkv"
-          test -s "../output.mkv"
-          "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "../output.mkv" \
-            | grep -q '^av1$' || { echo 'الدمج فقد مسار الفيديو.' >&2; exit 1; }
+
+          # دمج الترميز التقليدي
+          find . -maxdepth 1 -type f -name "traditional_*.mkv" | sort > /tmp/traditional_files.txt
+          test -s /tmp/traditional_files.txt
+          sed "s#^./#file '#; s#\$#'#" /tmp/traditional_files.txt > concat_traditional.txt
+          "$FFMPEG" -hide_banner -nostdin -y -f concat -safe 0 -i concat_traditional.txt -map 0 -c copy "../traditional_output.mkv"
+
+          # دمج الترميز المهجن
+          find . -maxdepth 1 -type f -name "hybrid_*.mkv" | sort > /tmp/hybrid_files.txt
+          test -s /tmp/hybrid_files.txt
+          sed "s#^./#file '#; s#\$#'#" /tmp/hybrid_files.txt > concat_hybrid.txt
+          "$FFMPEG" -hide_banner -nostdin -y -f concat -safe 0 -i concat_hybrid.txt -map 0 -c copy "../hybrid_output.mkv"
+
+          # حساب الأحجام الكلية
+          SIZE_TRADITIONAL=$(stat -c%s "../traditional_output.mkv")
+          SIZE_HYBRID=$(stat -c%s "../hybrid_output.mkv")
+
+          # حساب أوقات المعالجة الكلية
+          TOTAL_TIME_TRADITIONAL=0
+          TOTAL_TIME_HYBRID=0
+          for f in compare_*.txt; do
+            TRAD_TIME=$(grep 'traditional_time=' "$f" | cut -d= -f2)
+            HYB_TIME=$(grep 'hybrid_time=' "$f" | cut -d= -f2)
+            TOTAL_TIME_TRADITIONAL=$((TOTAL_TIME_TRADITIONAL + TRAD_TIME))
+            TOTAL_TIME_HYBRID=$((TOTAL_TIME_HYBRID + HYB_TIME))
+          done
+
+          # حساب جودة الصورة (PSNR وSSIM)
+          echo "=== حساب مقاييس الجودة ==="
+          # استخراج إطار من كل فيديو للمقارنة
+          "$FFMPEG" -hide_banner -nostdin -y -i "../traditional_output.mkv" -frames:v 1 -vf "select=eq(n\,100)" -vsync vfr "../traditional_frame.png" || true
+          "$FFMPEG" -hide_banner -nostdin -y -i "../hybrid_output.mkv" -frames:v 1 -vf "select=eq(n\,100)" -vsync vfr "../hybrid_frame.png" || true
+
+          # حساب PSNR بين الفيديوين (تقريبي)
+          PSNR_VALUE=$("$FFMPEG" -hide_banner -nostdin -i "../traditional_output.mkv" -i "../hybrid_output.mkv" \
+            -lavfi "[0:v][1:v]psnr" -f null - 2>&1 | grep -oP 'average:\K[0-9.]+' || echo "N/A")
+
+          # حساب SSIM بين الفيديوين (تقريبي)
+          SSIM_VALUE=$("$FFMPEG" -hide_banner -nostdin -i "../traditional_output.mkv" -i "../hybrid_output.mkv" \
+            -lavfi "[0:v][1:v]ssim" -f null - 2>&1 | grep -oP 'All:\K[0-9.]+' || echo "N/A")
+
+          # حفظ نتائج المقارنة
+          {
+            echo "=== نتائج المقارنة ==="
+            echo "الحجم التقليدي: $((SIZE_TRADITIONAL / 1024 / 1024)) MB"
+            echo "الحجم المهجن: $((SIZE_HYBRID / 1024 / 1024)) MB"
+            echo "نسبة توفير الحجم: $(awk -v t="$SIZE_TRADITIONAL" -v h="$SIZE_HYBRID" 'BEGIN {printf "%.2f", ((t - h) / t) * 100}')%"
+            echo "وقت الترميز التقليدي: ${TOTAL_TIME_TRADITIONAL} ثانية"
+            echo "وقت الترميز المهجن: ${TOTAL_TIME_HYBRID} ثانية"
+            echo "PSNR: ${PSNR_VALUE}"
+            echo "SSIM: ${SSIM_VALUE}"
+          } > ../comparison_results.txt
+
+          cat ../comparison_results.txt
 
       - name: إعداد الاسم النهائي
         id: naming
@@ -318,13 +404,17 @@ jobs:
         id: videoinfo
         run: |
           set -euo pipefail
-          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output.mkv | cut -d. -f1)
+          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 traditional_output.mkv | cut -d. -f1)
           H=$((DURATION_SEC / 3600)); M=$(((DURATION_SEC % 3600) / 60)); S=$((DURATION_SEC % 60))
           echo "duration_fmt=$(printf '%02d:%02d:%02d' "$H" "$M" "$S")" >> "$GITHUB_OUTPUT"
-          ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 output.mkv)
+          ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 traditional_output.mkv)
           echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
+          TRADITIONAL_SIZE_MB=$(awk -v size="$(stat -c%s traditional_output.mkv)" 'BEGIN {printf "%.1f", size / 1048576}')
+          HYBRID_SIZE_MB=$(awk -v size="$(stat -c%s hybrid_output.mkv)" 'BEGIN {printf "%.1f", size / 1048576}')
+          echo "traditional_size_mb=$TRADITIONAL_SIZE_MB" >> "$GITHUB_OUTPUT"
+          echo "hybrid_size_mb=$HYBRID_SIZE_MB" >> "$GITHUB_OUTPUT"
 
-      - name: رفع الناتج إلى قناة تيليجرام
+      - name: رفع النواتج إلى قناة تيليجرام
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
@@ -333,15 +423,25 @@ jobs:
           FINAL_NAME: ${{ steps.naming.outputs.final_name }}
           DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
           ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
+          TRADITIONAL_SIZE_MB: ${{ steps.videoinfo.outputs.traditional_size_mb }}
+          HYBRID_SIZE_MB: ${{ steps.videoinfo.outputs.hybrid_size_mb }}
         run: |
           set -euo pipefail
-          UPLOAD_FILE="${FINAL_NAME}.mkv"
-          mv output.mkv "$UPLOAD_FILE"
-          FILE_SIZE=$(stat -c%s "$UPLOAD_FILE")
-          SIZE_MB=$(awk -v size="$FILE_SIZE" 'BEGIN {printf "%.1f", size / 1048576}')
-          CAPTION=$(printf '🎬 %s (طبقة الخريطة + AV1)\n📦 %s MB\n📐 %s\n⏱️ %s' \
-            "$FINAL_NAME" "$SIZE_MB" "$ACTUAL_RES" "$DURATION_FMT")
-          export UPLOAD_FILE CAPTION
+
+          # قراءة نتائج المقارنة
+          COMPARISON_TEXT=$(cat comparison_results.txt)
+
+          # تجهيز الملفات للرفع
+          TRADITIONAL_FILE="${FINAL_NAME}_traditional.mkv"
+          HYBRID_FILE="${FINAL_NAME}_hybrid.mkv"
+          mv traditional_output.mkv "$TRADITIONAL_FILE"
+          mv hybrid_output.mkv "$HYBRID_FILE"
+
+          # إعداد التعليق
+          CAPTION=$(printf '🎬 %s (مقارنة AV1)\n\n📐 الدقة: %s\n⏱️ المدة: %s\n\n📦 الحجم التقليدي: %s MB\n📦 الحجم المهجن: %s MB\n\n%s' \
+            "$FINAL_NAME" "$ACTUAL_RES" "$DURATION_FMT" "$TRADITIONAL_SIZE_MB" "$HYBRID_SIZE_MB" "$COMPARISON_TEXT")
+
+          export TRADITIONAL_FILE HYBRID_FILE CAPTION
 
           python3 << 'PYEOF'
           import asyncio
@@ -357,10 +457,28 @@ jobs:
               )
               await client.start()
               async with client:
+                  # إرسال ملف المقارنة النصي
+                  with open("comparison_results.txt", "rb") as f:
+                      await client.send_file(
+                          int(os.environ["TG_CHANNEL_ID"]),
+                          f,
+                          caption=os.environ["CAPTION"],
+                          force_document=True,
+                      )
+                  
+                  # إرسال الفيديو التقليدي
                   await client.send_file(
                       int(os.environ["TG_CHANNEL_ID"]),
-                      os.environ["UPLOAD_FILE"],
-                      caption=os.environ["CAPTION"],
+                      os.environ["TRADITIONAL_FILE"],
+                      caption="📀 الترميز التقليدي (بدون تهجين)",
+                      force_document=True,
+                  )
+                  
+                  # إرسال الفيديو المهجن
+                  await client.send_file(
+                      int(os.environ["TG_CHANNEL_ID"]),
+                      os.environ["HYBRID_FILE"],
+                      caption="🔬 الترميز المهجن (مع طبقة الخريطة)",
                       force_document=True,
                   )
 
