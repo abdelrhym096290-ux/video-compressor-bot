@@ -38,6 +38,7 @@ export default {
 
           const autoSession = {
             message_id: update.message.message_id,
+            url: "",
             codec: preset.codec || "av1",
             encode_mode: preset.encode_mode || "nofilters",
             filter_profile:
@@ -67,6 +68,7 @@ export default {
         // جلسة يدوية جديدة.
         await setSession(env, chatId, {
           message_id: update.message.message_id,
+          url: "",
           default_name: defaultName,
         });
         await sendCodecKeyboard(BOT_TOKEN, chatId);
@@ -102,16 +104,16 @@ export default {
 
           const preset = await getPreset(env, chatId);
           const linkSession = {
-            url: text,
             message_id: "",
+            url: text,
             default_name: extractNameFromTelegramLink(text),
           };
 
           if (preset && preset.active) {
             const finalName = buildAutomaticName(preset, linkSession.default_name || "video");
             const autoSession = {
-              url: text,
               message_id: "",
+              url: text,
               codec: preset.codec || "av1",
               encode_mode: preset.encode_mode || "nofilters",
               filter_profile: preset.filter_profile || (preset.encode_mode === "filters" ? "realistic" : "none"),
@@ -266,7 +268,7 @@ export default {
         // إدخال اسم الملف النهائي.
         if (session.awaiting_filename) {
           const baseName = text || session.default_name || "video";
-          session.filename = await applyCounterToName(env, chatId, baseName);
+          session.filename = validateFileName(baseName);
           session.awaiting_filename = false;
           await setSession(env, chatId, session);
           await sendMessage(BOT_TOKEN, chatId, `✅ تم اعتماد الاسم النهائي:\n📝 ${session.filename}`);
@@ -445,7 +447,8 @@ export default {
 
         // 7. استعمال الاسم المرفق.
         if (data === "name_skip") {
-          session.filename = await applyCounterToName(env, chatId, session.default_name || "video");
+          const baseName = session.default_name || "video";
+          session.filename = validateFileName(baseName);
           session.awaiting_filename = false;
           await setSession(env, chatId, session);
           await editMessage(BOT_TOKEN, chatId, query.message.message_id, `⏳ جارٍ إرسال المهمة: ${session.filename}`);
@@ -742,13 +745,18 @@ async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, c
         Authorization: `token ${githubToken}`,
         Accept: "application/vnd.github.v3+json",
         "User-Agent": "Cloudflare-Worker",
+        "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
     },
   );
 
-  const responseText = await response.text();
+  if (response.status === 204) {
+    return true;
+  }
+
   if (!response.ok) {
+    const responseText = await response.text();
     console.error("GitHub workflow dispatch failed:", {
       status: response.status,
       repository: githubRepo,
@@ -758,11 +766,6 @@ async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, c
     return false;
   }
 
-  console.log("GitHub workflow dispatched:", {
-    status: response.status,
-    repository: githubRepo,
-    workflow: githubWorkflow,
-  });
   return true;
 }
 
