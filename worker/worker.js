@@ -38,7 +38,7 @@ export default {
 
           const autoSession = {
             message_id: update.message.message_id,
-            url: "",
+            url: "", // ← للإرسال لـ GitHub
             codec: preset.codec || "av1",
             encode_mode: preset.encode_mode || "nofilters",
             filter_profile:
@@ -105,7 +105,7 @@ export default {
           const preset = await getPreset(env, chatId);
           const linkSession = {
             message_id: "",
-            url: text,
+            url: text, // ← الرابط هنا
             default_name: extractNameFromTelegramLink(text),
           };
 
@@ -113,10 +113,12 @@ export default {
             const finalName = buildAutomaticName(preset, linkSession.default_name || "video");
             const autoSession = {
               message_id: "",
-              url: text,
+              url: text, // ← الرابط هنا
               codec: preset.codec || "av1",
               encode_mode: preset.encode_mode || "nofilters",
-              filter_profile: preset.filter_profile || (preset.encode_mode === "filters" ? "realistic" : "none"),
+              filter_profile:
+                preset.filter_profile ||
+                (preset.encode_mode === "filters" ? "realistic" : "none"),
               preset: preset.preset || preset.av1_preset || "8",
               encode_method: preset.encode_method || "crf",
               target_value: preset.target_value || "28",
@@ -176,8 +178,8 @@ export default {
 
         // الاسم الذي سيظهر في تسمية مسلسل تلقائية ضمن /setup.
         if (session.awaiting_series_title) {
-          const seriesTitle = validateFileName(text);
-          if (!seriesTitle || seriesTitle === "video") {
+          const seriesTitle = cleanFileName(text);
+          if (!seriesTitle) {
             await sendMessage(BOT_TOKEN, chatId, "📝 أرسل اسماً صحيحاً للمسلسل، مثل: Solo Leveling S02");
             return ok();
           }
@@ -267,11 +269,10 @@ export default {
 
         // إدخال اسم الملف النهائي.
         if (session.awaiting_filename) {
-          const baseName = text || session.default_name || "video";
-          session.filename = validateFileName(baseName);
+          session.filename = await applyCounterToName(env, chatId, text || session.default_name || "video");
           session.awaiting_filename = false;
           await setSession(env, chatId, session);
-          await sendMessage(BOT_TOKEN, chatId, `✅ تم اعتماد الاسم النهائي:\n📝 ${session.filename}`);
+          await sendMessage(BOT_TOKEN, chatId, `تم اعتماد الاسم النهائي: ${session.filename}`);
           await finalizeAndTrigger(
             env,
             BOT_TOKEN,
@@ -447,8 +448,7 @@ export default {
 
         // 7. استعمال الاسم المرفق.
         if (data === "name_skip") {
-          const baseName = session.default_name || "video";
-          session.filename = validateFileName(baseName);
+          session.filename = await applyCounterToName(env, chatId, session.default_name || "video");
           session.awaiting_filename = false;
           await setSession(env, chatId, session);
           await editMessage(BOT_TOKEN, chatId, query.message.message_id, `⏳ جارٍ إرسال المهمة: ${session.filename}`);
@@ -499,38 +499,15 @@ async function setPreset(env, chatId, preset) {
 }
 
 async function applyCounterToName(_env, _chatId, baseName) {
-  return validateFileName(baseName);
-}
-
-function validateFileName(name) {
-  if (!name || name.trim().length === 0) {
-    return "video";
-  }
-  
-  let cleanName = String(name)
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .replace(/[\\/:*?"<>|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  
-  if (cleanName.length > 200) {
-    cleanName = cleanName.substring(0, 200).trim();
-  }
-  
-  return cleanName;
+  return cleanFileName(baseName) || "video";
 }
 
 function cleanFileName(value) {
-  if (!value) return "";
-  
-  let name = String(value)
+  return String(value || "")
     .replace(/\.[^/.]+$/, "")
-    .replace(/[\u0000-\u001f\u007f]/g, "")
     .replace(/[\\/:*?"<>|]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  
-  return name;
 }
 
 function formatEpisode(value) {
@@ -544,10 +521,9 @@ function buildAutomaticName(preset, sourceName) {
     Number.isInteger(preset.next_episode) &&
     preset.next_episode > 0
   ) {
-    const seriesTitle = validateFileName(preset.series_title);
-    return `${seriesTitle} - E${formatEpisode(preset.next_episode)}`;
+    return `${cleanFileName(preset.series_title)} - E${formatEpisode(preset.next_episode)}`;
   }
-  return validateFileName(sourceName);
+  return cleanFileName(sourceName) || "video";
 }
 
 async function continueAfterResolution(env, botToken, chatId, session) {
@@ -577,7 +553,7 @@ async function savePresetAndConfirm(env, botToken, chatId, session) {
   };
 
   if (session.auto_naming === "series") {
-    preset.series_title = validateFileName(session.series_title);
+    preset.series_title = cleanFileName(session.series_title);
     preset.next_episode = Number.parseInt(session.next_episode, 10);
   }
 
@@ -717,6 +693,7 @@ function extractNameFromTelegramLink(url) {
   }
 }
 
+// ★★★ جزء الإرسال - كما هو بالضبط من الكود الذي يعمل ★★★
 async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId) {
   const body = {
     ref: "main",
@@ -745,18 +722,13 @@ async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, c
         Authorization: `token ${githubToken}`,
         Accept: "application/vnd.github.v3+json",
         "User-Agent": "Cloudflare-Worker",
-        "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
     },
   );
 
-  if (response.status === 204) {
-    return true;
-  }
-
+  const responseText = await response.text();
   if (!response.ok) {
-    const responseText = await response.text();
     console.error("GitHub workflow dispatch failed:", {
       status: response.status,
       repository: githubRepo,
@@ -766,8 +738,14 @@ async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, c
     return false;
   }
 
+  console.log("GitHub workflow dispatched:", {
+    status: response.status,
+    repository: githubRepo,
+    workflow: githubWorkflow,
+  });
   return true;
 }
+// ★★★ نهاية جزء الإرسال ★★★
 
 async function finalizeAndTrigger(env, botToken, githubToken, githubRepo, githubWorkflow, chatId, session) {
   const success = await triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId);
@@ -781,7 +759,7 @@ async function finalizeAndTrigger(env, botToken, githubToken, githubRepo, github
     }
     await sendMessage(botToken, chatId, "✅ تم إرسال المهمة إلى مصنع الضغط السحابي.");
   } else {
-    await sendMessage(botToken, chatId, "❌ فشل إرسال المهمة إلى GitHub. تحقق من سجل العامل ورمز GitHub.");
+    await sendMessage(botToken, chatId, "❌ فشل إرسال المهمة إلى GitHub. تحقق من سجل العامل ورمز GitHub." );
   }
   await deleteSession(env, chatId);
 }
@@ -789,13 +767,7 @@ async function finalizeAndTrigger(env, botToken, githubToken, githubRepo, github
 function extractDefaultName(message) {
   const name = message.caption || message.document?.file_name || message.video?.file_name || null;
   if (!name) return null;
-  
-  return String(name)
-    .replace(/\.[^/.]+$/, "")
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .replace(/[\\/:*?"<>|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return name.replace(/\.[^/.]+$/, "").replace(/[\\/:*?"<>|]/g, " ").trim();
 }
 
 async function promptFilename(botToken, chatId, editMessageId, defaultName, useEdit) {
