@@ -7,7 +7,7 @@ export default {
     const BOT_TOKEN = env.BOT_TOKEN;
     const GITHUB_TOKEN = env.GITHUB_TOKEN;
     const BOT_PASSWORD = env.BOT_PASSWORD;
-    const GITHUB_REPO = "abdelrhym118-cloud/Abd00118";
+    const GITHUB_REPO = "abdelrhym096290-ux/video-compressor-bot";
     const GITHUB_WORKFLOW = "compress.yml";
     const RESOLUTIONS = ["240", "360", "480", "720", "1080"];
 
@@ -35,13 +35,12 @@ export default {
         // وضع الإعداد التلقائي: يستعمل الإعداد المحفوظ مباشرة.
         if (preset && preset.active) {
           const finalName = buildAutomaticName(preset, defaultName);
-          // لا نزيد العداد إلا بعد قبول GitHub للمهمة، حتى لا تضيع حلقة عند فشل الإرسال.
 
           const autoSession = {
             message_id: update.message.message_id,
+            url: "", // ← للإرسال لـ GitHub
             codec: preset.codec || "av1",
             encode_mode: preset.encode_mode || "nofilters",
-            // الإعدادات القديمة كانت تملك filters فقط؛ نعاملها كواقعي لحفظ التوافق.
             filter_profile:
               preset.filter_profile ||
               (preset.encode_mode === "filters" ? "realistic" : "none"),
@@ -69,6 +68,7 @@ export default {
         // جلسة يدوية جديدة.
         await setSession(env, chatId, {
           message_id: update.message.message_id,
+          url: "",
           default_name: defaultName,
         });
         await sendCodecKeyboard(BOT_TOKEN, chatId);
@@ -92,6 +92,49 @@ export default {
         }
 
         const session = (await getSession(env, chatId)) || {};
+
+        // ★★★ دعم روابط تيليجرام ★★★
+        if (isTelegramLink(text)) {
+          if (session.awaiting_preset || session.awaiting_target_value || 
+              session.awaiting_res || session.awaiting_filename || 
+              session.awaiting_series_title || session.awaiting_episode_start) {
+            await sendMessage(BOT_TOKEN, chatId, "⚠️ أنت في منتصف عملية إعداد. أكمل الإعداد أولاً أو ألغِ العملية.");
+            return ok();
+          }
+
+          const preset = await getPreset(env, chatId);
+          const linkSession = {
+            message_id: "",
+            url: text, // ← الرابط هنا
+            default_name: extractNameFromTelegramLink(text),
+          };
+
+          if (preset && preset.active) {
+            const finalName = buildAutomaticName(preset, linkSession.default_name || "video");
+            const autoSession = {
+              message_id: "",
+              url: text, // ← الرابط هنا
+              codec: preset.codec || "av1",
+              encode_mode: preset.encode_mode || "nofilters",
+              filter_profile:
+                preset.filter_profile ||
+                (preset.encode_mode === "filters" ? "realistic" : "none"),
+              preset: preset.preset || preset.av1_preset || "8",
+              encode_method: preset.encode_method || "crf",
+              target_value: preset.target_value || "28",
+              resolution: preset.resolution || "480",
+              filename: finalName,
+              auto_advance_episode: preset.auto_naming === "series",
+            };
+            await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ معالجة رابط تيليجرام تلقائياً: ${finalName}`);
+            await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, autoSession);
+          } else {
+            await setSession(env, chatId, linkSession);
+            await sendCodecKeyboard(BOT_TOKEN, chatId);
+          }
+          return ok();
+        }
+        // ★★★ نهاية دعم الروابط ★★★
 
         if (text === "/start") {
           await sendMessage(BOT_TOKEN, chatId, startMessage(await getPreset(env, chatId)));
@@ -242,7 +285,7 @@ export default {
           return ok();
         }
 
-        await sendMessage(BOT_TOKEN, chatId, "📤 أرسل فيديو مباشرة للبدء، أو استخدم /setup لحفظ إعداد تلقائي.");
+        await sendMessage(BOT_TOKEN, chatId, "📤 أرسل فيديو مباشرة أو رابط تيليجرام للبدء، أو استخدم /setup لحفظ إعداد تلقائي.");
         return ok();
       }
 
@@ -403,7 +446,7 @@ export default {
           return ok();
         }
 
-        // 6. استعمال الاسم المرفق.
+        // 7. استعمال الاسم المرفق.
         if (data === "name_skip") {
           session.filename = await applyCounterToName(env, chatId, session.default_name || "video");
           session.awaiting_filename = false;
@@ -456,7 +499,6 @@ async function setPreset(env, chatId, preset) {
 }
 
 async function applyCounterToName(_env, _chatId, baseName) {
-  // يبقى الاسم اليدوي مستقلاً؛ عداد المسلسل يعمل حصراً في الوضع التلقائي بعد /setup.
   return cleanFileName(baseName) || "video";
 }
 
@@ -562,13 +604,17 @@ function presetStatusText(preset) {
 
 function startMessage(preset) {
   return [
-    "🚀 أرسل فيديو مباشرة للبدء.",
+    "🚀 أرسل فيديو مباشرة أو رابط تيليجرام للبدء.",
     "",
     "الأوامر:",
     "/setup لحفظ إعداد تلقائي",
     "/preset لعرض الإعداد المحفوظ",
     "/auto_on و /auto_off لتشغيل أو إيقاف الوضع التلقائي",
     "إعداد اسم السلسلة وعدّاد الحلقات موجود ضمن /setup.",
+    "",
+    "📎 يمكنك إرسال:",
+    "- فيديو مباشر من جهازك",
+    "- رابط تيليجرام مثل: https://t.me/channel/123",
     preset?.active ? "" : null,
     preset?.active ? "▶️ الوضع التلقائي مفعّل حالياً." : null,
   ]
@@ -631,12 +677,29 @@ function encodeMethodPrompt(codec, method) {
   return "تم اختيار VBR. أرسل معدل البت المستهدف، مثل 250k أو 1000k:";
 }
 
+function isTelegramLink(text) {
+  return /^https?:\/\/(t\.me|telegram\.me)\/(?:c\/)?[^\/\s]+\/\d+/.test(text);
+}
+
+function extractNameFromTelegramLink(url) {
+  try {
+    const parsed = new URL(url);
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+    const channelName = pathParts[0] || "telegram";
+    const messageId = pathParts[1] || "";
+    return `${channelName}_${messageId}`;
+  } catch {
+    return "telegram_video";
+  }
+}
+
+// ★★★ جزء الإرسال - كما هو بالضبط من الكود الذي يعمل ★★★
 async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId) {
   const body = {
     ref: "main",
     inputs: {
       message_id: session.message_id ? String(session.message_id) : "",
-      url: "",
+      url: session.url || "",
       chat_id: String(chatId),
       filename: session.filename || "video",
       codec: session.codec || "av1",
@@ -664,8 +727,6 @@ async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, c
     },
   );
 
-  // لا نطبع الرمز أبداً؛ نسجل فقط رمز الاستجابة ورسالة GitHub لتشخيص الربط.
-  // GitHub قد يعيد 200 أو 204 عند نجاح workflow_dispatch؛ Response.ok يقبل كل رموز 2xx.
   const responseText = await response.text();
   if (!response.ok) {
     console.error("GitHub workflow dispatch failed:", {
@@ -684,6 +745,7 @@ async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, c
   });
   return true;
 }
+// ★★★ نهاية جزء الإرسال ★★★
 
 async function finalizeAndTrigger(env, botToken, githubToken, githubRepo, githubWorkflow, chatId, session) {
   const success = await triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId);
