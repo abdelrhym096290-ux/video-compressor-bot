@@ -41,14 +41,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-ubuntu-24.04-v1
+          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v1
 
       - name: بناء SVT-AV1 وFFmpeg إذا لم يوجد الكاش
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           sudo apt update
-          sudo apt install -y build-essential cmake git nasm pkg-config libdav1d-dev libogg-dev libopus-dev
+          sudo apt install -y build-essential cmake git nasm pkg-config libdav1d-dev libogg-dev libopus-dev libx264-dev
           rm -rf "$HOME/codec-build" "$HOME/codec-sources"
           mkdir -p "$HOME/codec-build" "$HOME/codec-sources"
           cd "$HOME/codec-sources"
@@ -61,7 +61,7 @@ jobs:
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           cd FFmpeg
           ./configure --prefix="$HOME/codec-build" --enable-gpl --enable-version3 --disable-doc \
-            --enable-libopus --enable-libdav1d --enable-libsvtav1 \
+            --enable-libopus --enable-libdav1d --enable-libsvtav1 --enable-libx264 \
             --extra-cflags="-I$HOME/codec-build/include" --extra-ldflags="-L$HOME/codec-build/lib"
           make -j"$(nproc)"
           make install
@@ -70,10 +70,11 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt update
-          sudo apt install -y libdav1d-dev libopus0
+          sudo apt install -y libdav1d-dev libopus0 libx264-dev
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           test -x "$HOME/codec-build/bin/ffmpeg"
           "$HOME/codec-build/bin/ffmpeg" -hide_banner -encoders | grep -q 'libsvtav1'
+          "$HOME/codec-build/bin/ffmpeg" -hide_banner -encoders | grep -q 'libx264'
 
   split-video:
     name: تحميل المصدر وتقطيعه
@@ -94,7 +95,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-ubuntu-24.04-v1
+          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v1
 
       - name: تحميل الفيديو المصدر
         env:
@@ -175,7 +176,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-ubuntu-24.04-v1
+          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v1
 
       - name: تجهيز بايثون وFFmpeg
         run: |
@@ -269,7 +270,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-ubuntu-24.04-v1
+          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v1
 
       - name: تجهيز أدوات الدمج والإرسال
         run: |
