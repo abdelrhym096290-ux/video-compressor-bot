@@ -1,30 +1,61 @@
-name: بوت الضغط الشخصي - AV1 مع طبقة الخريطة التكيفية
+name: ضغط الفيديو الشخصي الموحد (AV1 و H.266/VVC)
 
 on:
   workflow_dispatch:
     inputs:
+      message_id:
+        description: 'معرف رسالة الفيديو في تيليجرام؛ يترك فارغاً عند استخدام الرابط.'
+        required: false
+        default: ''
       url:
-        description: 'رابط مباشر للفيديو المصدر'
+        description: 'رابط مباشر اختياري؛ يترك فارغاً عند استخدام فيديو تيليجرام.'
+        required: false
+        default: ''
+      chat_id:
+        description: 'معرف الدردشة التي أرسلت الفيديو.'
         required: true
       filename:
-        description: 'الاسم النهائي، من دون امتداد'
+        description: 'الاسم النهائي، من دون امتداد.'
+        required: false
+        default: ''
+      codec:
+        description: 'av1 أو vvc أو audio'
         required: true
-      resolution:
-        description: 'الارتفاع النهائي، مثل 480 أو 720 أو 1080'
-        required: true
-        default: '480'
-      crf:
-        description: 'قيمة CRF لـ AV1 (0-63، أقل = جودة أعلى وحجم أكبر)'
-        required: true
-        default: '28'
+        default: 'av1'
       preset:
-        description: 'رقم preset لـ SVT-AV1 (0-13، أقل = أبطأ وأفضل ضغطًا)'
+        description: 'AV1: رقم 0-13. VVC: 1 أبطأ، 2 بطيء، 3 سريع، 4 الأسرع.'
         required: true
         default: '8'
+      encode_mode:
+        description: 'filters أو nofilters أو audio'
+        required: true
+        default: 'nofilters'
+      filter_profile:
+        description: 'anime أو realistic أو none'
+        required: true
+        default: 'none'
+      encode_method:
+        description: 'AV1: crf أو twopass. VVC: qp أو vbr. صوت: audio.'
+        required: true
+        default: 'crf'
+      target_value:
+        description: 'CRF أو QP أو معدل البت، مثل 28 أو 38 أو 500k.'
+        required: true
+        default: '28'
+      resolution:
+        description: 'الارتفاع النهائي، مثل 480 أو 720 أو 1080.'
+        required: true
+        default: '480'
+      frame_rate:
+        description: 'معدل الإطارات النهائي. القيمة الافتراضية 24 لأقل حجم للمسلسلات والأنمي.'
+        required: true
+        default: '24'
 
-# مهمة واحدة في كل مرة لهذا المستودع، والبقية تنتظر بالترتيب.
+# مهمة واحدة تعمل لكل دردشة؛ والبقية تنتظر بالترتيب بدلاً من إلغائها.
+# queue: max يسمح حتى 100 مهمة معلقة في المجموعة نفسها.
 concurrency:
-  group: video-compression-map-layer
+  group: video-compression-${{ github.event.inputs.chat_id }}
+  queue: max
   cancel-in-progress: false
 
 permissions:
@@ -32,52 +63,82 @@ permissions:
 
 jobs:
   prepare-codec-build:
-    name: بناء FFmpeg وSVT-AV1
+    name: بناء FFmpeg الموحد
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
-      - name: استعادة بناء FFmpeg/SVT-AV1
+      - name: استعادة بناء FFmpeg الموحد
+        if: github.event.inputs.codec != 'audio'
         id: cache-build
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v2
+          key: codec-universal-av1-vvc-dav1d-ubuntu-24.04-v4
 
-      - name: بناء SVT-AV1 وFFmpeg إذا لم يوجد الكاش
-        if: steps.cache-build.outputs.cache-hit != 'true'
+      - name: بناء المرّمّزات والمفكك وFFmpeg
+        if: github.event.inputs.codec != 'audio' && steps.cache-build.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           sudo apt update
-          sudo apt install -y build-essential cmake git nasm pkg-config libdav1d-dev libogg-dev libopus-dev libx264-dev
+          sudo apt install -y \
+            build-essential cmake git nasm pkg-config \
+            libdav1d-dev libogg-dev libopus-dev
+
           rm -rf "$HOME/codec-build" "$HOME/codec-sources"
           mkdir -p "$HOME/codec-build" "$HOME/codec-sources"
           cd "$HOME/codec-sources"
+
+          # SVT-AV1 encoder
           git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
-          cmake -S SVT-AV1 -B SVT-AV1/Build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$HOME/codec-build"
+          cmake -S SVT-AV1 -B SVT-AV1/Build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_INSTALL_PREFIX="$HOME/codec-build"
           cmake --build SVT-AV1/Build --parallel "$(nproc)"
           cmake --install SVT-AV1/Build
+
+          # VVenC encoder
+          git clone --depth 1 https://github.com/fraunhoferhhi/vvenc.git
+          cmake -S vvenc -B vvenc/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_INSTALL_PREFIX="$HOME/codec-build"
+          cmake --build vvenc/build --parallel "$(nproc)"
+          cmake --install vvenc/build
+
+          # FFmpeg: AV1 decoder (libdav1d) + AV1/VVC encoders in build واحد.
           git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git
           export PKG_CONFIG_PATH="$HOME/codec-build/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           cd FFmpeg
-          ./configure --prefix="$HOME/codec-build" --enable-gpl --enable-version3 --disable-doc \
-            --enable-libopus --enable-libdav1d --enable-libsvtav1 --enable-libx264 \
-            --extra-cflags="-I$HOME/codec-build/include" --extra-ldflags="-L$HOME/codec-build/lib"
+          ./configure \
+            --prefix="$HOME/codec-build" \
+            --enable-gpl \
+            --enable-version3 \
+            --disable-doc \
+            --enable-libopus \
+            --enable-libdav1d \
+            --enable-libsvtav1 \
+            --enable-libvvenc \
+            --extra-cflags="-I$HOME/codec-build/include" \
+            --extra-ldflags="-L$HOME/codec-build/lib"
           make -j"$(nproc)"
           make install
 
-      - name: فحص البناء
+      - name: فحص البناء الموحد
+        if: github.event.inputs.codec != 'audio'
         run: |
           set -euo pipefail
           sudo apt update
-          sudo apt install -y libdav1d-dev libopus0 libx264-dev
+          sudo apt install -y libdav1d-dev libopus0
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           test -x "$HOME/codec-build/bin/ffmpeg"
           "$HOME/codec-build/bin/ffmpeg" -hide_banner -encoders | grep -q 'libsvtav1'
-          "$HOME/codec-build/bin/ffmpeg" -hide_banner -encoders | grep -q 'libx264'
+          "$HOME/codec-build/bin/ffmpeg" -hide_banner -encoders | grep -q 'libvvenc'
+          "$HOME/codec-build/bin/ffmpeg" -hide_banner -decoders | grep -q 'libdav1d'
 
   split-video:
-    name: تحميل المصدر وتقطيعه
+    name: تحميل المصدر وفحصه وتقطيعه
     needs: prepare-codec-build
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -90,48 +151,124 @@ jobs:
           set -euo pipefail
           sudo apt update
           sudo apt install -y ffmpeg jq libdav1d-dev libopus0
+          python3 -m pip install --user telethon
 
-      - name: استعادة FFmpeg الموحد
+      - name: استعادة FFmpeg الموحد عند الحاجة
+        if: github.event.inputs.codec != 'audio'
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v2
+          key: codec-universal-av1-vvc-dav1d-ubuntu-24.04-v4
 
-      - name: تحميل الفيديو المصدر
+      - name: تحميل الفيديو المصدر والتحقق منه
         env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          SOURCE_CHAT_ID: ${{ github.event.inputs.chat_id }}
+          MESSAGE_ID: ${{ github.event.inputs.message_id }}
           VIDEO_URL: ${{ github.event.inputs.url }}
         run: |
           set -euo pipefail
-          curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 -o raw_input.mp4 "$VIDEO_URL"
+
+          if [ -n "$MESSAGE_ID" ]; then
+            python3 <<'PYEOF'
+          import asyncio
+          import os
+          import sys
+          from telethon import TelegramClient
+          from telethon.sessions import StringSession
+
+          async def main():
+              client = TelegramClient(
+                  StringSession(),
+                  int(os.environ["TG_API_ID"]),
+                  os.environ["TG_API_HASH"],
+              )
+              await client.start(bot_token=os.environ["BOT_TOKEN"])
+              async with client:
+                  message = await client.get_messages(
+                      int(os.environ["SOURCE_CHAT_ID"]),
+                      ids=int(os.environ["MESSAGE_ID"]),
+                  )
+                  if message is None or not message.media:
+                      sys.exit("لم يتم العثور على فيديو في رسالة تيليجرام المطلوبة.")
+                  await client.download_media(message, file="raw_input.mp4")
+
+          asyncio.run(main())
+          PYEOF
+          elif [ -n "$VIDEO_URL" ]; then
+            curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 \
+              -o raw_input.mp4 "$VIDEO_URL"
+          else
+            echo 'لا توجد رسالة تيليجرام ولا رابط مباشر.' >&2
+            exit 1
+          fi
+
           test -s raw_input.mp4
           ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 raw_input.mp4 >/dev/null
 
-      - name: اكتشاف الأشرطة السوداء
+      - name: اكتشاف الأشرطة السوداء فعلياً
         id: detect_crop
+        if: github.event.inputs.codec != 'audio'
         run: |
           set -euo pipefail
-          FFMPEG="$HOME/codec-build/bin/ffmpeg"
-          FFPROBE="$HOME/codec-build/bin/ffprobe"
-          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+          if [ "${{ github.event.inputs.codec }}" = "audio" ]; then
+            echo 'crop=none' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -x "$HOME/codec-build/bin/ffmpeg" ]; then
+            FFMPEG="$HOME/codec-build/bin/ffmpeg"
+            FFPROBE="$HOME/codec-build/bin/ffprobe"
+            export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+          else
+            FFMPEG=ffmpeg
+            FFPROBE=ffprobe
+          fi
+
           SOURCE_CODEC=$("$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 raw_input.mp4 || true)
           DECODER_ARGS=()
-          if [ "$SOURCE_CODEC" = "av1" ]; then DECODER_ARGS=(-c:v libdav1d); fi
+          if [ "$SOURCE_CODEC" = "av1" ]; then
+            DECODER_ARGS=(-c:v libdav1d)
+          fi
+
+          # يقرأ أول 100 إطار ويأخذ آخر قيمة crop مقترحة. لا يطبق cropdetect نفسه لاحقاً.
           CROP=$("$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -i raw_input.mp4 \
             -frames:v 100 -an -vf 'cropdetect=24:16:0' -f null - 2>&1 \
-            | grep -oE 'crop=[0-9]+:[0-9]+:[0-9]+:[0-9]+' | tail -n 1 || true)
-          if [ -z "$CROP" ]; then CROP=none; fi
+            | grep -oE 'crop=[0-9]+:[0-9]+:[0-9]+:[0-9]+' \
+            | tail -n 1 || true)
+
+          if [ -z "$CROP" ]; then
+            CROP=none
+          fi
+          echo "Detected crop filter: $CROP"
           echo "crop=$CROP" >> "$GITHUB_OUTPUT"
 
-      - name: تقسيم المصدر إلى أجزاء MKV
+      - name: تحديد crop افتراضي للصوت
+        id: audio_crop
+        if: github.event.inputs.codec == 'audio'
+        run: echo 'crop=none' >> "$GITHUB_OUTPUT"
+
+      - name: تقسيم المصدر إلى أجزاء MKV مستقلة
         id: segment
         run: |
           set -euo pipefail
           mkdir -p chunks_raw
-          FFPROBE="$HOME/codec-build/bin/ffprobe"
-          FFMPEG="$HOME/codec-build/bin/ffmpeg"
-          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+
+          if [ -x "$HOME/codec-build/bin/ffmpeg" ]; then
+            FFMPEG="$HOME/codec-build/bin/ffmpeg"
+            FFPROBE="$HOME/codec-build/bin/ffprobe"
+            export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+          else
+            FFMPEG=ffmpeg
+            FFPROBE=ffprobe
+          fi
+
           DURATION=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 raw_input.mp4 | cut -d. -f1)
           test -n "$DURATION"
+
+          # خمسة دقائق: توازن بين مهام أقل وتوزيع كافٍ للترميز الثقيل، خصوصاً VVC.
           if [ "$DURATION" -gt 1200 ]; then
             "$FFMPEG" -hide_banner -nostdin -y -i raw_input.mp4 \
               -map 0 -c copy -f segment -segment_time 300 \
@@ -142,6 +279,7 @@ jobs:
               -map 0 -c copy -avoid_negative_ts make_zero \
               chunks_raw/chunk_000.mkv
           fi
+
           find chunks_raw -maxdepth 1 -type f -name 'chunk_*.mkv' -size +0c | sort >/tmp/chunks.txt
           test -s /tmp/chunks.txt
           CHUNKS_JSON=$(sed 's#^.*/chunk_##; s#\.mkv$##' /tmp/chunks.txt | jq -R . | jq -s -c .)
@@ -156,7 +294,7 @@ jobs:
           if-no-files-found: error
 
   encode-chunks:
-    name: معالجة مسبقة بالخريطة + ترميز AV1
+    name: ضغط الأجزاء
     needs: [prepare-codec-build, split-video]
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -166,150 +304,222 @@ jobs:
       matrix:
         chunk: ${{ fromJSON(needs.split-video.outputs.chunks) }}
     steps:
-      - name: تنزيل الجزء الخام
+      - name: تنزيل الجزء الخام في المسار الصحيح
         uses: actions/download-artifact@v4
         with:
           name: raw-chunks
           path: chunks_raw
 
       - name: استعادة FFmpeg الموحد
+        if: github.event.inputs.codec != 'audio'
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v2
+          key: codec-universal-av1-vvc-dav1d-ubuntu-24.04-v4
 
-      - name: تجهيز بايثون وFFmpeg
+      - name: تجهيز الاعتماديات والتحقق من FFmpeg
+        env:
+          CODEC: ${{ github.event.inputs.codec }}
         run: |
           set -euo pipefail
           sudo apt update
           sudo apt install -y ffmpeg libdav1d-dev libopus0
-          pip install --user --break-system-packages numpy pillow
 
-      - name: كتابة فلتر المعالجة المسبقة الموجّه بالخريطة
-        run: |
-          echo "IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiIKbWFwX3ByZWZpbHRlci5weQotLS0tLS0tLS0tLS0tLS0tLS0K2YHZhNiq2LEg2YXYudin2YTYrNipINmF2LPYqNmC2KkgKNmC2KjZhCBBVjEpINmF2YjYrNmR2Ycg2KjYrtix2YrYt9ipINiq2LXZhtmK2YEg2YPYqtmEINit2KrZhdmK2Kk6CgogIDEpINmE2YPZhCDYpdi32KfYsdiMINmK2Y/Zgtiz2Y7ZkdmFINil2YTZiSDZg9iq2YQgKGJsb2NrX3NpemUp2Iwg2YjZhNmD2YQg2YPYqtmE2Kkg2YrZj9it2LPYqCDYp9mG2K3Ysdin2YHZh9inCiAgICAg2KfZhNij2YLYtdmJINi52YYg2YXYqtmI2LPYtyDZhNmI2YbZh9inICjZhdmC2YrYp9izICLZhdiz2LfYrdipIiDYqNiz2YrYtyDZiNiz2LHZiti52Iwg2YXZj9iq2Y7Zkdis2Y7ZhyDYqNin2YTZg9in2YXZhAogICAgINi52KjYsSBudW1weSDYqNiv2YjZhiDYo9mKINit2YTZgtipINio2KfZitir2YjZhiDYudmE2Ykg2YXYs9iq2YjZiSDYp9mE2YPYqtmE2Kkv2KfZhNio2YPYs9mEKS4KICAyKSDYp9mE2YPYqtmEICLYp9mE2YXYs9i32K3YqSIgKNin2YbYrdix2KfZgSDiiaQgdGhyZXNob2xkKSDYqtmP2LnZhNmO2ZHZhSDZgdmKINmC2YbYp9i5LgogIDMpINmK2Y/ZhdmI2Y7ZkdmHINin2YTZgtmG2KfYuSAoR2F1c3NpYW4pINmE2KrZgdin2K/ZiiDYrdmI2KfZgSDYtdmG2KfYudmK2Kkg2K3Yp9iv2Kkg2KjZitmGINin2YTZhdmG2KfYt9mCLgogIDQpINmK2Y/Zhtiq2Y7YrCDYpdi32KfYsdin2YY6INmG2LPYrtipINmF2YXZiNmO2ZHZh9ipINio2YLZiNipIChHYXVzc2lhbiBibHVyKSDZhdmGINin2YTYpdi32KfYsSDZg9in2YXZhNin2YvYjAogICAgINmI2YbYs9iu2Kkg2KfZhNil2LfYp9ixINin2YTYo9i12YTZii4g2YrZj9iv2YXZjtis2KfZhiDYrdiz2Kgg2KfZhNmC2YbYp9i5INin2YTZhdmF2YjZjtmR2Yc6CiAgICAgICDYp9mE2YbYp9iq2KwgPSDZgtmG2KfYuSDDlyDZhtiz2K7YqSDZhdmF2YjZjtmR2YfYqSArICgxLdmC2YbYp9i5KSDDlyDYp9mE2KPYtdmECiAgICAg2KPZijog2KfZhNmF2YbYp9i32YIg2KfZhNmF2LPYt9it2Kkg2KrZj9mG2LjZjtmR2YEg2KjZgtmI2KkgKNmB2KrYtdio2K0g2KPYsdiu2LUg2YTYtti62LcgQVYxINmE2KfYrdmC2YvYpynYjAogICAgINmI2KfZhNmF2YbYp9i32YIg2KfZhNmF2LnZgtiv2Kkg2KrYqNmC2Ykg2YPZhdinINmH2Yog2K/ZiNmGINij2Yog2KrYutmK2YrYsSDYqtmC2LHZitio2YvYpy4KCiAg2YfYsNinINmE2Kcg2YrYs9iq2KjYr9mEIEFWMSDYpdi32YTYp9mC2YvYpyAtINmH2Ygg2LfYqNmC2Kkg2YXYudin2YTYrNipINmF2LPYqNmC2Kkg2YHZgti32Iwg2KrZj9i62LDZkdmKINmB2YrYr9mK2YgKICAi2YXZhti42ZHZgSDYp9mG2KrZgtin2KbZitmL2KciINmE2YXYsdmF2ZHYsiBBVjEg2KfZhNmC2YrYp9iz2YogKGxpYnN2dGF2MSkg2K/ZiNmGINij2Yog2KrYutmK2YrYsSDYudmE2YkKICDYqtmG2LPZitmCINin2YTZhdmE2YEg2KfZhNmG2KfYqtisLgoK2KfZhNin2LPYqtiu2K/Yp9mFOgogICAgcHl0aG9uMyBtYXBfcHJlZmlsdGVyLnB5IGlucHV0Lm1wNCBvdXRwdXQubXA0IFwKICAgICAgICAtLWJsb2NrLXNpemUgMTYgLS1mbGF0LXRocmVzaG9sZCA2LjAgLS1ibHVyLXJhZGl1cyAzLjAKCtmK2KrYt9mE2Kg6IG51bXB5LCBQaWxsb3csIGZmbXBlZyDZgdmKIFBBVEguCiIiIgoKZnJvbSBfX2Z1dHVyZV9fIGltcG9ydCBhbm5vdGF0aW9ucwoKaW1wb3J0IGFyZ3BhcnNlCmltcG9ydCBzdWJwcm9jZXNzCmltcG9ydCBzeXMKZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCgppbXBvcnQgbnVtcHkgYXMgbnAKZnJvbSBQSUwgaW1wb3J0IEltYWdlLCBJbWFnZUZpbHRlcgoKCmRlZiBwcm9iZV92aWRlbyhwYXRoOiBQYXRoKSAtPiB0dXBsZVtpbnQsIGludCwgc3RyXToKICAgICIiItmK2LnZitivICh3aWR0aCwgaGVpZ2h0LCBmcHMpINmD2YbYtSDYudio2LEgZmZwcm9iZS4iIiIKICAgIGNtZCA9IFsKICAgICAgICAiZmZwcm9iZSIsICItdiIsICJlcnJvciIsICItc2VsZWN0X3N0cmVhbXMiLCAidjowIiwKICAgICAgICAiLXNob3dfZW50cmllcyIsICJzdHJlYW09d2lkdGgsaGVpZ2h0LHJfZnJhbWVfcmF0ZSIsCiAgICAgICAgIi1vZiIsICJjc3Y9cD0wIiwgc3RyKHBhdGgpLAogICAgXQogICAgb3V0ID0gc3VicHJvY2Vzcy5ydW4oY21kLCBjYXB0dXJlX291dHB1dD1UcnVlLCB0ZXh0PVRydWUsIGNoZWNrPVRydWUpLnN0ZG91dC5zdHJpcCgpCiAgICB3LCBoLCBmcHMgPSBvdXQuc3BsaXQoIiwiKQogICAgcmV0dXJuIGludCh3KSwgaW50KGgpLCBmcHMKCgpkZWYgYmxvY2tfZmxhdF9tYXNrKGZyYW1lOiBucC5uZGFycmF5LCBibG9ja19zaXplOiBpbnQsIHRocmVzaG9sZDogZmxvYXQpIC0+IG5wLm5kYXJyYXk6CiAgICAiIiIKICAgINmK2LnZitivINmC2YbYp9i5IGZsb2F0MzIg2KjYrdis2YUg2KfZhNil2LfYp9ixINin2YTZg9in2YXZhCAoSCwgVyk6IDEuMCDYrdmK2Ksg2KfZhNmD2KrZhNipINmF2LPYt9it2KnYjCAwLjAg2LrZitixINiw2YTZgy4KICAgINmF2Y/YqtmO2ZHYrNmO2Ycg2KjYp9mE2YPYp9mF2YQgKNio2K/ZiNmGINit2YTZgtin2Kog2KjYp9mK2KvZiNmGKSDYudio2LEg2KXYudin2K/YqSDYqti02YPZitmEINin2YTYtdmB2YrZgSDYpdmE2Ykg2YPYqtmELgogICAgIiIiCiAgICBoLCB3LCBjID0gZnJhbWUuc2hhcGUKICAgIGJzID0gYmxvY2tfc2l6ZQogICAgIyDZhtmC2LXZkSDYp9mE2KPYqNi52KfYryDZhNiq2YPZiNmGINmC2KfYqNmE2Kkg2YTZhNmC2LPZhdipINi52YTZiSBicyDYqNin2YTYttio2LcgKNin2YTZh9in2YXYtCDYp9mE2YXYqtio2YLZiiDZitmP2LnYp9mF2YQg2YPYutmK2LEg2YXYs9i32K0g2KrZhNmC2KfYptmK2YvYpykKICAgIGhfdHJpbSA9IChoIC8vIGJzKSAqIGJzCiAgICB3X3RyaW0gPSAodyAvLyBicykgKiBicwoKICAgIG1hc2sgPSBucC56ZXJvcygoaCwgdyksIGR0eXBlPW5wLmZsb2F0MzIpCiAgICBpZiBoX3RyaW0gPT0gMCBvciB3X3RyaW0gPT0gMDoKICAgICAgICByZXR1cm4gbWFzawoKICAgIHJlZ2lvbiA9IGZyYW1lWzpoX3RyaW0sIDp3X3RyaW0sIDpdLmFzdHlwZShucC5mbG9hdDMyKQogICAgbl9yb3dzID0gaF90cmltIC8vIGJzCiAgICBuX2NvbHMgPSB3X3RyaW0gLy8gYnMKCiAgICAjINil2LnYp9iv2Kkg2KrYtNmD2YrZhCDYpdmE2YkgKNi12YHZiNmBX9mD2KrZhCwgYnMsINij2LnZhdiv2Klf2YPYqtmELCBicywg2YLZhtmI2KfYqikKICAgIGJsb2NrcyA9IHJlZ2lvbi5yZXNoYXBlKG5fcm93cywgYnMsIG5fY29scywgYnMsIGMpCiAgICAjINmG2YLZhCDYp9mE2YXYrdin2YjYsSDZhNiq2LXYqNitICjYtdmB2YjZgV/Zg9iq2YQsINij2LnZhdiv2Klf2YPYqtmELCBicywgYnMsINmC2YbZiNin2KopCiAgICBibG9ja3MgPSBibG9ja3MudHJhbnNwb3NlKDAsIDIsIDEsIDMsIDQpCgogICAgYmxvY2tfbWVhbiA9IGJsb2Nrcy5tZWFuKGF4aXM9KDIsIDMpLCBrZWVwZGltcz1UcnVlKQogICAgZGV2aWF0aW9uID0gbnAuYWJzKGJsb2NrcyAtIGJsb2NrX21lYW4pLm1heChheGlzPSgyLCAzLCA0KSkgICMgKNi12YHZiNmBX9mD2KrZhCwg2KPYudmF2K/YqV/Zg9iq2YQpCiAgICBmbGF0X2Jsb2NrcyA9IChkZXZpYXRpb24gPD0gdGhyZXNob2xkKS5hc3R5cGUobnAuZmxvYXQzMikKCiAgICAjINix2YHYuSDYp9mE2YLZhtin2Lkg2YXZhiDYr9mC2Kkg2KfZhNmD2KrZhNipINil2YTZiSDYr9mC2Kkg2KfZhNio2YPYs9mEINin2YTZg9in2YXZhNipCiAgICB1cHNhbXBsZWQgPSBucC5rcm9uKGZsYXRfYmxvY2tzLCBucC5vbmVzKChicywgYnMpLCBkdHlwZT1ucC5mbG9hdDMyKSkKICAgIG1hc2tbOmhfdHJpbSwgOndfdHJpbV0gPSB1cHNhbXBsZWQKICAgIHJldHVybiBtYXNrCgoKZGVmIHByb2Nlc3NfZnJhbWUoZnJhbWU6IG5wLm5kYXJyYXksIGJsb2NrX3NpemU6IGludCwgZmxhdF90aHJlc2hvbGQ6IGZsb2F0LAogICAgICAgICAgICAgICAgICAgYmx1cl9yYWRpdXM6IGZsb2F0LCBtYXNrX2ZlYXRoZXI6IGZsb2F0KSAtPiB0dXBsZVtucC5uZGFycmF5LCBmbG9hdF06CiAgICBtYXNrID0gYmxvY2tfZmxhdF9tYXNrKGZyYW1lLCBibG9ja19zaXplLCBmbGF0X3RocmVzaG9sZCkKICAgIGZsYXRfcmF0aW8gPSBmbG9hdChtYXNrLm1lYW4oKSkKCiAgICAjINiq2YXZiNmK2Ycg2KfZhNmC2YbYp9i5INmG2YHYs9mHINmE2KrZgdin2K/ZiiDYrdmI2KfZgSDYtdmG2KfYudmK2Kkg2K3Yp9iv2Kkg2KjZitmGINmF2YbYp9i32YIg2YXYs9i32K3YqSDZiNij2K7YsdmJINiq2YHYtdmK2YTZitipCiAgICBtYXNrX2ltZyA9IEltYWdlLmZyb21hcnJheSgobWFzayAqIDI1NSkuYXN0eXBlKG5wLnVpbnQ4KSkKICAgIG1hc2tfaW1nID0gbWFza19pbWcuZmlsdGVyKEltYWdlRmlsdGVyLkdhdXNzaWFuQmx1cihyYWRpdXM9bWFza19mZWF0aGVyKSkKICAgIG1hc2tfc21vb3RoID0gbnAuYXNhcnJheShtYXNrX2ltZykuYXN0eXBlKG5wLmZsb2F0MzIpIC8gMjU1LjAKCiAgICBmcmFtZV9pbWcgPSBJbWFnZS5mcm9tYXJyYXkoZnJhbWUpCiAgICBibHVycmVkX2ltZyA9IGZyYW1lX2ltZy5maWx0ZXIoSW1hZ2VGaWx0ZXIuR2F1c3NpYW5CbHVyKHJhZGl1cz1ibHVyX3JhZGl1cykpCiAgICBibHVycmVkID0gbnAuYXNhcnJheShibHVycmVkX2ltZykuYXN0eXBlKG5wLmZsb2F0MzIpCgogICAgb3JpZ2luYWwgPSBmcmFtZS5hc3R5cGUobnAuZmxvYXQzMikKICAgIG1hc2szID0gbWFza19zbW9vdGhbOiwgOiwgTm9uZV0KICAgIG91dHB1dCA9IG1hc2szICogYmx1cnJlZCArICgxLjAgLSBtYXNrMykgKiBvcmlnaW5hbAogICAgb3V0cHV0ID0gbnAuY2xpcChucC5yb3VuZChvdXRwdXQpLCAwLCAyNTUpLmFzdHlwZShucC51aW50OCkKICAgIHJldHVybiBvdXRwdXQsIGZsYXRfcmF0aW8KCgpkZWYgbWFpbigpIC0+IE5vbmU6CiAgICBwYXJzZXIgPSBhcmdwYXJzZS5Bcmd1bWVudFBhcnNlcihkZXNjcmlwdGlvbj0i2YXYudin2YTYrNipINmF2LPYqNmC2Kkg2YXZiNis2ZHZh9ipINio2K7YsdmK2LfYqSDZgtio2YQgQVYxIikKICAgIHBhcnNlci5hZGRfYXJndW1lbnQoImlucHV0IiwgdHlwZT1QYXRoKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgib3V0cHV0IiwgdHlwZT1QYXRoKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgiLS1ibG9jay1zaXplIiwgdHlwZT1pbnQsIGRlZmF1bHQ9MTYpCiAgICBwYXJzZXIuYWRkX2FyZ3VtZW50KCItLWZsYXQtdGhyZXNob2xkIiwgdHlwZT1mbG9hdCwgZGVmYXVsdD02LjApCiAgICBwYXJzZXIuYWRkX2FyZ3VtZW50KCItLWJsdXItcmFkaXVzIiwgdHlwZT1mbG9hdCwgZGVmYXVsdD0zLjAsCiAgICAgICAgICAgICAgICAgICAgICAgICBoZWxwPSLZgtmI2Kkg2KrZhti42YrZgSDYp9mE2YXZhtin2LfZgiDYp9mE2YXYs9i32K3YqSAo2YbYtdmBINmC2LfYsSBHYXVzc2lhbikiKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgiLS1tYXNrLWZlYXRoZXIiLCB0eXBlPWZsb2F0LCBkZWZhdWx0PTguMCwKICAgICAgICAgICAgICAgICAgICAgICAgIGhlbHA9ItmG2LnZiNmF2Kkg2KfZhNin2YbYqtmC2KfZhCDYqNmK2YYg2KfZhNmF2YbYp9i32YIg2KfZhNmF2LPYt9it2Kkg2YjYp9mE2KrZgdi12YrZhNmK2KkiKQogICAgYXJncyA9IHBhcnNlci5wYXJzZV9hcmdzKCkKCiAgICB3LCBoLCBmcHMgPSBwcm9iZV92aWRlbyhhcmdzLmlucHV0KQogICAgZnJhbWVfYnl0ZXMgPSB3ICogaCAqIDMKCiAgICBkZWNvZGVfY21kID0gWwogICAgICAgICJmZm1wZWciLCAiLWhpZGVfYmFubmVyIiwgIi1sb2dsZXZlbCIsICJlcnJvciIsICItbm9zdGRpbiIsCiAgICAgICAgIi1pIiwgc3RyKGFyZ3MuaW5wdXQpLCAiLWYiLCAicmF3dmlkZW8iLCAiLXBpeF9mbXQiLCAicmdiMjQiLCAiLSIsCiAgICBdCiAgICBlbmNvZGVfY21kID0gWwogICAgICAgICJmZm1wZWciLCAiLWhpZGVfYmFubmVyIiwgIi1sb2dsZXZlbCIsICJlcnJvciIsICItbm9zdGRpbiIsICIteSIsCiAgICAgICAgIi1mIiwgInJhd3ZpZGVvIiwgIi1waXhfZm10IiwgInJnYjI0IiwgIi1zIiwgZiJ7d314e2h9IiwgIi1yIiwgZnBzLAogICAgICAgICItaSIsICItIiwgIi1waXhfZm10IiwgInl1djQyMHAiLCBzdHIoYXJncy5vdXRwdXQpLAogICAgXQoKICAgIGRlY29kZXIgPSBzdWJwcm9jZXNzLlBvcGVuKGRlY29kZV9jbWQsIHN0ZG91dD1zdWJwcm9jZXNzLlBJUEUpCiAgICBlbmNvZGVyID0gc3VicHJvY2Vzcy5Qb3BlbihlbmNvZGVfY21kLCBzdGRpbj1zdWJwcm9jZXNzLlBJUEUpCgogICAgbl9mcmFtZXMgPSAwCiAgICBmbGF0X3JhdGlvcyA9IFtdCiAgICB0cnk6CiAgICAgICAgd2hpbGUgVHJ1ZToKICAgICAgICAgICAgcmF3ID0gZGVjb2Rlci5zdGRvdXQucmVhZChmcmFtZV9ieXRlcykKICAgICAgICAgICAgaWYgbGVuKHJhdykgPCBmcmFtZV9ieXRlczoKICAgICAgICAgICAgICAgIGJyZWFrCiAgICAgICAgICAgIGZyYW1lID0gbnAuZnJvbWJ1ZmZlcihyYXcsIGR0eXBlPW5wLnVpbnQ4KS5yZXNoYXBlKGgsIHcsIDMpCiAgICAgICAgICAgIG91dF9mcmFtZSwgZmxhdF9yYXRpbyA9IHByb2Nlc3NfZnJhbWUoCiAgICAgICAgICAgICAgICBmcmFtZSwgYXJncy5ibG9ja19zaXplLCBhcmdzLmZsYXRfdGhyZXNob2xkLAogICAgICAgICAgICAgICAgYXJncy5ibHVyX3JhZGl1cywgYXJncy5tYXNrX2ZlYXRoZXIsCiAgICAgICAgICAgICkKICAgICAgICAgICAgZmxhdF9yYXRpb3MuYXBwZW5kKGZsYXRfcmF0aW8pCiAgICAgICAgICAgIGVuY29kZXIuc3RkaW4ud3JpdGUob3V0X2ZyYW1lLnRvYnl0ZXMoKSkKICAgICAgICAgICAgbl9mcmFtZXMgKz0gMQogICAgZmluYWxseToKICAgICAgICBlbmNvZGVyLnN0ZGluLmNsb3NlKCkKICAgICAgICBkZWNvZGVyLnN0ZG91dC5jbG9zZSgpCiAgICAgICAgZGVjb2Rlci53YWl0KCkKICAgICAgICBlbmNvZGVyLndhaXQoKQoKICAgIGlmIG5fZnJhbWVzID09IDA6CiAgICAgICAgcHJpbnQoItmE2YUg2KrYqtmFINmF2LnYp9mE2KzYqSDYo9mKINil2LfYp9ixIC0g2KrYrdmC2YIg2YXZhiDYtdit2Kkg2KfZhNmB2YrYr9mK2Ygg2KfZhNmF2K/YrtmELiIsIGZpbGU9c3lzLnN0ZGVycikKICAgICAgICBzeXMuZXhpdCgxKQoKICAgIGF2Z19mbGF0ID0gc3VtKGZsYXRfcmF0aW9zKSAvIGxlbihmbGF0X3JhdGlvcykKICAgIHByaW50KGYi2KrZhdiqINmF2LnYp9mE2KzYqSB7bl9mcmFtZXN9INil2LfYp9ix2YvYpy4g2YXYqtmI2LPYtyDZhtiz2KjYqSDYp9mE2YPYqtmEINin2YTZhdiz2LfYrdipOiB7YXZnX2ZsYXQqMTAwOi4xZn0lIikKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgbWFpbigpCg==" | base64 -d > map_prefilter.py
-          python3 -c "import ast; ast.parse(open('map_prefilter.py').read())"
+          if [ "$CODEC" != "audio" ]; then
+            test -x "$HOME/codec-build/bin/ffmpeg"
+            export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+            "$HOME/codec-build/bin/ffmpeg" -hide_banner -encoders | grep -q 'libsvtav1'
+            "$HOME/codec-build/bin/ffmpeg" -hide_banner -encoders | grep -q 'libvvenc'
+            "$HOME/codec-build/bin/ffmpeg" -hide_banner -decoders | grep -q 'libdav1d'
+          fi
 
-      - name: معالجة الجزء وترميزه
+      - name: ضغط الجزء
         env:
+          CODEC: ${{ github.event.inputs.codec }}
+          PRESET_INPUT: ${{ github.event.inputs.preset }}
+          ENCODE_MODE: ${{ github.event.inputs.encode_mode }}
+          FILTER_PROFILE: ${{ github.event.inputs.filter_profile }}
+          ENCODE_METHOD: ${{ github.event.inputs.encode_method }}
+          TARGET_VALUE: ${{ github.event.inputs.target_value }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
-          CRF: ${{ github.event.inputs.crf }}
-          PRESET: ${{ github.event.inputs.preset }}
+          FRAME_RATE: ${{ github.event.inputs.frame_rate }}
           CROP_FILTER: ${{ needs.split-video.outputs.crop }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
           set -euo pipefail
           IN="chunks_raw/chunk_${CHUNK_ID}.mkv"
           OUT_DIR="chunks_encoded"
+          # VVC يستخدم MP4 لأفضل توافق عملي؛ AV1 والصوت يبقيان على MKV.
+          if [ "$CODEC" = "vvc" ]; then EXT=mp4; else EXT=mkv; fi
+          OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.${EXT}"
           mkdir -p "$OUT_DIR"
           test -s "$IN"
 
-          [[ "$RESOLUTION" =~ ^[0-9]{3,4}$ ]] || { echo 'الدقة يجب أن تكون رقمًا صحيحًا.' >&2; exit 1; }
-          (( RESOLUTION >= 144 && RESOLUTION <= 2160 )) || { echo 'الدقة خارج النطاق المسموح.' >&2; exit 1; }
-          [[ "$CRF" =~ ^([0-9]|[1-5][0-9]|6[0-3])$ ]] || { echo 'CRF يجب أن يكون من 0 إلى 63.' >&2; exit 1; }
-          [[ "$PRESET" =~ ^([0-9]|1[0-3])$ ]] || { echo 'preset يجب أن يكون رقمًا من 0 إلى 13.' >&2; exit 1; }
-
-          FFMPEG="$HOME/codec-build/bin/ffmpeg"
-          FFPROBE="$HOME/codec-build/bin/ffprobe"
-          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
-
-          # إعداد الفلاتر المشتركة
-          FILTERS=("setpts=PTS-STARTPTS")
-          if [ -n "$CROP_FILTER" ] && [ "$CROP_FILTER" != "none" ]; then
-            FILTERS+=("$CROP_FILTER")
+          if [ "$CODEC" = "audio" ]; then
+            FFMPEG=ffmpeg
+            FFPROBE=ffprobe
+          else
+            FFMPEG="$HOME/codec-build/bin/ffmpeg"
+            FFPROBE="$HOME/codec-build/bin/ffprobe"
+            export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           fi
-          FILTERS+=("scale=-2:${RESOLUTION}:flags=lanczos")
-          VF_CHAIN=$(IFS=,; printf '%s' "${FILTERS[*]}")
 
-          INPUT_CODEC=$("$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$IN")
-          DECODER_ARGS=()
-          if [ "$INPUT_CODEC" = "av1" ]; then DECODER_ARGS=(-c:v libdav1d); fi
+          # السطر التشخيصي: يسهل كشف انتقال أي قيمة خطأ من البوت إلى GitHub.
+          printf 'INPUTS: codec=%s preset=%s mode=%s filter=%s method=%s target=%s resolution=%s fps=%s crop=%s chunk=%s\n' \
+            "$CODEC" "$PRESET_INPUT" "$ENCODE_MODE" "$FILTER_PROFILE" \
+            "$ENCODE_METHOD" "$TARGET_VALUE" "$RESOLUTION" "$FRAME_RATE" \
+            "$CROP_FILTER" "$CHUNK_ID"
 
-          # المسار 1: الترميز التقليدي (AV1 مباشرة)
-          echo "=== بدء الترميز التقليدي (بدون تهجين) ==="
-          START_TRADITIONAL=$(date +%s)
-          "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
-            -vf "$VF_CHAIN" -r 24 -fps_mode cfr \
-            -c:v libsvtav1 -preset "$PRESET" -crf "$CRF" -g 240 \
-            -svtav1-params tune=0:enable-qm=1:qm-min=0 \
-            -c:a libopus -b:a 32k -ac 2 \
-            "${OUT_DIR}/traditional_${CHUNK_ID}.mkv"
-          END_TRADITIONAL=$(date +%s)
-          TIME_TRADITIONAL=$((END_TRADITIONAL - START_TRADITIONAL))
-          echo "الترميز التقليدي استغرق: ${TIME_TRADITIONAL} ثانية"
+          case "$CODEC" in
+            av1|vvc|audio) ;;
+            *) echo "مرمّز غير مدعوم: $CODEC" >&2; exit 1 ;;
+          esac
+          [[ "$RESOLUTION" =~ ^[0-9]{3,4}$ ]] || { echo 'الدقة يجب أن تكون رقماً صحيحاً.' >&2; exit 1; }
+          (( RESOLUTION >= 144 && RESOLUTION <= 2160 )) || { echo 'الدقة خارج النطاق المسموح.' >&2; exit 1; }
+          [[ "$FRAME_RATE" =~ ^([1-9]|[1-5][0-9])$ ]] || { echo 'معدل الإطارات يجب أن يكون بين 1 و59.' >&2; exit 1; }
 
-          # المسار 2: الترميز المهجن (مع المعالجة المسبقة)
-          echo "=== بدء الترميز المهجن (مع التهجين) ==="
-          START_HYBRID=$(date +%s)
+          if [ "$CODEC" = "audio" ]; then
+            [ "$ENCODE_MODE" = "audio" ] || { echo 'الصوت يتطلب encode_mode=audio.' >&2; exit 1; }
+            [ "$ENCODE_METHOD" = "audio" ] || { echo 'الصوت يتطلب encode_method=audio.' >&2; exit 1; }
+            [[ "$TARGET_VALUE" =~ ^[1-9][0-9]{0,5}([kKmM])?$ ]] || { echo 'معدل بت الصوت غير صحيح.' >&2; exit 1; }
+            "$FFMPEG" -hide_banner -nostdin -y -i "$IN" -map 0:a:0? -vn \
+              -c:a libopus -b:a "$TARGET_VALUE" -ac 2 "$OUT_FILE"
+          else
+            if [ "$CODEC" = "av1" ]; then
+              [[ "$PRESET_INPUT" =~ ^([0-9]|1[0-3])$ ]] || { echo 'AV1 preset يجب أن يكون رقماً من 0 إلى 13.' >&2; exit 1; }
+              [ "$ENCODE_METHOD" = "crf" ] || [ "$ENCODE_METHOD" = "twopass" ] || { echo 'طريقة AV1 يجب أن تكون crf أو twopass.' >&2; exit 1; }
+              VIDEO_CODEC=libsvtav1
+              VIDEO_PRESET="$PRESET_INPUT"
+            else
+              case "$PRESET_INPUT" in
+                1) VIDEO_PRESET=slower ;;
+                2) VIDEO_PRESET=slow ;;
+                3) VIDEO_PRESET=fast ;;
+                4) VIDEO_PRESET=faster ;;
+                *) echo 'VVC preset يجب أن يكون 1 أو 2 أو 3 أو 4.' >&2; exit 1 ;;
+              esac
+              [ "$ENCODE_METHOD" = "qp" ] || [ "$ENCODE_METHOD" = "vbr" ] || { echo 'طريقة VVC يجب أن تكون qp أو vbr.' >&2; exit 1; }
+              VIDEO_CODEC=libvvenc
+            fi
 
-          # الخطوة 1: توحيد الدقة وقص الأشرطة السوداء وتوحيد الإطارات
-          "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
-            -vf "$VF_CHAIN" -r 24 -fps_mode cfr -an \
-            -c:v libx264 -preset ultrafast -crf 0 -pix_fmt yuv420p \
-            "${OUT_DIR}/normalized_${CHUNK_ID}.mp4"
+            case "$ENCODE_MODE" in
+              nofilters)
+                [ "$FILTER_PROFILE" = "none" ] || { echo 'بدون فلاتر يتطلب filter_profile=none.' >&2; exit 1; }
+                ;;
+              filters)
+                [[ "$FILTER_PROFILE" = "anime" || "$FILTER_PROFILE" = "realistic" ]] || { echo 'الفلاتر تتطلب anime أو realistic.' >&2; exit 1; }
+                ;;
+              *) echo 'encode_mode للفيديو يجب أن يكون filters أو nofilters.' >&2; exit 1 ;;
+            esac
 
-          # الخطوة 2: المعالجة المسبقة الموجّهة بالخريطة
-          export PATH="$HOME/codec-build/bin:$PATH"
-          python3 map_prefilter.py \
-            "${OUT_DIR}/normalized_${CHUNK_ID}.mp4" \
-            "${OUT_DIR}/filtered_${CHUNK_ID}.mp4" \
-            --block-size 16 --flat-threshold 6.0 --blur-radius 3.0 --mask-feather 8.0
+            # اختيار libdav1d حصرياً إن كان المصدر AV1، ومنع أي محاولة لتسريع عتادي.
+            INPUT_CODEC=$("$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$IN")
+            DECODER_ARGS=()
+            if [ "$INPUT_CODEC" = "av1" ]; then
+              DECODER_ARGS=(-c:v libdav1d)
+            fi
 
-          # الخطوة 3: ترميز AV1 على النسخة المُنظَّفة
-          "$FFMPEG" -hide_banner -nostdin -y -i "${OUT_DIR}/filtered_${CHUNK_ID}.mp4" \
-            -i "$IN" \
-            -map 0:v:0 -map 1:a:0? \
-            -c:v libsvtav1 -preset "$PRESET" -crf "$CRF" -g 240 \
-            -svtav1-params tune=0:enable-qm=1:qm-min=0 \
-            -c:a libopus -b:a 32k -ac 2 -shortest \
-            "${OUT_DIR}/hybrid_${CHUNK_ID}.mkv"
-          END_HYBRID=$(date +%s)
-          TIME_HYBRID=$((END_HYBRID - START_HYBRID))
-          echo "الترميز المهجن استغرق: ${TIME_HYBRID} ثانية"
+            # cropdetect طبق في split، وهنا نطبق قيمة crop المكتشفة فعلياً.
+            # تصفير طابع الفيديو قبل القص أو تغيير الدقة يمنع انتقال إزاحة الجزء الخام إلى الناتج.
+            FILTERS=("setpts=PTS-STARTPTS")
+            if [ -n "$CROP_FILTER" ] && [ "$CROP_FILTER" != "none" ]; then
+              FILTERS+=("$CROP_FILTER")
+            fi
+            FILTERS+=("scale=-2:${RESOLUTION}:flags=lanczos")
 
-          # التحقق من النواتج
-          test -s "${OUT_DIR}/traditional_${CHUNK_ID}.mkv"
-          test -s "${OUT_DIR}/hybrid_${CHUNK_ID}.mkv"
-          "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${OUT_DIR}/traditional_${CHUNK_ID}.mkv" \
-            | grep -q '^av1$' || { echo 'خطأ: الترميز التقليدي لا يحتوي AV1.' >&2; exit 1; }
-          "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${OUT_DIR}/hybrid_${CHUNK_ID}.mkv" \
-            | grep -q '^av1$' || { echo 'خطأ: الترميز المهجن لا يحتوي AV1.' >&2; exit 1; }
+            if [ "$ENCODE_MODE" = "filters" ] && [ "$FILTER_PROFILE" = "anime" ]; then
+              FILTERS+=("hqdn3d=1.5:1.0:1.5:1.0")
+              FILTERS+=("deband=1thr=0.02:2thr=0.02:3thr=0.02:range=16")
+            elif [ "$ENCODE_MODE" = "filters" ] && [ "$FILTER_PROFILE" = "realistic" ]; then
+              FILTERS+=("hqdn3d=0.5:0.5:0.5:0.5")
+            fi
+            FILTERS+=("format=yuv420p10le")
+            VF_CHAIN=$(IFS=,; printf '%s' "${FILTERS[*]}")
 
-          # حساب الأحجام
-          SIZE_TRADITIONAL=$(stat -c%s "${OUT_DIR}/traditional_${CHUNK_ID}.mkv")
-          SIZE_HYBRID=$(stat -c%s "${OUT_DIR}/hybrid_${CHUNK_ID}.mkv")
+            if [ "$CODEC" = "av1" ]; then
+              [[ "$TARGET_VALUE" =~ ^([0-9]|[1-5][0-9]|6[0-3])$ ]] || { echo 'AV1 CRF يجب أن يكون من 0 إلى 63.' >&2; exit 1; }
+              SVT_PARAMS='-svtav1-params tune=0:enable-qm=1:qm-min=0'
+              if [ "$ENCODE_MODE" = "filters" ] && [ "$FILTER_PROFILE" = "anime" ]; then
+                SVT_PARAMS='-svtav1-params tune=0:enable-qm=1:qm-min=0:enable-overlays=1:film-grain=6:film-grain-denoise=0'
+              fi
 
-          # حفظ معلومات المقارنة
-          echo "traditional_size=${SIZE_TRADITIONAL}" > "${OUT_DIR}/compare_${CHUNK_ID}.txt"
-          echo "hybrid_size=${SIZE_HYBRID}" >> "${OUT_DIR}/compare_${CHUNK_ID}.txt"
-          echo "traditional_time=${TIME_TRADITIONAL}" >> "${OUT_DIR}/compare_${CHUNK_ID}.txt"
-          echo "hybrid_time=${TIME_HYBRID}" >> "${OUT_DIR}/compare_${CHUNK_ID}.txt"
+              if [ "$ENCODE_METHOD" = "crf" ]; then
+                "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
+                  -vf "$VF_CHAIN" -r "$FRAME_RATE" -fps_mode cfr \
+                  -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -crf "$TARGET_VALUE" -g 240 \
+                  $SVT_PARAMS \
+                  -af 'asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0' \
+                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 -shortest "$OUT_FILE"
+              else
+                [[ "$TARGET_VALUE" =~ ^[1-9][0-9]{0,5}([kKmM])?$ ]] || { echo 'معدل بت Two-Pass غير صحيح.' >&2; exit 1; }
+                PASSLOG="${OUT_DIR}/passlog_${CHUNK_ID}"
+                "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
+                  -vf "$VF_CHAIN" -r "$FRAME_RATE" -fps_mode cfr \
+                  -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 \
+                  -pass 1 -passlogfile "$PASSLOG" -an -f null /dev/null
+                "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
+                  -vf "$VF_CHAIN" -r "$FRAME_RATE" -fps_mode cfr \
+                  -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 \
+                  -pass 2 -passlogfile "$PASSLOG" $SVT_PARAMS \
+                  -af 'asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0' \
+                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 -shortest "$OUT_FILE"
+              fi
+            else
+              if [ "$ENCODE_METHOD" = "qp" ]; then
+                [[ "$TARGET_VALUE" =~ ^([0-9]|[1-5][0-9]|6[0-3])$ ]] || { echo 'VVC QP يجب أن يكون من 0 إلى 63.' >&2; exit 1; }
+                "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
+                  -vf "$VF_CHAIN" -r "$FRAME_RATE" -fps_mode cfr \
+                  -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -qp "$TARGET_VALUE" -g 240 \
+                  -tag:v vvc1 -movflags +faststart \
+                  -af 'asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0' \
+                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 -shortest "$OUT_FILE"
+              else
+                [[ "$TARGET_VALUE" =~ ^[1-9][0-9]{0,5}([kKmM])?$ ]] || { echo 'VVC VBR غير صحيح.' >&2; exit 1; }
+                "$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -y -i "$IN" \
+                  -vf "$VF_CHAIN" -r "$FRAME_RATE" -fps_mode cfr \
+                  -c:v "$VIDEO_CODEC" -preset "$VIDEO_PRESET" -b:v "$TARGET_VALUE" -g 240 \
+                  -tag:v vvc1 -movflags +faststart \
+                  -af 'asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0' \
+                  -map 0:v:0 -map 0:a:0? -c:a libopus -b:a 32k -ac 2 -shortest "$OUT_FILE"
+              fi
+            fi
+          fi
 
-          # تنظيف الملفات المؤقتة
-          rm -f "${OUT_DIR}/normalized_${CHUNK_ID}.mp4" "${OUT_DIR}/filtered_${CHUNK_ID}.mp4"
+          test -s "$OUT_FILE"
+          if [ "$CODEC" != "audio" ]; then
+            "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$OUT_FILE" \
+              | grep -Eq '^(av1|vvc)$' || { echo 'خطأ: الناتج لا يحتوي مسار فيديو AV1 أو VVC.' >&2; exit 1; }
+          fi
+          HAS_INPUT_AUDIO=$("$FFPROBE" -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$IN" | head -n 1 || true)
+          if [ "$CODEC" = "audio" ] || [ -n "$HAS_INPUT_AUDIO" ]; then
+            "$FFPROBE" -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$OUT_FILE" \
+              | grep -q 'opus' || { echo 'خطأ: الناتج لا يحتوي مسار صوت Opus.' >&2; exit 1; }
+          fi
 
-      - name: رفع الأجزاء المضغوطة
+          IN_DURATION=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$IN")
+          OUT_DURATION=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$OUT_FILE")
+          printf 'DURATION CHECK: input=%s output=%s\n' "$IN_DURATION" "$OUT_DURATION"
+
+      - name: رفع الجزء المضغوط
         uses: actions/upload-artifact@v4
         with:
           name: encoded-${{ matrix.chunk }}
-          path: |
-            chunks_encoded/traditional_${{ matrix.chunk }}.mkv
-            chunks_encoded/hybrid_${{ matrix.chunk }}.mkv
-            chunks_encoded/compare_${{ matrix.chunk }}.txt
+          path: chunks_encoded/encoded_${{ matrix.chunk }}.*
           retention-days: 1
           if-no-files-found: error
 
   merge-and-send:
-    name: دمج الناتج ورفعه لقناة تيليجرام
+    name: دمج الناتج وإرساله
     needs: [prepare-codec-build, split-video, encode-chunks]
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
-      - name: استعادة FFmpeg الموحد
+      - name: استعادة FFmpeg الموحد للدمج
+        if: github.event.inputs.codec != 'audio'
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: codec-map-layer-av1-dav1d-x264-ubuntu-24.04-v2
+          key: codec-universal-av1-vvc-dav1d-ubuntu-24.04-v4
 
       - name: تجهيز أدوات الدمج والإرسال
         run: |
@@ -325,67 +535,52 @@ jobs:
           path: all_encoded
           merge-multiple: true
 
-      - name: دمج الأجزاء وحساب المقارنة
+      - name: دمج الأجزاء في MKV
+        env:
+          CODEC: ${{ github.event.inputs.codec }}
         run: |
           set -euo pipefail
-          FFMPEG="$HOME/codec-build/bin/ffmpeg"
-          FFPROBE="$HOME/codec-build/bin/ffprobe"
-          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+          if [ "$CODEC" = "audio" ]; then
+            FFMPEG=ffmpeg
+            FFPROBE=ffprobe
+          else
+            FFMPEG="$HOME/codec-build/bin/ffmpeg"
+            FFPROBE="$HOME/codec-build/bin/ffprobe"
+            export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+          fi
+
           cd all_encoded
+          if [ "$CODEC" = "vvc" ]; then EXT=mp4; else EXT=mkv; fi
+          find . -maxdepth 1 -type f -name "encoded_*.${EXT}" | sort > /tmp/encoded_files.txt
+          test -s /tmp/encoded_files.txt
+          sed "s#^./#file '#; s#\$#'#" /tmp/encoded_files.txt > concat_list.txt
+          "$FFMPEG" -hide_banner -nostdin -y -f concat -safe 0 -i concat_list.txt -map 0 -c copy "../output.${EXT}"
+          test -s "../output.${EXT}"
 
-          # دمج الترميز التقليدي
-          find . -maxdepth 1 -type f -name "traditional_*.mkv" | sort > /tmp/traditional_files.txt
-          test -s /tmp/traditional_files.txt
-          sed "s#^./#file '#; s#\$#'#" /tmp/traditional_files.txt > concat_traditional.txt
-          "$FFMPEG" -hide_banner -nostdin -y -f concat -safe 0 -i concat_traditional.txt -map 0 -c copy "../traditional_output.mkv"
+          if [ "$CODEC" != "audio" ]; then
+            "$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "../output.${EXT}" \
+              | grep -Eq '^(av1|vvc)$' || { echo 'الدمج فقد مسار الفيديو.' >&2; exit 1; }
+          fi
 
-          # دمج الترميز المهجن
-          find . -maxdepth 1 -type f -name "hybrid_*.mkv" | sort > /tmp/hybrid_files.txt
-          test -s /tmp/hybrid_files.txt
-          sed "s#^./#file '#; s#\$#'#" /tmp/hybrid_files.txt > concat_hybrid.txt
-          "$FFMPEG" -hide_banner -nostdin -y -f concat -safe 0 -i concat_hybrid.txt -map 0 -c copy "../hybrid_output.mkv"
+      - name: استخراج معلومات الناتج
+        id: videoinfo
+        env:
+          CODEC: ${{ github.event.inputs.codec }}
+        run: |
+          set -euo pipefail
+          if [ "$CODEC" = "vvc" ]; then EXT=mp4; else EXT=mkv; fi
+          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "output.${EXT}" | cut -d. -f1)
+          H=$((DURATION_SEC / 3600))
+          M=$(((DURATION_SEC % 3600) / 60))
+          S=$((DURATION_SEC % 60))
+          echo "duration_fmt=$(printf '%02d:%02d:%02d' "$H" "$M" "$S")" >> "$GITHUB_OUTPUT"
 
-          # حساب الأحجام الكلية
-          SIZE_TRADITIONAL=$(stat -c%s "../traditional_output.mkv")
-          SIZE_HYBRID=$(stat -c%s "../hybrid_output.mkv")
-
-          # حساب أوقات المعالجة الكلية
-          TOTAL_TIME_TRADITIONAL=0
-          TOTAL_TIME_HYBRID=0
-          for f in compare_*.txt; do
-            TRAD_TIME=$(grep 'traditional_time=' "$f" | cut -d= -f2)
-            HYB_TIME=$(grep 'hybrid_time=' "$f" | cut -d= -f2)
-            TOTAL_TIME_TRADITIONAL=$((TOTAL_TIME_TRADITIONAL + TRAD_TIME))
-            TOTAL_TIME_HYBRID=$((TOTAL_TIME_HYBRID + HYB_TIME))
-          done
-
-          # حساب جودة الصورة (PSNR وSSIM)
-          echo "=== حساب مقاييس الجودة ==="
-          # استخراج إطار من كل فيديو للمقارنة
-          "$FFMPEG" -hide_banner -nostdin -y -i "../traditional_output.mkv" -frames:v 1 -vf "select=eq(n\,100)" -vsync vfr "../traditional_frame.png" || true
-          "$FFMPEG" -hide_banner -nostdin -y -i "../hybrid_output.mkv" -frames:v 1 -vf "select=eq(n\,100)" -vsync vfr "../hybrid_frame.png" || true
-
-          # حساب PSNR بين الفيديوين (تقريبي)
-          PSNR_VALUE=$("$FFMPEG" -hide_banner -nostdin -i "../traditional_output.mkv" -i "../hybrid_output.mkv" \
-            -lavfi "[0:v][1:v]psnr" -f null - 2>&1 | grep -oP 'average:\K[0-9.]+' || echo "N/A")
-
-          # حساب SSIM بين الفيديوين (تقريبي)
-          SSIM_VALUE=$("$FFMPEG" -hide_banner -nostdin -i "../traditional_output.mkv" -i "../hybrid_output.mkv" \
-            -lavfi "[0:v][1:v]ssim" -f null - 2>&1 | grep -oP 'All:\K[0-9.]+' || echo "N/A")
-
-          # حفظ نتائج المقارنة
-          {
-            echo "=== نتائج المقارنة ==="
-            echo "الحجم التقليدي: $((SIZE_TRADITIONAL / 1024 / 1024)) MB"
-            echo "الحجم المهجن: $((SIZE_HYBRID / 1024 / 1024)) MB"
-            echo "نسبة توفير الحجم: $(awk -v t="$SIZE_TRADITIONAL" -v h="$SIZE_HYBRID" 'BEGIN {printf "%.2f", ((t - h) / t) * 100}')%"
-            echo "وقت الترميز التقليدي: ${TOTAL_TIME_TRADITIONAL} ثانية"
-            echo "وقت الترميز المهجن: ${TOTAL_TIME_HYBRID} ثانية"
-            echo "PSNR: ${PSNR_VALUE}"
-            echo "SSIM: ${SSIM_VALUE}"
-          } > ../comparison_results.txt
-
-          cat ../comparison_results.txt
+          if [ "${{ github.event.inputs.codec }}" = "audio" ]; then
+            echo 'actual_res=صوت فقط' >> "$GITHUB_OUTPUT"
+          else
+            ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "output.${EXT}")
+            echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: إعداد الاسم النهائي
         id: naming
@@ -400,50 +595,31 @@ jobs:
           SAFE_FILENAME=$(sanitize "$FILENAME")
           echo "final_name=${SAFE_FILENAME:-video}" >> "$GITHUB_OUTPUT"
 
-      - name: استخراج معلومات الناتج
-        id: videoinfo
-        run: |
-          set -euo pipefail
-          DURATION_SEC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 traditional_output.mkv | cut -d. -f1)
-          H=$((DURATION_SEC / 3600)); M=$(((DURATION_SEC % 3600) / 60)); S=$((DURATION_SEC % 60))
-          echo "duration_fmt=$(printf '%02d:%02d:%02d' "$H" "$M" "$S")" >> "$GITHUB_OUTPUT"
-          ACTUAL_RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 traditional_output.mkv)
-          echo "actual_res=$ACTUAL_RES" >> "$GITHUB_OUTPUT"
-          TRADITIONAL_SIZE_MB=$(awk -v size="$(stat -c%s traditional_output.mkv)" 'BEGIN {printf "%.1f", size / 1048576}')
-          HYBRID_SIZE_MB=$(awk -v size="$(stat -c%s hybrid_output.mkv)" 'BEGIN {printf "%.1f", size / 1048576}')
-          echo "traditional_size_mb=$TRADITIONAL_SIZE_MB" >> "$GITHUB_OUTPUT"
-          echo "hybrid_size_mb=$HYBRID_SIZE_MB" >> "$GITHUB_OUTPUT"
-
-      - name: رفع النواتج إلى قناة تيليجرام
+      - name: رفع الناتج إلى القناة وإشعار المستخدم
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
           TG_SESSION: ${{ secrets.TG_SESSION }}
           TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
           FINAL_NAME: ${{ steps.naming.outputs.final_name }}
           DURATION_FMT: ${{ steps.videoinfo.outputs.duration_fmt }}
           ACTUAL_RES: ${{ steps.videoinfo.outputs.actual_res }}
-          TRADITIONAL_SIZE_MB: ${{ steps.videoinfo.outputs.traditional_size_mb }}
-          HYBRID_SIZE_MB: ${{ steps.videoinfo.outputs.hybrid_size_mb }}
+          CODEC: ${{ github.event.inputs.codec }}
+          FILTER_PROFILE: ${{ github.event.inputs.filter_profile }}
         run: |
           set -euo pipefail
+          if [ "$CODEC" = "vvc" ]; then EXT=mp4; else EXT=mkv; fi
+          UPLOAD_FILE="${FINAL_NAME}.${EXT}"
+          mv "output.${EXT}" "$UPLOAD_FILE"
+          FILE_SIZE=$(stat -c%s "$UPLOAD_FILE")
+          SIZE_MB=$(awk -v size="$FILE_SIZE" 'BEGIN {printf "%.1f", size / 1048576}')
+          CAPTION=$(printf '🎬 %s\n📦 %s MB\n📐 %s\n⏱️ %s\n🎞️ %s\n⚙️ فلاتر: %s' \
+            "$FINAL_NAME" "$SIZE_MB" "$ACTUAL_RES" "$DURATION_FMT" "$CODEC" "$FILTER_PROFILE")
+          export UPLOAD_FILE CAPTION
 
-          # قراءة نتائج المقارنة
-          COMPARISON_TEXT=$(cat comparison_results.txt)
-
-          # تجهيز الملفات للرفع
-          TRADITIONAL_FILE="${FINAL_NAME}_traditional.mkv"
-          HYBRID_FILE="${FINAL_NAME}_hybrid.mkv"
-          mv traditional_output.mkv "$TRADITIONAL_FILE"
-          mv hybrid_output.mkv "$HYBRID_FILE"
-
-          # إعداد التعليق
-          CAPTION=$(printf '🎬 %s (مقارنة AV1)\n\n📐 الدقة: %s\n⏱️ المدة: %s\n\n📦 الحجم التقليدي: %s MB\n📦 الحجم المهجن: %s MB\n\n%s' \
-            "$FINAL_NAME" "$ACTUAL_RES" "$DURATION_FMT" "$TRADITIONAL_SIZE_MB" "$HYBRID_SIZE_MB" "$COMPARISON_TEXT")
-
-          export TRADITIONAL_FILE HYBRID_FILE CAPTION
-
-          python3 << 'PYEOF'
+          python3 <<'PYEOF'
           import asyncio
           import os
           from telethon import TelegramClient
@@ -457,33 +633,22 @@ jobs:
               )
               await client.start()
               async with client:
-                  # إرسال ملف المقارنة النصي
-                  with open("comparison_results.txt", "rb") as f:
-                      await client.send_file(
-                          int(os.environ["TG_CHANNEL_ID"]),
-                          f,
-                          caption=os.environ["CAPTION"],
-                          force_document=True,
-                      )
-                  
-                  # إرسال الفيديو التقليدي
                   await client.send_file(
                       int(os.environ["TG_CHANNEL_ID"]),
-                      os.environ["TRADITIONAL_FILE"],
-                      caption="📀 الترميز التقليدي (بدون تهجين)",
-                      force_document=True,
-                  )
-                  
-                  # إرسال الفيديو المهجن
-                  await client.send_file(
-                      int(os.environ["TG_CHANNEL_ID"]),
-                      os.environ["HYBRID_FILE"],
-                      caption="🔬 الترميز المهجن (مع طبقة الخريطة)",
+                      os.environ["UPLOAD_FILE"],
+                      caption=os.environ["CAPTION"],
                       force_document=True,
                   )
 
           asyncio.run(main())
           PYEOF
+
+          MESSAGE=$(printf '✅ تم الضغط بنجاح!\n\n🎬 %s\n📦 %s MB\n📐 %s\n⏱️ %s' \
+            "$FINAL_NAME" "$SIZE_MB" "$ACTUAL_RES" "$DURATION_FMT")
+          curl --fail --silent --show-error \
+            -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT_ID}" \
+            --data-urlencode "text=${MESSAGE}"
 
   notify-failure:
     name: إشعار فشل العملية
@@ -497,9 +662,17 @@ jobs:
       ) }}
     runs-on: ubuntu-24.04
     steps:
-      - name: طباعة رابط السجل
+      - name: إرسال رابط سجل الفشل إلى تيليجرام
         env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
-          echo "فشلت العملية. افتح السجل: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          set -euo pipefail
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          MESSAGE=$(printf '❌ فشلت عملية الضغط.\n\n📋 افتح السجل لمعرفة المرحلة والخطأ:\n%s' "$RUN_URL")
+          curl --fail --silent --show-error \
+            -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT_ID}" \
+            --data-urlencode "text=${MESSAGE}"
