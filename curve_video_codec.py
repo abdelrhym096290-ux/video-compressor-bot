@@ -3,7 +3,7 @@
 curve_video_codec.py
 ترميز منحني زمني كامل لفيديو حقيقي.
 يعالج المقطع كاملًا.
-يضبط جودة المنحنيات تلقائيًا لتقترب من جودة AV1 عند نفس CRF.
+يقارن الحجم مع AV1 عند نفس CRF.
 """
 import argparse
 import gzip
@@ -131,8 +131,7 @@ def compare_regions(prev_regions, curr_regions, motion_threshold=0.30):
     return commands
 
 
-def get_video_dimensions(video_path, resolution=None):
-    """قراءة أبعاد الفيديو بعد تطبيق scale=-2 إن لزم."""
+def get_dimensions(video_path):
     probe = subprocess.run([
         'ffprobe', '-v', 'error', '-select_streams', 'v:0',
         '-show_entries', 'stream=width,height,r_frame_rate',
@@ -146,45 +145,38 @@ def get_video_dimensions(video_path, resolution=None):
     fps_num, fps_den = stream.get('r_frame_rate', '24/1').split('/')
     fps = float(fps_num) / float(fps_den)
 
-    if resolution and resolution < H:
-        out_h = resolution
-        out_w = int(round(W * (out_h / H) / 2) * 2)
-        if out_w < 2:
-            out_w = 2
-    else:
-        out_w, out_h = W, H
-
-    return out_w, out_h, fps
+    return W, H, fps
 
 
-def decode_video_frames(video_path, resolution=None):
-    out_w, out_h, fps = get_video_dimensions(video_path, resolution)
+def decode_video(video_path, target_w=None, target_h=None):
+    """فك الفيديو إلى إطارات RGB بأبعاد محددة."""
+    W, H, fps = get_dimensions(video_path)
+    
+    if target_w is None or target_h is None:
+        target_w, target_h = W, H
 
-    vf = []
-    if resolution and resolution < out_h:
-        vf.append(f'scale={out_w}:{out_h}')
-
-    cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-i', video_path]
-    if vf:
-        cmd += ['-vf', ','.join(vf)]
-    cmd += ['-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']
+    cmd = [
+        'ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-i', video_path,
+        '-vf', f'scale={target_w}:{target_h}',
+        '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'
+    ]
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
-    frame_bytes = out_w * out_h * 3
+    frame_bytes = target_w * target_h * 3
     frames = []
 
     while True:
         raw = proc.stdout.read(frame_bytes)
         if len(raw) < frame_bytes:
             break
-        frame = np.frombuffer(raw, dtype=np.uint8).reshape(out_h, out_w, 3)
+        frame = np.frombuffer(raw, dtype=np.uint8).reshape(target_h, target_w, 3)
         frames.append(frame)
 
     proc.stdout.close()
     proc.wait()
 
-    return frames, {'width': out_w, 'height': out_h, 'fps': fps, 'n_frames': len(frames)}
+    return frames, {'width': target_w, 'height': target_h, 'fps': fps, 'n_frames': len(frames)}
 
 
 def measure_size(data):
@@ -230,19 +222,32 @@ def main():
     ap.add_argument('--resolution', type=int, default=None)
     ap.add_argument('--crf', type=int, default=30)
     ap.add_argument('--preset', type=int, default=8)
-    ap.add_argument('--quality-levels', type=str, default='8,16,32,64',
-                    help='مستويات palette للتجريب مفصولة بفواصل')
     args = ap.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
     print(f"=== بدء المعالجة: {args.input_video} ===")
 
-    # 1. فك الفيديو كاملًا
+    # 1. معرفة الأبعاد الأصلية
+    orig_w, orig_h, fps = get_dimensions(args.input_video)
+    
+    # 2. حساب الأبعاد النهائية
+    if args.resolution and args.resolution < orig_h:
+        target_h = args.resolution
+        target_w = int(round(orig_w * (target_h / orig_h) / 2) * 2)
+        if target_w < 2:
+            target_w = 2
+    else:
+        target_w, target_h = orig_w, orig_h
+
+    print(f"الأبعاد النهائية: {target_w}x{target_h}")
+
+    # 3. فك الفيديو الأصلي
     t0 = time.time()
-    frames, info = decode_video_frames(
+    frames, info = decode_video(
         args.input_video,
-        resolution=args.resolution
+        target_w=target_w,
+        target_h=target_h
     )
     decode_time = time.time() - t0
     H, W = info['height'], info['width']
@@ -253,16 +258,13 @@ def main():
         print("خطأ: لا توجد إطارات مفكوكة", file=sys.stderr)
         sys.exit(1)
 
-    # 2. ترميز AV1 المرجعي
+    # 4. ترميز AV1 المرجعي بنفس الأبعاد
     t0 = time.time()
     av1_output = os.path.join(args.output_dir, 'reference_av1.mkv')
     ffmpeg_cmd = [
         'ffmpeg', '-hide_banner', '-nostdin', '-y',
         '-i', args.input_video,
-    ]
-    if args.resolution and args.resolution < info['height']:
-        ffmpeg_cmd += ['-vf', f'scale={W}:{H}']
-    ffmpeg_cmd += [
+        '-vf', f'scale={target_w}:{target_h}',
         '-c:v', 'libsvtav1',
         '-preset', str(args.preset),
         '-crf', str(args.crf),
@@ -276,26 +278,27 @@ def main():
     size_av1 = os.path.getsize(av1_output)
     print(f"AV1 المرجعي: {size_av1} بايت في {av1_time:.1f} ثانية")
 
-    # 3. فك AV1 المرجعي لقياس جودته بنفس الأبعاد
-    av1_frames, _ = decode_video_frames(
+    # 5. فك AV1 المرجعي
+    av1_frames, _ = decode_video(
         av1_output,
-        resolution=None  # لا نغير الأبعاد لأننا بالفعل ضبطناها
+        target_w=target_w,
+        target_h=target_h
     )
     av1_frames = av1_frames[:n_frames]
+    print(f"تم فك {len(av1_frames)} إطارًا من AV1")
 
-    # 4. قياس PSNR لـ AV1 المرجعي
+    # 6. قياس PSNR لـ AV1 المرجعي
     psnr_av1_list = []
     for orig, recon in zip(frames, av1_frames):
         psnr_av1_list.append(compute_psnr(orig, recon))
     psnr_av1 = np.mean([p for p in psnr_av1_list if p != float('inf')])
     print(f"PSNR لـ AV1 المرجعي: {psnr_av1:.2f} dB")
 
-    # 5. تجربة مستويات جودة مختلفة للتمثيل المنحني
-    quality_levels = [int(x) for x in args.quality_levels.split(',')]
+    # 7. تجربة مستويات جودة مختلفة للتمثيل المنحني
+    quality_levels = [8, 16, 32, 64]
     best_result = None
 
     for palette_size in quality_levels:
-        # ضبط curve_epsilon حسب palette_size
         if palette_size >= 64:
             curve_epsilon = 0.5
         elif palette_size >= 32:
@@ -359,7 +362,6 @@ def main():
 
         size_rep = measure_size(full_rep)
 
-        # إعادة بناء وقياس الجودة
         t0 = time.time()
         reconstructed_frames = []
         base_regions = all_commands[0]['regions']
@@ -388,7 +390,6 @@ def main():
 
         print(f"الحجم: {size_rep} بايت, PSNR: {psnr_curve:.2f} dB")
 
-        # اختيار الأقرب لـ PSNR الخاص بـ AV1
         if best_result is None or abs(psnr_curve - psnr_av1) < abs(best_result['psnr'] - psnr_av1):
             best_result = {
                 'palette_size': palette_size,
@@ -404,7 +405,6 @@ def main():
                 'recon_time': recon_time
             }
 
-    # 6. النتيجة النهائية
     best = best_result
     print("\n=== النتائج النهائية ===")
     print(f"AV1: {size_av1} بايت, PSNR: {psnr_av1:.2f} dB")
@@ -412,7 +412,6 @@ def main():
     print(f"المستوى المختار: palette={best['palette_size']}, epsilon={best['curve_epsilon']}, min_area={best['min_area']}")
     print(f"نسبة التوفير: {((size_av1 - best['size_rep']) / size_av1) * 100:.1f}%")
 
-    # حفظ النتائج
     results = {
         'input': args.input_video,
         'resolution': f"{W}x{H}",
