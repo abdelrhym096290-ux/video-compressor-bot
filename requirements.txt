@@ -1,3 +1,2 @@
-python-telegram-bot
-flask
-requests
+numpy
+opencv-python-headless
