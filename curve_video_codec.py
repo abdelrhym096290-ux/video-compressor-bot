@@ -131,7 +131,8 @@ def compare_regions(prev_regions, curr_regions, motion_threshold=0.30):
     return commands
 
 
-def decode_video_frames(video_path, resolution=None):
+def get_video_dimensions(video_path, resolution=None):
+    """قراءة أبعاد الفيديو بعد تطبيق scale=-2 إن لزم."""
     probe = subprocess.run([
         'ffprobe', '-v', 'error', '-select_streams', 'v:0',
         '-show_entries', 'stream=width,height,r_frame_rate',
@@ -145,15 +146,23 @@ def decode_video_frames(video_path, resolution=None):
     fps_num, fps_den = stream.get('r_frame_rate', '24/1').split('/')
     fps = float(fps_num) / float(fps_den)
 
-    vf = []
     if resolution and resolution < H:
         out_h = resolution
-        out_w = int(W * (out_h / H))
-        if out_w % 2 != 0:
-            out_w += 1
-        vf.append(f'scale={out_w}:{out_h}')
+        out_w = int(round(W * (out_h / H) / 2) * 2)
+        if out_w < 2:
+            out_w = 2
     else:
         out_w, out_h = W, H
+
+    return out_w, out_h, fps
+
+
+def decode_video_frames(video_path, resolution=None):
+    out_w, out_h, fps = get_video_dimensions(video_path, resolution)
+
+    vf = []
+    if resolution and resolution < out_h:
+        vf.append(f'scale={out_w}:{out_h}')
 
     cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-i', video_path]
     if vf:
@@ -252,7 +261,7 @@ def main():
         '-i', args.input_video,
     ]
     if args.resolution and args.resolution < info['height']:
-        ffmpeg_cmd += ['-vf', f'scale=-2:{args.resolution}']
+        ffmpeg_cmd += ['-vf', f'scale={W}:{H}']
     ffmpeg_cmd += [
         '-c:v', 'libsvtav1',
         '-preset', str(args.preset),
@@ -267,10 +276,10 @@ def main():
     size_av1 = os.path.getsize(av1_output)
     print(f"AV1 المرجعي: {size_av1} بايت في {av1_time:.1f} ثانية")
 
-    # 3. فك AV1 المرجعي لقياس جودته
+    # 3. فك AV1 المرجعي لقياس جودته بنفس الأبعاد
     av1_frames, _ = decode_video_frames(
         av1_output,
-        resolution=args.resolution
+        resolution=None  # لا نغير الأبعاد لأننا بالفعل ضبطناها
     )
     av1_frames = av1_frames[:n_frames]
 
