@@ -1,4 +1,4 @@
-name: اختبار الترميز المنحني على فيديو حقيقي
+name: compress1 - اختبار الترميز المنحني
 
 on:
   workflow_dispatch:
@@ -6,24 +6,12 @@ on:
       url:
         description: 'رابط مباشر للفيديو'
         required: true
-      max_frames:
-        description: 'عدد الإطارات للمعالجة'
-        required: true
-        default: '30'
       resolution:
         description: 'الارتفاع النهائي (مثل 480)'
         required: true
         default: '480'
-      palette_size:
-        description: 'حجم القاموس (8/16/32/64)'
-        required: true
-        default: '16'
-      curve_epsilon:
-        description: 'دقة المنحنيات (1.0 = أدق، 2.0 = أخشن)'
-        required: true
-        default: '1.5'
       crf:
-        description: 'CRF لـ AV1 المرجعي'
+        description: 'CRF لـ AV1 المرجعي (ستُضبط المنحنيات لتقاربه)'
         required: true
         default: '30'
       preset:
@@ -32,7 +20,7 @@ on:
         default: '8'
 
 concurrency:
-  group: curve-video-test
+  group: curve-video-compression
   cancel-in-progress: false
 
 permissions:
@@ -74,10 +62,10 @@ jobs:
           make install
 
   run-test:
-    name: تشغيل الاختبار
+    name: تشغيل الاختبار الكامل
     needs: build-codec
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 360
     steps:
       - name: استخراج الكود
         uses: actions/checkout@v4
@@ -106,10 +94,7 @@ jobs:
 
       - name: تشغيل الترميز المنحني والمقارنة
         env:
-          MAX_FRAMES: ${{ github.event.inputs.max_frames }}
           RESOLUTION: ${{ github.event.inputs.resolution }}
-          PALETTE_SIZE: ${{ github.event.inputs.palette_size }}
-          CURVE_EPSILON: ${{ github.event.inputs.curve_epsilon }}
           CRF: ${{ github.event.inputs.crf }}
           PRESET: ${{ github.event.inputs.preset }}
         run: |
@@ -118,10 +103,7 @@ jobs:
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           
           python3 curve_video_codec.py input.mp4 results \
-            --max-frames "$MAX_FRAMES" \
             --resolution "$RESOLUTION" \
-            --palette-size "$PALETTE_SIZE" \
-            --curve-epsilon "$CURVE_EPSILON" \
             --crf "$CRF" \
             --preset "$PRESET"
           
