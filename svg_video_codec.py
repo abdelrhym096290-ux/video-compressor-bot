@@ -137,7 +137,6 @@ def match_curves(prev_curves, curr_curves, max_dist=30):
             if i in used_curr:
                 continue
             
-            # مطابقة باللون والمسافة
             if cc['fill_id'] != pc['fill_id']:
                 continue
             
@@ -183,10 +182,8 @@ def curves_to_svg_path(curve, palette):
 def build_svg_with_real_motion(frames, palette, curves_list, W, H, fps):
     """بناء SVG مع حركة حقيقية مستخرجة من الإطارات."""
     
-    # استخدام أول إطار كأساس
     base_curves = curves_list[0]
     
-    # تتبع الحركة عبر الإطارات
     motion_data = []
     prev_curves = base_curves
     
@@ -205,7 +202,6 @@ def build_svg_with_real_motion(frames, palette, curves_list, W, H, fps):
         
         prev_curves = curr_curves
     
-    # بناء SVG مع عناصر قابلة للتحريك
     svg_elements = []
     animations = []
     
@@ -216,16 +212,13 @@ def build_svg_with_real_motion(frames, palette, curves_list, W, H, fps):
         
         curve_id = f"curve_{curve['fill_id']}_{int(curve['cx'])}_{int(curve['cy'])}"
         
-        # إضافة عنصر مع id للتحريك
         svg_elements.append(
             path.replace('<path ', f'<path id="{curve_id}" ')
         )
         
-        # حساب الحركة لهذا العنصر
         curve_motions = [m for m in motion_data if m['curve_id'] == curve_id]
         
         if curve_motions:
-            # توليد keyframes للحركة
             total_frames = len(frames)
             duration = total_frames / fps
             
@@ -235,19 +228,18 @@ def build_svg_with_real_motion(frames, palette, curves_list, W, H, fps):
                 keyframes.append(f"{frame_pct}% {{ transform: translate({m['dx']}px, {m['dy']}px); }}")
             
             if keyframes:
-                anim = f"""
-@keyframes move_{idx} {{
-  from {{ transform: translate(0, 0); }}
-  {chr(10).join(keyframes)}
-  to {{ transform: translate(0, 0); }}
-}}
-#{curve_id} {{{
-  animation: move_{idx} {duration}s linear infinite;
-  transform-origin: center;
-}}"""
-                animations.append(anim)
+                css_anim = f"@keyframes move_{idx} {{\n"
+                css_anim += "  from { transform: translate(0, 0); }\n"
+                for kf in keyframes:
+                    css_anim += f"  {kf}\n"
+                css_anim += "  to { transform: translate(0, 0); }\n"
+                css_anim += "}\n"
+                css_anim += f"#{curve_id} {{\n"
+                css_anim += f"  animation: move_{idx} {duration}s linear infinite;\n"
+                css_anim += "  transform-origin: center;\n"
+                css_anim += "}"
+                animations.append(css_anim)
     
-    # بناء الملف النهائي
     svg_body = '\n'.join(svg_elements)
     css_animations = '\n'.join(animations)
     
