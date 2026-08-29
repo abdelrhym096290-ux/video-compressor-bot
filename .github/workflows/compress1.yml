@@ -1,111 +1,46 @@
-name: compress1 - اختبار الترميز المنحني
+name: مقارنة البكسلات بالمنحنيات
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'رابط مباشر للفيديو'
+        description: 'رابط مباشر للصورة الحقيقية'
         required: true
-      resolution:
-        description: 'الارتفاع النهائي (مثل 480)'
+      epsilon:
+        description: 'دقة المنحنيات (1.0 أدق، 3.0 أخشن)'
         required: true
-        default: '480'
-      crf:
-        description: 'CRF لـ AV1 المرجعي (ستُضبط المنحنيات لتقاربه)'
-        required: true
-        default: '30'
-      preset:
-        description: 'preset لـ SVT-AV1 (0-13)'
-        required: true
-        default: '8'
+        default: '1.5'
 
 concurrency:
-  group: curve-video-compression
+  group: image-compare
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  build-codec:
-    name: بناء FFmpeg مع SVT-AV1
+  run-compare:
+    name: تشغيل المقارنة
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - name: استعادة البناء المخزن
-        id: cache-build
-        uses: actions/cache@v4
-        with:
-          path: ~/codec-build
-          key: curve-av1-build-v1
-
-      - name: بناء SVT-AV1 وFFmpeg
-        if: steps.cache-build.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          sudo apt update
-          sudo apt install -y build-essential cmake git nasm pkg-config libdav1d-dev libogg-dev libopus-dev
-          mkdir -p "$HOME/codec-build" "$HOME/codec-sources"
-          cd "$HOME/codec-sources"
-          git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
-          cmake -S SVT-AV1 -B SVT-AV1/Build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$HOME/codec-build"
-          cmake --build SVT-AV1/Build --parallel "$(nproc)"
-          cmake --install SVT-AV1/Build
-          git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git
-          export PKG_CONFIG_PATH="$HOME/codec-build/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
-          cd FFmpeg
-          ./configure --prefix="$HOME/codec-build" --enable-gpl --enable-version3 --disable-doc \
-            --enable-libsvtav1 --enable-libdav1d \
-            --extra-cflags="-I$HOME/codec-build/include" --extra-ldflags="-L$HOME/codec-build/lib"
-          make -j"$(nproc)"
-          make install
-
-  run-test:
-    name: تشغيل الاختبار الكامل
-    needs: build-codec
-    runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 60
     steps:
       - name: استخراج الكود
         uses: actions/checkout@v4
-
-      - name: استعادة FFmpeg
-        uses: actions/cache@v4
-        with:
-          path: ~/codec-build
-          key: curve-av1-build-v1
 
       - name: تجهيز الأدوات
         run: |
           set -euo pipefail
           sudo apt update
-          sudo apt install -y ffmpeg libdav1d-dev libopus0 python3-opencv
+          sudo apt install -y python3-opencv
           pip install --user --break-system-packages numpy
 
-      - name: تحميل الفيديو
+      - name: تشغيل المقارنة
         env:
-          VIDEO_URL: ${{ github.event.inputs.url }}
+          IMAGE_URL: ${{ github.event.inputs.url }}
+          EPSILON: ${{ github.event.inputs.epsilon }}
         run: |
           set -euo pipefail
-          curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 -o input.mp4 "$VIDEO_URL"
-          test -s input.mp4
-          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 input.mp4
-
-      - name: تشغيل الترميز المنحني والمقارنة
-        env:
-          RESOLUTION: ${{ github.event.inputs.resolution }}
-          CRF: ${{ github.event.inputs.crf }}
-          PRESET: ${{ github.event.inputs.preset }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/codec-build/bin:$PATH"
-          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
-          
-          python3 curve_video_codec.py input.mp4 results \
-            --resolution "$RESOLUTION" \
-            --crf "$CRF" \
-            --preset "$PRESET"
+          python3 image_compare.py "$IMAGE_URL" results --epsilon "$EPSILON"
           
           echo "=== النتائج ==="
           cat results/results.json
@@ -113,7 +48,7 @@ jobs:
       - name: رفع النتائج
         uses: actions/upload-artifact@v4
         with:
-          name: curve-results
+          name: image-compare-results
           path: results/
           retention-days: 7
           if-no-files-found: error
