@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 svg_video_codec.py
-تحويل فيديو أنمي إلى تمثيل SVG + CSS Animations.
+تحويل فيديو أنمي إلى تمثيل SVG + CSS Animations بحركة حقيقية.
 يقارن الحجم مع AV1 على المقطع كاملًا.
 """
 import argparse
@@ -115,48 +115,141 @@ def extract_curves(frame_rgb, palette, epsilon=1.5, min_area=20):
                 curves.append({
                     'fill_id': int(lid),
                     'points': poly,
-                    'n_points': len(poly)
+                    'n_points': len(poly),
+                    'cx': float(np.mean([p[0] for p in poly])),
+                    'cy': float(np.mean([p[1] for p in poly])),
+                    'area': float(cv2.contourArea(np.array(poly, dtype=np.int32).reshape(-1, 1, 2)))
                 })
     
     return curves
 
 
-def curves_to_svg_path(curves, palette, W, H):
-    """تحويل المنحنيات إلى عناصر SVG."""
-    svg_elements = []
+def match_curves(prev_curves, curr_curves, max_dist=30):
+    """مطابقة المنحنيات بين إطارين لتتبع الحركة."""
+    matches = []
+    used_curr = set()
     
-    for curve in curves:
-        color = palette[curve['fill_id']]
-        color_hex = '#{:02x}{:02x}{:02x}'.format(
-            int(color[0]), int(color[1]), int(color[2])
-        )
+    for pc in prev_curves:
+        best_match = None
+        best_dist = float('inf')
         
-        pts = curve['points']
-        if len(pts) < 3:
+        for i, cc in enumerate(curr_curves):
+            if i in used_curr:
+                continue
+            
+            # مطابقة باللون والمسافة
+            if cc['fill_id'] != pc['fill_id']:
+                continue
+            
+            dist = np.sqrt((pc['cx'] - cc['cx'])**2 + (pc['cy'] - cc['cy'])**2)
+            
+            if dist < best_dist:
+                best_dist = dist
+                best_match = (i, cc)
+        
+        if best_match and best_dist < max_dist:
+            i, cc = best_match
+            used_curr.add(i)
+            matches.append({
+                'prev': pc,
+                'curr': cc,
+                'dx': cc['cx'] - pc['cx'],
+                'dy': cc['cy'] - pc['cy'],
+                'area_ratio': cc['area'] / max(pc['area'], 1)
+            })
+    
+    return matches
+
+
+def curves_to_svg_path(curve, palette):
+    """تحويل منحنى واحد إلى SVG path."""
+    color = palette[curve['fill_id']]
+    color_hex = '#{:02x}{:02x}{:02x}'.format(
+        int(color[0]), int(color[1]), int(color[2])
+    )
+    
+    pts = curve['points']
+    if len(pts) < 3:
+        return None
+    
+    path = f"M {pts[0][0]},{pts[0][1]}"
+    for i in range(1, len(pts)):
+        path += f" L {pts[i][0]},{pts[i][1]}"
+    path += " Z"
+    
+    return f'<path d="{path}" fill="{color_hex}" stroke="none"/>'
+
+
+def build_svg_with_real_motion(frames, palette, curves_list, W, H, fps):
+    """بناء SVG مع حركة حقيقية مستخرجة من الإطارات."""
+    
+    # استخدام أول إطار كأساس
+    base_curves = curves_list[0]
+    
+    # تتبع الحركة عبر الإطارات
+    motion_data = []
+    prev_curves = base_curves
+    
+    for i in range(1, len(frames)):
+        curr_curves = curves_list[i]
+        matches = match_curves(prev_curves, curr_curves)
+        
+        for m in matches:
+            motion_data.append({
+                'curve_id': f"curve_{m['prev']['fill_id']}_{int(m['prev']['cx'])}_{int(m['prev']['cy'])}",
+                'frame': i,
+                'dx': m['dx'],
+                'dy': m['dy'],
+                'area_ratio': m['area_ratio']
+            })
+        
+        prev_curves = curr_curves
+    
+    # بناء SVG مع عناصر قابلة للتحريك
+    svg_elements = []
+    animations = []
+    
+    for idx, curve in enumerate(base_curves):
+        path = curves_to_svg_path(curve, palette)
+        if path is None:
             continue
         
-        path = f"M {pts[0][0]},{pts[0][1]}"
-        for i in range(1, len(pts)):
-            path += f" L {pts[i][0]},{pts[i][1]}"
-        path += " Z"
+        curve_id = f"curve_{curve['fill_id']}_{int(curve['cx'])}_{int(curve['cy'])}"
         
+        # إضافة عنصر مع id للتحريك
         svg_elements.append(
-            f'<path d="{path}" fill="{color_hex}" stroke="none"/>'
+            path.replace('<path ', f'<path id="{curve_id}" ')
         )
+        
+        # حساب الحركة لهذا العنصر
+        curve_motions = [m for m in motion_data if m['curve_id'] == curve_id]
+        
+        if curve_motions:
+            # توليد keyframes للحركة
+            total_frames = len(frames)
+            duration = total_frames / fps
+            
+            keyframes = []
+            for m in curve_motions:
+                frame_pct = (m['frame'] / total_frames) * 100
+                keyframes.append(f"{frame_pct}% {{ transform: translate({m['dx']}px, {m['dy']}px); }}")
+            
+            if keyframes:
+                anim = f"""
+@keyframes move_{idx} {{
+  from {{ transform: translate(0, 0); }}
+  {chr(10).join(keyframes)}
+  to {{ transform: translate(0, 0); }}
+}}
+#{curve_id} {{{
+  animation: move_{idx} {duration}s linear infinite;
+  transform-origin: center;
+}}"""
+                animations.append(anim)
     
-    return '\n'.join(svg_elements)
-
-
-def build_svg_animation(frames, palette, curves_list, W, H, fps):
-    """بناء ملف HTML+SVG كامل مع حركة."""
-    
-    # نستخدم أول إطار كأساس
-    base_curves = curves_list[0]
-    svg_paths = curves_to_svg_path(base_curves, palette, W, H)
-    
-    # حساب الحركة: إزاحة أفقية بسيطة لكل الإطارات
-    # هنا نبسط: كل الإطارات تتحرك معًا
-    duration = len(frames) / fps
+    # بناء الملف النهائي
+    svg_body = '\n'.join(svg_elements)
+    css_animations = '\n'.join(animations)
     
     html = f"""<!DOCTYPE html>
 <html>
@@ -164,18 +257,12 @@ def build_svg_animation(frames, palette, curves_list, W, H, fps):
 <style>
   body {{ margin:0; padding:0; background:#000; overflow:hidden; }}
   svg {{ width:100vw; height:100vh; }}
-  .scene {{ animation: move {duration}s linear infinite; }}
-  @keyframes move {{
-    from {{ transform: translateX(0); }}
-    to {{ transform: translateX(100px); }}
-  }}
+  {css_animations}
 </style>
 </head>
 <body>
 <svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet">
-<g class="scene">
-{svg_paths}
-</g>
+{svg_body}
 </svg>
 </body>
 </html>"""
@@ -228,9 +315,9 @@ def main():
     extract_time = time.time() - t0
     print(f"تم استخراج المنحنيات في {extract_time:.1f} ثانية")
     
-    # 4. بناء SVG
+    # 4. بناء SVG بحركة حقيقية
     t0 = time.time()
-    svg_html = build_svg_animation(frames, palette, curves_list, W, H, fps)
+    svg_html = build_svg_with_real_motion(frames, palette, curves_list, W, H, fps)
     svg_time = time.time() - t0
     
     svg_path = os.path.join(args.output_dir, 'animation.html')
