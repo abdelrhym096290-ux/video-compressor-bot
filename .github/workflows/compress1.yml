@@ -40,7 +40,7 @@ jobs:
           EPSILON: ${{ github.event.inputs.epsilon }}
         run: |
           set -euo pipefail
-          python3 image_compare.py "$IMAGE_URL" results --epsilon "$EPSILON"
+          python3 curve_video_codec.py "$IMAGE_URL" results --epsilon "$EPSILON"
           
           echo "=== النتائج ==="
           cat results/results.json
