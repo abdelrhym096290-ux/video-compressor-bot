@@ -1,4 +1,4 @@
-name: مقارنة البكسلات بالمنحنيات
+name: مقارنة البكسلات بالمنحنيات مع رفع تيليجرام
 
 on:
   workflow_dispatch:
@@ -44,6 +44,61 @@ jobs:
           
           echo "=== النتائج ==="
           cat results/results.json
+
+      - name: رفع النتائج إلى تيليجرام
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
+          TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
+        run: |
+          set -euo pipefail
+          pip install --user --break-system-packages telethon
+          
+          python3 << 'PYEOF'
+          import asyncio
+          import os
+          from telethon import TelegramClient
+          from telethon.sessions import StringSession
+
+          async def main():
+              client = TelegramClient(
+                  StringSession(os.environ["TG_SESSION"]),
+                  int(os.environ["TG_API_ID"]),
+                  os.environ["TG_API_HASH"],
+              )
+              await client.start()
+              async with client:
+                  # إرسال النتائج
+                  with open("results/results.json", "rb") as f:
+                      await client.send_file(
+                          int(os.environ["TG_CHANNEL_ID"]),
+                          f,
+                          caption="📊 نتائج المقارنة",
+                          force_document=True,
+                      )
+                  
+                  # إرسال الصورة الأصلية
+                  await client.send_file(
+                      int(os.environ["TG_CHANNEL_ID"]),
+                      "results/original.png",
+                      caption="🖼️ الصورة الأصلية",
+                      force_document=True,
+                  )
+                  
+                  # إرسال كل مستويات إعادة البناء
+                  for quant in [32, 16, 8, 1]:
+                      path = f"results/quant_{quant}/reconstructed.png"
+                      if os.path.exists(path):
+                          await client.send_file(
+                              int(os.environ["TG_CHANNEL_ID"]),
+                              path,
+                              caption=f"🔬 إعادة البناء (تكميم={quant})",
+                              force_document=True,
+                          )
+
+          asyncio.run(main())
+          PYEOF
 
       - name: رفع النتائج
         uses: actions/upload-artifact@v4
