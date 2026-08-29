@@ -5,6 +5,7 @@ image_compare.py
 1. بكسلات خام
 2. منحنيات فقط (كل منحنى يحمل لونه)
 بدون ضغط، بدون قاموس ألوان.
+تجربة 3 مستويات تكميم لوني.
 """
 import argparse
 import json
@@ -33,32 +34,29 @@ def encode_curve(polygon, epsilon=1.5):
     return approx.reshape(-1, 2).astype(np.int16).tolist()
 
 
-def extract_curves_from_image(image_bgr, epsilon=1.5):
+def extract_curves_from_image(image_bgr, epsilon=1.5, quant_step=32):
     """
     استخراج منحنيات من صورة حقيقية.
-    كل منحنى يحمل لونه الخاص.
+    quant_step: خطوة التكميم اللوني (32 خشن، 16 متوسط، 1 بدون تكميم)
     """
     H, W = image_bgr.shape[:2]
     
-    # تحويل إلى RGB
     rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     
-    # تجميع الألوان المتشابهة
-    # نستخدم تكميمًا بسيطًا لتقليل عدد الألوان
-    quantized = (rgb // 32 * 32 + 16).astype(np.uint8)
+    if quant_step > 1:
+        quantized = (rgb // quant_step * quant_step + quant_step // 2).astype(np.uint8)
+    else:
+        quantized = rgb.copy()
     
-    # استخراج المنحنيات لكل لون فريد
     curves = []
     unique_colors = np.unique(quantized.reshape(-1, 3), axis=0)
     
     for color in unique_colors:
-        # إنشاء قناع لهذا اللون
         mask = np.all(quantized == color, axis=2).astype(np.uint8)
         
         if mask.sum() < 10:
             continue
         
-        # استخراج الحدود
         contours, _ = cv2.findContours(
             mask * 255,
             cv2.RETR_EXTERNAL,
@@ -87,15 +85,10 @@ def measure_raw_size_pixels(image_bgr):
 
 
 def measure_raw_size_curves(curves):
-    """
-    حجم التمثيل المنحني الخام.
-    كل منحنى: لون (3 قيم) + نقاط (كل نقطة x,y)
-    """
+    """حجم التمثيل المنحني الخام."""
     total = 0
     for curve in curves:
-        # اللون: 3 قيم
         total += 3
-        # النقاط: عدد النقاط × 2
         total += curve['n_points'] * 2
     
     return total
@@ -149,71 +142,71 @@ def main():
     print(f"أبعاد الصورة: {W}x{H}")
     
     # 3. قياس حجم البكسلات الخام
-    t0 = time.time()
     size_pixels = measure_raw_size_pixels(img_bgr)
-    pixels_time = time.time() - t0
     print(f"حجم البكسلات الخام: {size_pixels} وحدة")
     
-    # 4. استخراج المنحنيات
-    t0 = time.time()
-    curves = extract_curves_from_image(img_bgr, args.epsilon)
-    extract_time = time.time() - t0
-    print(f"تم استخراج {len(curves)} منحنى في {extract_time:.1f} ثانية")
+    # 4. تجربة مستويات تكميم مختلفة
+    results_all = []
     
-    # 5. قياس حجم المنحنيات
-    size_curves = measure_raw_size_curves(curves)
-    print(f"حجم المنحنيات الخام: {size_curves} وحدة")
+    for quant_step in [32, 16, 8, 1]:
+        print(f"\n--- تجربة: تكميم = {quant_step} ---")
+        
+        t0 = time.time()
+        curves = extract_curves_from_image(img_bgr, args.epsilon, quant_step)
+        extract_time = time.time() - t0
+        print(f"تم استخراج {len(curves)} منحنى في {extract_time:.1f} ثانية")
+        
+        size_curves = measure_raw_size_curves(curves)
+        print(f"حجم المنحنيات: {size_curves} وحدة")
+        
+        t0 = time.time()
+        reconstructed = reconstruct_from_curves(curves, H, W)
+        recon_time = time.time() - t0
+        
+        psnr = compute_psnr(img_bgr, reconstructed)
+        print(f"PSNR: {psnr:.2f} dB")
+        
+        # حفظ هذا المستوى
+        level_dir = os.path.join(args.output_dir, f'quant_{quant_step}')
+        os.makedirs(level_dir, exist_ok=True)
+        
+        cv2.imwrite(
+            os.path.join(level_dir, 'reconstructed.png'),
+            reconstructed
+        )
+        
+        result = {
+            'quant_step': quant_step,
+            'n_curves': len(curves),
+            'n_curve_points': sum(c['n_points'] for c in curves),
+            'size_curves_raw': size_curves,
+            'ratio_to_pixels': size_curves / max(size_pixels, 1),
+            'psnr': psnr,
+            'extract_time': extract_time,
+            'recon_time': recon_time
+        }
+        results_all.append(result)
     
-    # 6. إعادة البناء
-    t0 = time.time()
-    reconstructed = reconstruct_from_curves(curves, H, W)
-    recon_time = time.time() - t0
-    
-    # 7. قياس الجودة
-    psnr = compute_psnr(img_bgr, reconstructed)
-    print(f"PSNR لإعادة البناء: {psnr:.2f} dB")
-    
-    # 8. حفظ النتائج
-    results = {
+    # 5. حفظ النتائج
+    final_results = {
         'image_dimensions': f"{W}x{H}",
         'size_pixels_raw': size_pixels,
-        'size_curves_raw': size_curves,
-        'n_curves': len(curves),
-        'n_curve_points': sum(c['n_points'] for c in curves),
-        'ratio_curves_to_pixels': size_curves / max(size_pixels, 1),
-        'pixels_smaller': size_pixels < size_curves,
-        'curves_smaller': size_curves < size_pixels,
-        'psnr': psnr,
-        'epsilon': args.epsilon
+        'epsilon': args.epsilon,
+        'results': results_all
     }
     
     with open(os.path.join(args.output_dir, 'results.json'), 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+        json.dump(final_results, f, indent=2, ensure_ascii=False)
     
-    # حفظ إعادة البناء
-    cv2.imwrite(
-        os.path.join(args.output_dir, 'reconstructed.png'),
-        reconstructed
-    )
     cv2.imwrite(
         os.path.join(args.output_dir, 'original.png'),
         img_bgr
     )
     
-    # حفظ منحنيات كملف
-    with open(os.path.join(args.output_dir, 'curves.json'), 'w', encoding='utf-8') as f:
-        json.dump({
-            'width': W,
-            'height': H,
-            'curves': curves
-        }, f, indent=2)
-    
-    print("\n=== النتائج ===")
+    print("\n=== النتائج النهائية ===")
     print(f"البكسلات: {size_pixels} وحدة")
-    print(f"المنحنيات: {size_curves} وحدة")
-    print(f"النسبة: {results['ratio_curves_to_pixels']:.4f}")
-    print(f"الأصغر: {'بكسلات' if results['pixels_smaller'] else 'منحنيات'}")
-    print(f"PSNR: {psnr:.2f} dB")
+    for r in results_all:
+        print(f"تكميم {r['quant_step']}: {r['size_curves_raw']} وحدة, PSNR: {r['psnr']:.2f} dB")
 
 
 if __name__ == '__main__':
