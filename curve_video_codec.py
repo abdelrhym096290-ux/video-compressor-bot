@@ -2,10 +2,8 @@
 """
 curve_video_codec.py
 ترميز منحني زمني كامل لفيديو حقيقي.
-يطبّق الفكرة الأصلية:
-  I = قاموس + منحنيات + حجوم
-  P/B = أوامر على المنحنيات (حرّك، كبّر، أضف، احذف)
-لا يستخدم AV1 كوسيط. يقيس الحجم الكلي ويقارن مع AV1.
+يعالج المقطع كاملًا.
+يضبط جودة المنحنيات تلقائيًا لتقترب من جودة AV1 عند نفس CRF.
 """
 import argparse
 import gzip
@@ -133,7 +131,7 @@ def compare_regions(prev_regions, curr_regions, motion_threshold=0.30):
     return commands
 
 
-def decode_video_frames(video_path, max_frames=None, resolution=None):
+def decode_video_frames(video_path, resolution=None):
     probe = subprocess.run([
         'ffprobe', '-v', 'error', '-select_streams', 'v:0',
         '-show_entries', 'stream=width,height,r_frame_rate',
@@ -174,9 +172,6 @@ def decode_video_frames(video_path, max_frames=None, resolution=None):
         frame = np.frombuffer(raw, dtype=np.uint8).reshape(out_h, out_w, 3)
         frames.append(frame)
 
-        if max_frames and len(frames) >= max_frames:
-            break
-
     proc.stdout.close()
     proc.wait()
 
@@ -212,27 +207,32 @@ def reconstruct_frame(base_regions, palette, commands, H, W):
     return reconstructed
 
 
+def compute_psnr(orig, recon):
+    mse = np.mean((orig.astype(np.float64) - recon.astype(np.float64)) ** 2)
+    if mse == 0:
+        return float('inf')
+    return 10 * np.log10((255.0 ** 2) / mse)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('input_video', help='مسار الفيديو الحقيقي')
     ap.add_argument('output_dir', help='مجلد النتائج')
-    ap.add_argument('--palette-size', type=int, default=16, choices=[8, 16, 32, 64])
-    ap.add_argument('--curve-epsilon', type=float, default=1.5)
-    ap.add_argument('--min-area', type=int, default=20)
-    ap.add_argument('--max-frames', type=int, default=30)
     ap.add_argument('--resolution', type=int, default=None)
     ap.add_argument('--crf', type=int, default=30)
     ap.add_argument('--preset', type=int, default=8)
+    ap.add_argument('--quality-levels', type=str, default='8,16,32,64',
+                    help='مستويات palette للتجريب مفصولة بفواصل')
     args = ap.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
     print(f"=== بدء المعالجة: {args.input_video} ===")
 
+    # 1. فك الفيديو كاملًا
     t0 = time.time()
     frames, info = decode_video_frames(
         args.input_video,
-        max_frames=args.max_frames,
         resolution=args.resolution
     )
     decode_time = time.time() - t0
@@ -244,107 +244,12 @@ def main():
         print("خطأ: لا توجد إطارات مفكوكة", file=sys.stderr)
         sys.exit(1)
 
-    t0 = time.time()
-    sample_indices = np.linspace(0, n_frames - 1, min(10, n_frames), dtype=int)
-    sample_frames = [frames[i] for i in sample_indices]
-    palette = build_global_palette(sample_frames, args.palette_size)
-    palette_time = time.time() - t0
-    print(f"تم بناء القاموس ({args.palette_size} لونًا) في {palette_time:.1f} ثانية")
-
-    t0 = time.time()
-    all_commands = []
-    prev_regions = None
-
-    for i, frame in enumerate(frames):
-        regions, labels = extract_frame_regions(
-            frame, palette, args.curve_epsilon, args.min_area
-        )
-
-        if i == 0:
-            frame_data = {
-                'type': 'I',
-                'index': i,
-                'regions': regions
-            }
-            prev_regions = regions
-        else:
-            commands = compare_regions(prev_regions, regions)
-            frame_data = {
-                'type': 'P',
-                'index': i,
-                'commands': commands
-            }
-            prev_regions = regions
-
-        all_commands.append(frame_data)
-
-    rep_time = time.time() - t0
-    print(f"تم بناء التمثيل في {rep_time:.1f} ثانية")
-
-    full_rep = {
-        'version': 1,
-        'width': W,
-        'height': H,
-        'fps': info['fps'],
-        'n_frames': n_frames,
-        'palette_rgb': palette.tolist(),
-        'palette_size': args.palette_size,
-        'curve_epsilon': args.curve_epsilon,
-        'min_area': args.min_area,
-        'frames': all_commands
-    }
-
-    size_rep = measure_size(full_rep)
-    print(f"حجم التمثيل المنحني الكلي: {size_rep} بايت ({size_rep/1024:.1f} KB)")
-
-    t0 = time.time()
-    reconstructed_frames = []
-    base_regions = all_commands[0]['regions']
-
-    for frame_data in all_commands:
-        if frame_data['type'] == 'I':
-            commands = []
-            base_regions = frame_data['regions']
-        else:
-            commands = frame_data['commands']
-
-        recon = reconstruct_frame(
-            base_regions,
-            palette,
-            commands,
-            H, W
-        )
-        reconstructed_frames.append(recon)
-
-    recon_time = time.time() - t0
-    print(f"تم إعادة البناء في {recon_time:.1f} ثانية")
-
-    psnrs = []
-    ssims = []
-    for orig, recon in zip(frames, reconstructed_frames):
-        mse = np.mean((orig.astype(np.float64) - recon.astype(np.float64)) ** 2)
-        if mse == 0:
-            psnr = float('inf')
-        else:
-            psnr = 10 * np.log10((255.0 ** 2) / mse)
-        psnrs.append(psnr)
-
-        orig_gray = cv2.cvtColor(orig, cv2.COLOR_RGB2GRAY)
-        recon_gray = cv2.cvtColor(recon, cv2.COLOR_RGB2GRAY)
-        ssim = cv2.matchTemplate(orig_gray, recon_gray, cv2.TM_CCOEFF_NORMED)[0, 0]
-        ssims.append(max(0.0, min(1.0, float(ssim))))
-
-    avg_psnr = np.mean([p for p in psnrs if p != float('inf')])
-    avg_ssim = np.mean(ssims)
-    print(f"متوسط PSNR: {avg_psnr:.2f} dB")
-    print(f"متوسط SSIM: {avg_ssim:.4f}")
-
+    # 2. ترميز AV1 المرجعي
     t0 = time.time()
     av1_output = os.path.join(args.output_dir, 'reference_av1.mkv')
     ffmpeg_cmd = [
         'ffmpeg', '-hide_banner', '-nostdin', '-y',
         '-i', args.input_video,
-        '-frames:v', str(n_frames),
     ]
     if args.resolution and args.resolution < info['height']:
         ffmpeg_cmd += ['-vf', f'scale=-2:{args.resolution}']
@@ -359,54 +264,183 @@ def main():
     ]
     subprocess.run(ffmpeg_cmd, check=True, capture_output=True)
     av1_time = time.time() - t0
-
     size_av1 = os.path.getsize(av1_output)
-    print(f"حجم AV1 المرجعي: {size_av1} بايت ({size_av1/1024:.1f} KB)")
-    print(f"زمن ترميز AV1: {av1_time:.1f} ثانية")
+    print(f"AV1 المرجعي: {size_av1} بايت في {av1_time:.1f} ثانية")
 
+    # 3. فك AV1 المرجعي لقياس جودته
+    av1_frames, _ = decode_video_frames(
+        av1_output,
+        resolution=args.resolution
+    )
+    av1_frames = av1_frames[:n_frames]
+
+    # 4. قياس PSNR لـ AV1 المرجعي
+    psnr_av1_list = []
+    for orig, recon in zip(frames, av1_frames):
+        psnr_av1_list.append(compute_psnr(orig, recon))
+    psnr_av1 = np.mean([p for p in psnr_av1_list if p != float('inf')])
+    print(f"PSNR لـ AV1 المرجعي: {psnr_av1:.2f} dB")
+
+    # 5. تجربة مستويات جودة مختلفة للتمثيل المنحني
+    quality_levels = [int(x) for x in args.quality_levels.split(',')]
+    best_result = None
+
+    for palette_size in quality_levels:
+        # ضبط curve_epsilon حسب palette_size
+        if palette_size >= 64:
+            curve_epsilon = 0.5
+        elif palette_size >= 32:
+            curve_epsilon = 1.0
+        elif palette_size >= 16:
+            curve_epsilon = 1.5
+        else:
+            curve_epsilon = 2.5
+
+        min_area = max(5, int(200 / palette_size))
+
+        print(f"\n--- تجربة: palette={palette_size}, epsilon={curve_epsilon}, min_area={min_area} ---")
+
+        t0 = time.time()
+        sample_indices = np.linspace(0, n_frames - 1, min(10, n_frames), dtype=int)
+        sample_frames = [frames[i] for i in sample_indices]
+        palette = build_global_palette(sample_frames, palette_size)
+        palette_time = time.time() - t0
+
+        t0 = time.time()
+        all_commands = []
+        prev_regions = None
+
+        for i, frame in enumerate(frames):
+            regions, labels = extract_frame_regions(
+                frame, palette, curve_epsilon, min_area
+            )
+
+            if i == 0:
+                frame_data = {
+                    'type': 'I',
+                    'index': i,
+                    'regions': regions
+                }
+                prev_regions = regions
+            else:
+                commands = compare_regions(prev_regions, regions)
+                frame_data = {
+                    'type': 'P',
+                    'index': i,
+                    'commands': commands
+                }
+                prev_regions = regions
+
+            all_commands.append(frame_data)
+
+        rep_time = time.time() - t0
+
+        full_rep = {
+            'version': 1,
+            'width': W,
+            'height': H,
+            'fps': info['fps'],
+            'n_frames': n_frames,
+            'palette_rgb': palette.tolist(),
+            'palette_size': palette_size,
+            'curve_epsilon': curve_epsilon,
+            'min_area': min_area,
+            'frames': all_commands
+        }
+
+        size_rep = measure_size(full_rep)
+
+        # إعادة بناء وقياس الجودة
+        t0 = time.time()
+        reconstructed_frames = []
+        base_regions = all_commands[0]['regions']
+
+        for frame_data in all_commands:
+            if frame_data['type'] == 'I':
+                commands = []
+                base_regions = frame_data['regions']
+            else:
+                commands = frame_data['commands']
+
+            recon = reconstruct_frame(
+                base_regions,
+                palette,
+                commands,
+                H, W
+            )
+            reconstructed_frames.append(recon)
+
+        recon_time = time.time() - t0
+
+        psnr_list = []
+        for orig, recon in zip(frames, reconstructed_frames):
+            psnr_list.append(compute_psnr(orig, recon))
+        psnr_curve = np.mean([p for p in psnr_list if p != float('inf')])
+
+        print(f"الحجم: {size_rep} بايت, PSNR: {psnr_curve:.2f} dB")
+
+        # اختيار الأقرب لـ PSNR الخاص بـ AV1
+        if best_result is None or abs(psnr_curve - psnr_av1) < abs(best_result['psnr'] - psnr_av1):
+            best_result = {
+                'palette_size': palette_size,
+                'curve_epsilon': curve_epsilon,
+                'min_area': min_area,
+                'size_rep': size_rep,
+                'psnr': psnr_curve,
+                'rep': full_rep,
+                'reconstructed': reconstructed_frames,
+                'decode_time': decode_time,
+                'palette_time': palette_time,
+                'rep_time': rep_time,
+                'recon_time': recon_time
+            }
+
+    # 6. النتيجة النهائية
+    best = best_result
+    print("\n=== النتائج النهائية ===")
+    print(f"AV1: {size_av1} بايت, PSNR: {psnr_av1:.2f} dB")
+    print(f"منحني: {best['size_rep']} بايت, PSNR: {best['psnr']:.2f} dB")
+    print(f"المستوى المختار: palette={best['palette_size']}, epsilon={best['curve_epsilon']}, min_area={best['min_area']}")
+    print(f"نسبة التوفير: {((size_av1 - best['size_rep']) / size_av1) * 100:.1f}%")
+
+    # حفظ النتائج
     results = {
         'input': args.input_video,
         'resolution': f"{W}x{H}",
         'n_frames': n_frames,
-        'palette_size': args.palette_size,
-        'curve_epsilon': args.curve_epsilon,
-        'min_area': args.min_area,
-        'size_curve_rep': size_rep,
+        'crf': args.crf,
         'size_av1': size_av1,
-        'compression_ratio': size_av1 / max(size_rep, 1),
-        'size_reduction_percent': ((size_av1 - size_rep) / max(size_av1, 1)) * 100,
-        'avg_psnr': avg_psnr,
-        'avg_ssim': avg_ssim,
+        'psnr_av1': psnr_av1,
+        'size_curve_rep': best['size_rep'],
+        'psnr_curve': best['psnr'],
+        'selected_palette_size': best['palette_size'],
+        'selected_curve_epsilon': best['curve_epsilon'],
+        'selected_min_area': best['min_area'],
+        'compression_ratio': size_av1 / max(best['size_rep'], 1),
+        'size_reduction_percent': ((size_av1 - best['size_rep']) / max(size_av1, 1)) * 100,
         'decode_time': decode_time,
-        'palette_time': palette_time,
-        'rep_time': rep_time,
-        'recon_time': recon_time,
-        'av1_time': av1_time
+        'av1_time': av1_time,
+        'rep_time': best['rep_time'],
+        'recon_time': best['recon_time']
     }
 
     with open(os.path.join(args.output_dir, 'results.json'), 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
     with gzip.open(os.path.join(args.output_dir, 'curve_rep.json.gz'), 'wb', compresslevel=9) as f:
-        f.write(json.dumps(full_rep, separators=(',', ':')).encode('utf-8'))
+        f.write(json.dumps(best['rep'], separators=(',', ':')).encode('utf-8'))
 
-    if reconstructed_frames:
+    if best['reconstructed']:
         cv2.imwrite(
             os.path.join(args.output_dir, 'reconstructed_frame.png'),
-            cv2.cvtColor(reconstructed_frames[0], cv2.COLOR_RGB2BGR)
+            cv2.cvtColor(best['reconstructed'][0], cv2.COLOR_RGB2BGR)
         )
         cv2.imwrite(
             os.path.join(args.output_dir, 'original_frame.png'),
             cv2.cvtColor(frames[0], cv2.COLOR_RGB2BGR)
         )
 
-    print("\n=== النتائج النهائية ===")
-    print(f"الحجم المنحني: {size_rep} بايت")
-    print(f"حجم AV1: {size_av1} بايت")
-    print(f"نسبة التوفير: {results['size_reduction_percent']:.1f}%")
-    print(f"PSNR: {avg_psnr:.2f} dB")
-    print(f"SSIM: {avg_ssim:.4f}")
-    print(f"الحفظ في: {args.output_dir}")
+    print(f"\nالنتائج محفوظة في: {args.output_dir}")
 
 
 if __name__ == '__main__':
