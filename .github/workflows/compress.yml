@@ -51,7 +51,6 @@ on:
         required: true
         default: '24'
 
-# مهمة واحدة تعمل لكل دردشة؛ والبقية تنتظر بالترتيب بدلاً من إلغائها.
 concurrency:
   group: video-compression-${{ github.event.inputs.chat_id }}
   queue: max
@@ -149,8 +148,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt update
-          sudo apt install -y ffmpeg jq libdav1d-dev libopus0
-          python3 -m pip install --user telethon
+          sudo apt install -y ffmpeg jq libdav1d-dev libopus0 python3-pip
+          python3 -m pip install --user telethon requests beautifulsoup4 lxml
 
       - name: استعادة FFmpeg الموحد عند الحاجة
         if: github.event.inputs.codec != 'audio'
@@ -175,6 +174,13 @@ jobs:
           is_telegram_url() {
             local url="$1"
             [[ "$url" =~ ^https?://(t\.me|telegram\.me|telegram\.dog)/ ]] && return 0
+            return 1
+          }
+
+          # تعريف دالة للتحقق مما إذا كان الرابط مباشرًا لملف فيديو
+          is_direct_video_url() {
+            local url="$1"
+            [[ "$url" =~ \.(mp4|mkv|avi|mov|webm|flv|ts|m3u8)(\?.*)?$ ]] && return 0
             return 1
           }
 
@@ -205,7 +211,7 @@ jobs:
 
           asyncio.run(main())
           PYEOF
-          # تحميل رابط تيليجرام عبر الجلسة (لأنه لن يتحمل مباشرة)
+          # تحميل رابط تيليجرام عبر الجلسة
           elif [ -n "$VIDEO_URL" ] && is_telegram_url "$VIDEO_URL"; then
             python3 <<'PYEOF'
           import asyncio
@@ -260,16 +266,113 @@ jobs:
 
           asyncio.run(main())
           PYEOF
-          # تحميل رابط عادي مباشرة
-          elif [ -n "$VIDEO_URL" ]; then
+          # تحميل رابط مباشر
+          elif [ -n "$VIDEO_URL" ] && is_direct_video_url "$VIDEO_URL"; then
             curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 \
               -o raw_input.mp4 "$VIDEO_URL"
+          # محاولة استخراج رابط مباشر من صفحة HTML
+          elif [ -n "$VIDEO_URL" ]; then
+            python3 <<'PYEOF'
+          import os
+          import sys
+          import requests
+          from bs4 import BeautifulSoup
+          import re
+          import json
+
+          url = os.environ["VIDEO_URL"]
+          
+          try:
+              # تحميل الصفحة
+              headers = {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+              }
+              response = requests.get(url, headers=headers, timeout=30)
+              response.raise_for_status()
+              
+              html_content = response.text
+              direct_url = None
+              
+              # محاولة استخراج من og:video أو og:video:url
+              soup = BeautifulSoup(html_content, 'html.parser')
+              
+              # البحث في meta tags
+              for meta in soup.find_all('meta'):
+                  if meta.get('property') in ['og:video', 'og:video:url', 'og:video:secure_url']:
+                      direct_url = meta.get('content')
+                      if direct_url:
+                          break
+                  elif meta.get('name') in ['twitter:player:stream', 'twitter:player']:
+                      direct_url = meta.get('content')
+                      if direct_url:
+                          break
+              
+              # البحث في JavaScript عن روابط mp4
+              if not direct_url:
+                  mp4_pattern = r'https?://[^\s"\']+\.(?:mp4|m3u8)(?:\?[^\s"\']*)?'
+                  matches = re.findall(mp4_pattern, html_content)
+                  if matches:
+                      direct_url = matches[0]
+              
+              # البحث في JSON
+              if not direct_url:
+                  json_pattern = r'\{[^{}]*"video[^}]*\}'
+                  matches = re.findall(json_pattern, html_content)
+                  for match in matches:
+                      try:
+                          data = json.loads(match)
+                          for key in ['videoUrl', 'video_url', 'url', 'src', 'file']:
+                              if key in data and data[key]:
+                                  direct_url = data[key]
+                                  break
+                      except:
+                          continue
+                      if direct_url:
+                          break
+              
+              # البحث عن video src في HTML
+              if not direct_url:
+                  video_tags = soup.find_all('video')
+                  for video in video_tags:
+                      if video.get('src'):
+                          direct_url = video['src']
+                          break
+                      source_tags = video.find_all('source')
+                      for source in source_tags:
+                          if source.get('src'):
+                              direct_url = source['src']
+                              break
+                      if direct_url:
+                          break
+              
+              if not direct_url:
+                  print("لم يتم العثور على رابط فيديو مباشر في الصفحة", file=sys.stderr)
+                  sys.exit(1)
+              
+              print(f"تم العثور على رابط مباشر: {direct_url}", file=sys.stderr)
+              
+              # تحميل الفيديو المباشر
+              video_response = requests.get(direct_url, headers=headers, timeout=300, stream=True)
+              video_response.raise_for_status()
+              
+              with open("raw_input.mp4", "wb") as f:
+                  for chunk in video_response.iter_content(chunk_size=8192):
+                      if chunk:
+                          f.write(chunk)
+              
+              print("تم تحميل الفيديو بنجاح", file=sys.stderr)
+              
+          except Exception as e:
+              print(f"خطأ في تحميل الفيديو: {str(e)}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
           else
             echo 'لا توجد رسالة تيليجرام ولا رابط مباشر.' >&2
             exit 1
           fi
 
           test -s raw_input.mp4
+          echo "حجم الملف المحمل: $(stat -c%s raw_input.mp4) بايت"
           ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 raw_input.mp4 >/dev/null
 
       - name: اكتشاف الأشرطة السوداء فعلياً
@@ -297,7 +400,6 @@ jobs:
             DECODER_ARGS=(-c:v libdav1d)
           fi
 
-          # يقرأ أول 100 إطار ويأخذ آخر قيمة crop مقترحة. لا يطبق cropdetect نفسه لاحقاً.
           CROP=$("$FFMPEG" -hide_banner -nostdin -hwaccel none "${DECODER_ARGS[@]}" -i raw_input.mp4 \
             -frames:v 100 -an -vf 'cropdetect=24:16:0' -f null - 2>&1 \
             | grep -oE 'crop=[0-9]+:[0-9]+:[0-9]+:[0-9]+' \
@@ -332,7 +434,6 @@ jobs:
           DURATION=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 raw_input.mp4 | cut -d. -f1)
           test -n "$DURATION"
 
-          # خمسة دقائق: توازن بين مهام أقل وتوزيع كافٍ للترميز الثقيل، خصوصاً VVC.
           if [ "$DURATION" -gt 1200 ]; then
             "$FFMPEG" -hide_banner -nostdin -y -i raw_input.mp4 \
               -map 0 -c copy -f segment -segment_time 300 \
@@ -413,7 +514,6 @@ jobs:
           set -euo pipefail
           IN="chunks_raw/chunk_${CHUNK_ID}.mkv"
           OUT_DIR="chunks_encoded"
-          # VVC يستخدم MP4 لأفضل توافق عملي؛ AV1 والصوت يبقيان على MKV.
           if [ "$CODEC" = "vvc" ]; then EXT=mp4; else EXT=mkv; fi
           OUT_FILE="${OUT_DIR}/encoded_${CHUNK_ID}.${EXT}"
           mkdir -p "$OUT_DIR"
@@ -428,7 +528,6 @@ jobs:
             export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           fi
 
-          # السطر التشخيصي: يسهل كشف انتقال أي قيمة خطأ من البوت إلى GitHub.
           printf 'INPUTS: codec=%s preset=%s mode=%s filter=%s method=%s target=%s resolution=%s fps=%s crop=%s chunk=%s\n' \
             "$CODEC" "$PRESET_INPUT" "$ENCODE_MODE" "$FILTER_PROFILE" \
             "$ENCODE_METHOD" "$TARGET_VALUE" "$RESOLUTION" "$FRAME_RATE" \
@@ -476,15 +575,12 @@ jobs:
               *) echo 'encode_mode للفيديو يجب أن يكون filters أو nofilters.' >&2; exit 1 ;;
             esac
 
-            # اختيار libdav1d حصرياً إن كان المصدر AV1، ومنع أي محاولة لتسريع عتادي.
             INPUT_CODEC=$("$FFPROBE" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$IN")
             DECODER_ARGS=()
             if [ "$INPUT_CODEC" = "av1" ]; then
               DECODER_ARGS=(-c:v libdav1d)
             fi
 
-            # cropdetect طبق في split، وهنا نطبق قيمة crop المكتشفة فعلياً.
-            # تصفير طابع الفيديو قبل القص أو تغيير الدقة يمنع انتقال إزاحة الجزء الخام إلى الناتج.
             FILTERS=("setpts=PTS-STARTPTS")
             if [ -n "$CROP_FILTER" ] && [ "$CROP_FILTER" != "none" ]; then
               FILTERS+=("$CROP_FILTER")
