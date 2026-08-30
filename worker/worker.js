@@ -50,6 +50,7 @@ export default {
             resolution: preset.resolution || "480",
             filename: finalName,
             auto_advance_episode: preset.auto_naming === "series",
+            pending_confirmation: false,
           };
 
           await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ إرسال المهمة تلقائياً: ${finalName}`);
@@ -70,6 +71,7 @@ export default {
           message_id: update.message.message_id,
           url: "",
           default_name: defaultName,
+          pending_confirmation: false,
         });
         await sendCodecKeyboard(BOT_TOKEN, chatId);
         return ok();
@@ -97,7 +99,8 @@ export default {
         if (isTelegramLink(text)) {
           if (session.awaiting_preset || session.awaiting_target_value || 
               session.awaiting_res || session.awaiting_filename || 
-              session.awaiting_series_title || session.awaiting_episode_start) {
+              session.awaiting_series_title || session.awaiting_episode_start ||
+              session.pending_confirmation) {
             await sendMessage(BOT_TOKEN, chatId, "⚠️ أنت في منتصف عملية إعداد. أكمل الإعداد أولاً أو ألغِ العملية.");
             return ok();
           }
@@ -107,6 +110,7 @@ export default {
             message_id: "",
             url: text, // ← الرابط هنا
             default_name: extractNameFromTelegramLink(text),
+            pending_confirmation: false,
           };
 
           if (preset && preset.active) {
@@ -125,6 +129,7 @@ export default {
               resolution: preset.resolution || "480",
               filename: finalName,
               auto_advance_episode: preset.auto_naming === "series",
+              pending_confirmation: false,
             };
             await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ معالجة رابط تيليجرام تلقائياً: ${finalName}`);
             await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, autoSession);
@@ -136,13 +141,39 @@ export default {
         }
         // ★★★ نهاية دعم الروابط ★★★
 
+        // التعامل مع رسائل التأكيد
+        if (session.pending_confirmation) {
+          if (text === "/confirm" || text === "✅ تأكيد") {
+            session.pending_confirmation = false;
+            await setSession(env, chatId, session);
+            await editMessage(BOT_TOKEN, chatId, session.confirmation_message_id, "✅ تم تأكيد العملية. جارٍ الإرسال...");
+            await finalizeAndTrigger(
+              env,
+              BOT_TOKEN,
+              GITHUB_TOKEN,
+              GITHUB_REPO,
+              GITHUB_WORKFLOW,
+              chatId,
+              session,
+            );
+            return ok();
+          } else if (text === "/cancel" || text === "🚫 إلغاء") {
+            await deleteSession(env, chatId);
+            await sendMessage(BOT_TOKEN, chatId, "🚫 تم إلغاء العملية.");
+            return ok();
+          } else {
+            await sendMessage(BOT_TOKEN, chatId, "⚠️ الرجاء اختيار تأكيد أو إلغاء العملية:");
+            return ok();
+          }
+        }
+
         if (text === "/start") {
           await sendMessage(BOT_TOKEN, chatId, startMessage(await getPreset(env, chatId)));
           return ok();
         }
 
         if (text === "/setup" || text === "/settings") {
-          await setSession(env, chatId, { configuring_preset: true });
+          await setSession(env, chatId, { configuring_preset: true, pending_confirmation: false });
           await sendCodecKeyboard(BOT_TOKEN, chatId);
           return ok();
         }
@@ -187,14 +218,14 @@ export default {
           session.awaiting_series_title = false;
           session.awaiting_episode_start = true;
           await setSession(env, chatId, session);
-          await sendMessage(BOT_TOKEN, chatId, `✅ اسم السلسلة: ${seriesTitle}\n🔢 أرسل رقم الحلقة الأولى، مثل: 1`);
+          await sendMessage(BOT_TOKEN, chatId, `✅ اسم السلسلة: ${seriesTitle}\n🔢 أرسل رقم الحلقة الأولى، مثل: 1\n\nللإلغاء أرسل /cancel`);
           return ok();
         }
 
         // رقم أول حلقة في تسمية مسلسل تلقائية ضمن /setup.
         if (session.awaiting_episode_start) {
           if (!/^[1-9]\d{0,5}$/.test(text)) {
-            await sendMessage(BOT_TOKEN, chatId, "🔢 أرسل رقم حلقة موجباً فقط، مثل: 1 أو 12.");
+            await sendMessage(BOT_TOKEN, chatId, "🔢 أرسل رقم حلقة موجباً فقط، مثل: 1 أو 12.\n\nللإلغاء أرسل /cancel");
             return ok();
           }
           session.next_episode = Number.parseInt(text, 10);
@@ -212,7 +243,7 @@ export default {
               codec === "vvc"
                 ? "أرسل رقم سرعة VVC من 1 إلى 4 فقط:"
                 : "أرسل رقم سرعة AV1 من 0 إلى 13 فقط:";
-            await sendMessage(BOT_TOKEN, chatId, hint);
+            await sendMessage(BOT_TOKEN, chatId, hint + "\n\nللإلغاء أرسل /cancel");
             return ok();
           }
 
@@ -231,7 +262,7 @@ export default {
         // إدخال CRF أو QP أو معدل البت.
         if (session.awaiting_target_value) {
           if (!isValidTargetValue(session.codec, session.encode_method, text)) {
-            await sendMessage(BOT_TOKEN, chatId, targetValueHint(session.codec, session.encode_method));
+            await sendMessage(BOT_TOKEN, chatId, targetValueHint(session.codec, session.encode_method) + "\n\nللإلغاء أرسل /cancel");
             return ok();
           }
 
@@ -257,7 +288,7 @@ export default {
         // إدخال دقة مخصصة.
         if (session.awaiting_res) {
           if (!isValidResolution(text)) {
-            await sendMessage(BOT_TOKEN, chatId, "أرسل ارتفاعاً صحيحاً بين 144 و2160، مثل 550:");
+            await sendMessage(BOT_TOKEN, chatId, "أرسل ارتفاعاً صحيحاً بين 144 و2160، مثل 550:\n\nللإلغاء أرسل /cancel");
             return ok();
           }
           session.resolution = text;
@@ -271,17 +302,24 @@ export default {
         if (session.awaiting_filename) {
           session.filename = await applyCounterToName(env, chatId, text || session.default_name || "video");
           session.awaiting_filename = false;
+          session.pending_confirmation = true;
+          session.confirmation_message_id = null;
           await setSession(env, chatId, session);
-          await sendMessage(BOT_TOKEN, chatId, `تم اعتماد الاسم النهائي: ${session.filename}`);
-          await finalizeAndTrigger(
-            env,
-            BOT_TOKEN,
-            GITHUB_TOKEN,
-            GITHUB_REPO,
-            GITHUB_WORKFLOW,
-            chatId,
-            session,
-          );
+          
+          // طلب التأكيد
+          const confirmKeyboard = {
+            inline_keyboard: [
+              [
+                { text: "✅ تأكيد", callback_data: "confirm_action" },
+                { text: "🚫 إلغاء", callback_data: "cancel_action" }
+              ]
+            ]
+          };
+          
+          const summary = buildSummaryMessage(session);
+          const sentMsg = await sendMessageWithReturn(BOT_TOKEN, chatId, `📋 ملخص العملية:\n${summary}\n\nهل تريد تأكيد الإرسال؟`, confirmKeyboard);
+          session.confirmation_message_id = sentMsg?.result?.message_id;
+          await setSession(env, chatId, session);
           return ok();
         }
 
@@ -300,6 +338,39 @@ export default {
         if (!isAuthorized) return ok();
 
         const session = (await getSession(env, chatId)) || {};
+
+        // معالجة أزرار التأكيد
+        if (data === "confirm_action") {
+          if (!session.pending_confirmation) {
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "⚠️ لا توجد عملية معلقة للتأكيد.");
+            return ok();
+          }
+          
+          session.pending_confirmation = false;
+          await setSession(env, chatId, session);
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "✅ تم تأكيد العملية. جارٍ الإرسال...");
+          await finalizeAndTrigger(
+            env,
+            BOT_TOKEN,
+            GITHUB_TOKEN,
+            GITHUB_REPO,
+            GITHUB_WORKFLOW,
+            chatId,
+            session,
+          );
+          return ok();
+        }
+
+        if (data === "cancel_action") {
+          if (!session.pending_confirmation) {
+            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "⚠️ لا توجد عملية معلقة للإلغاء.");
+            return ok();
+          }
+          
+          await deleteSession(env, chatId);
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "🚫 تم إلغاء العملية.");
+          return ok();
+        }
 
         if (data === "cancel") {
           await deleteSession(env, chatId);
@@ -423,7 +494,7 @@ export default {
             BOT_TOKEN,
             chatId,
             query.message.message_id,
-            "📝 أرسل اسم السلسلة كما تريد ظهوره.\nمثال: Solo Leveling S02\n\nسيكون الناتج: Solo Leveling S02 - E01",
+            "📝 أرسل اسم السلسلة كما تريد ظهوره.\nمثال: Solo Leveling S02\n\nسيكون الناتج: Solo Leveling S02 - E01\n\nللإلغاء أرسل /cancel",
           );
           return ok();
         }
@@ -432,7 +503,15 @@ export default {
         if (data === "custom_res") {
           session.awaiting_res = true;
           await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "📐 أرسل الارتفاع المطلوب رقماً فقط، مثال: 550:");
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "📐 أرسل الارتفاع المطلوب رقماً فقط، مثال: 550:\n\nللإلغاء أرسل /cancel");
+          return ok();
+        }
+
+        if (data === "auto_res") {
+          session.resolution = "auto";
+          await setSession(env, chatId, session);
+          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "🎯 تم اختيار: نفس جودة الفيديو الأصلية");
+          await continueAfterResolution(env, BOT_TOKEN, chatId, session);
           return ok();
         }
 
@@ -450,17 +529,24 @@ export default {
         if (data === "name_skip") {
           session.filename = await applyCounterToName(env, chatId, session.default_name || "video");
           session.awaiting_filename = false;
+          session.pending_confirmation = true;
+          session.confirmation_message_id = null;
           await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `⏳ جارٍ إرسال المهمة: ${session.filename}`);
-          await finalizeAndTrigger(
-            env,
-            BOT_TOKEN,
-            GITHUB_TOKEN,
-            GITHUB_REPO,
-            GITHUB_WORKFLOW,
-            chatId,
-            session,
-          );
+          
+          // طلب التأكيد
+          const confirmKeyboard = {
+            inline_keyboard: [
+              [
+                { text: "✅ تأكيد", callback_data: "confirm_action" },
+                { text: "🚫 إلغاء", callback_data: "cancel_action" }
+              ]
+            ]
+          };
+          
+          const summary = buildSummaryMessage(session);
+          const sentMsg = await sendMessageWithReturn(BOT_TOKEN, chatId, `📋 ملخص العملية:\n${summary}\n\nهل تريد تأكيد الإرسال؟`, confirmKeyboard);
+          session.confirmation_message_id = sentMsg?.result?.message_id;
+          await setSession(env, chatId, session);
           return ok();
         }
       }
@@ -471,6 +557,35 @@ export default {
     return ok();
   },
 };
+
+// دالة لبناء ملخص العملية
+function buildSummaryMessage(session) {
+  const codecLabel = session.codec === "vvc" ? "H.266 / VVC" : session.codec === "audio" ? "صوت فقط" : "AV1";
+  const modeLabel = session.encode_mode === "filters" 
+    ? (session.filter_profile === "anime" ? "مع فلاتر الأنمي" : "مع فلاتر الواقعي")
+    : session.encode_mode === "audio" ? "صوت فقط" : "بدون فلاتر";
+  const methodLabel = session.encode_method === "crf" ? "CRF" 
+    : session.encode_method === "qp" ? "QP"
+    : session.encode_method === "vbr" ? "VBR"
+    : session.encode_method === "twopass" ? "Two-Pass"
+    : "استخراج صوت";
+  const resolutionLabel = session.resolution === "auto" ? "نفس جودة الفيديو الأصلية" : `${session.resolution}p`;
+  
+  const lines = [
+    `📁 اسم الملف: ${session.filename || "غير محدد"}`,
+    `🎞️ المرمّز: ${codecLabel}`,
+    `🖼️ الوضع: ${modeLabel}`,
+    `🏎️ السرعة: ${session.preset || "-"}`,
+    `🎛️ الطريقة: ${methodLabel}`,
+    `📊 القيمة: ${session.target_value || "-"}`,
+  ];
+  
+  if (session.codec !== "audio") {
+    lines.push(`🎯 الدقة: ${resolutionLabel}`);
+  }
+  
+  return lines.join("\n");
+}
 
 function ok() {
   return new Response("OK", { status: 200 });
@@ -585,6 +700,7 @@ function presetStatusText(preset) {
           : preset.encode_method === "twopass"
             ? "Two-Pass"
             : "استخراج صوت";
+  const resolutionLabel = preset.resolution === "auto" ? "نفس جودة الفيديو الأصلية" : `${preset.resolution}p`;
 
   const lines = [
     `المرمّز: ${codecLabel}`,
@@ -593,7 +709,7 @@ function presetStatusText(preset) {
     `الطريقة: ${methodLabel}`,
     `القيمة: ${preset.target_value}`,
   ];
-  if (preset.codec !== "audio") lines.push(`الدقة: ${preset.resolution}p`);
+  if (preset.codec !== "audio") lines.push(`الدقة: ${resolutionLabel}`);
   if (preset.auto_naming === "series" && preset.series_title && preset.next_episode) {
     lines.push(`التسمية: ${preset.series_title} - E${formatEpisode(preset.next_episode)}`);
   } else {
@@ -610,11 +726,17 @@ function startMessage(preset) {
     "/setup لحفظ إعداد تلقائي",
     "/preset لعرض الإعداد المحفوظ",
     "/auto_on و /auto_off لتشغيل أو إيقاف الوضع التلقائي",
+    "/cancel لإلغاء أي عملية جارية",
     "إعداد اسم السلسلة وعدّاد الحلقات موجود ضمن /setup.",
     "",
     "📎 يمكنك إرسال:",
     "- فيديو مباشر من جهازك",
     "- رابط تيليجرام مثل: https://t.me/channel/123",
+    "",
+    "🎯 خيارات الدقة تشمل:",
+    "- دقة ثابتة (240p إلى 1080p)",
+    "- دقة مخصصة",
+    "- نفس جودة الفيديو الأصلية (auto)",
     preset?.active ? "" : null,
     preset?.active ? "▶️ الوضع التلقائي مفعّل حالياً." : null,
   ]
@@ -775,8 +897,17 @@ async function promptFilename(botToken, chatId, editMessageId, defaultName, useE
     ? `الاسم المرفق: ${defaultName}\n\nأرسل اسماً جديداً، أو اضغط «✅ استخدام الاسم المرفق».`
     : "أرسل الاسم النهائي للملف:";
   const keyboard = defaultName
-    ? { inline_keyboard: [[{ text: "✅ استخدام الاسم المرفق", callback_data: "name_skip" }]] }
-    : null;
+    ? { 
+        inline_keyboard: [
+          [{ text: "✅ استخدام الاسم المرفق", callback_data: "name_skip" }],
+          [{ text: "🚫 إلغاء", callback_data: "cancel" }]
+        ] 
+      }
+    : { 
+        inline_keyboard: [
+          [{ text: "🚫 إلغاء", callback_data: "cancel" }]
+        ] 
+      };
 
   if (useEdit && editMessageId) {
     await editMessage(botToken, chatId, editMessageId, text, keyboard);
@@ -871,6 +1002,8 @@ async function sendQualityKeyboard(botToken, chatId, resolutions) {
     );
   }
   rows.push([{ text: "✏️ دقة مخصصة", callback_data: "custom_res" }]);
+  rows.push([{ text: "🔄 نفس جودة الفيديو الأصلية", callback_data: "auto_res" }]);
+  rows.push([{ text: "🚫 إلغاء", callback_data: "cancel" }]);
   await sendMessage(botToken, chatId, "🎯 اختر الدقة النهائية:", { inline_keyboard: rows });
 }
 
@@ -883,12 +1016,19 @@ async function sendTelegram(botToken, method, body) {
   if (!response.ok) {
     console.error(`Telegram ${method} failed:`, response.status, await response.text());
   }
+  return response.json();
 }
 
 async function sendMessage(botToken, chatId, text, keyboard = null) {
   const body = { chat_id: chatId, text };
   if (keyboard) body.reply_markup = keyboard;
   await sendTelegram(botToken, "sendMessage", body);
+}
+
+async function sendMessageWithReturn(botToken, chatId, text, keyboard = null) {
+  const body = { chat_id: chatId, text };
+  if (keyboard) body.reply_markup = keyboard;
+  return await sendTelegram(botToken, "sendMessage", body);
 }
 
 async function editMessage(botToken, chatId, messageId, text, keyboard = null) {
