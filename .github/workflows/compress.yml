@@ -52,7 +52,6 @@ on:
         default: '24'
 
 # مهمة واحدة تعمل لكل دردشة؛ والبقية تنتظر بالترتيب بدلاً من إلغائها.
-# queue: max يسمح حتى 100 مهمة معلقة في المجموعة نفسها.
 concurrency:
   group: video-compression-${{ github.event.inputs.chat_id }}
   queue: max
@@ -164,6 +163,7 @@ jobs:
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           SOURCE_CHAT_ID: ${{ github.event.inputs.chat_id }}
           MESSAGE_ID: ${{ github.event.inputs.message_id }}
@@ -171,6 +171,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          # تعريف دالة للتحقق مما إذا كان الرابط من تيليجرام
+          is_telegram_url() {
+            local url="$1"
+            [[ "$url" =~ ^https?://(t\.me|telegram\.me|telegram\.dog)/ ]] && return 0
+            return 1
+          }
+
+          # تحميل من رسالة تيليجرام (عبر message_id)
           if [ -n "$MESSAGE_ID" ]; then
             python3 <<'PYEOF'
           import asyncio
@@ -197,6 +205,62 @@ jobs:
 
           asyncio.run(main())
           PYEOF
+          # تحميل رابط تيليجرام عبر الجلسة (لأنه لن يتحمل مباشرة)
+          elif [ -n "$VIDEO_URL" ] && is_telegram_url "$VIDEO_URL"; then
+            python3 <<'PYEOF'
+          import asyncio
+          import os
+          import sys
+          import re
+          from telethon import TelegramClient
+          from telethon.sessions import StringSession
+
+          async def main():
+              client = TelegramClient(
+                  StringSession(os.environ["TG_SESSION"]),
+                  int(os.environ["TG_API_ID"]),
+                  os.environ["TG_API_HASH"],
+              )
+              await client.start()
+              
+              url = os.environ["VIDEO_URL"]
+              
+              async with client:
+                  try:
+                      # محاولة تحميل مباشر إذا كان الرابط لملف
+                      if re.search(r'\.(mp4|mkv|avi|mov|webm)$', url, re.IGNORECASE):
+                          await client.download_file(url, file="raw_input.mp4")
+                      else:
+                          # تحويل رابط المشاركة إلى كيان
+                          entity = await client.get_entity(url)
+                          # البحث عن آخر رسالة فيديو في القناة/المجموعة
+                          async for message in client.iter_messages(entity, limit=10):
+                              if message.media and hasattr(message.media, 'document'):
+                                  await client.download_media(message, file="raw_input.mp4")
+                                  break
+                          else:
+                              sys.exit("لم يتم العثور على فيديو في رابط تيليجرام المقدم.")
+                  except Exception as e:
+                      # محاولة بديلة: استخراج معرف القناة والرسالة من الرابط
+                      match = re.search(r't\.me/(?:c/)?([^/]+)/(\d+)', url)
+                      if match:
+                          channel = match.group(1)
+                          msg_id = int(match.group(2))
+                          try:
+                              entity = await client.get_entity(channel)
+                              message = await client.get_messages(entity, ids=msg_id)
+                              if message and message.media:
+                                  await client.download_media(message, file="raw_input.mp4")
+                              else:
+                                  sys.exit("لم يتم العثور على فيديو في الرسالة المحددة.")
+                          except Exception as e2:
+                              sys.exit(f"فشل تحميل رابط تيليجرام: {str(e2)}")
+                      else:
+                          sys.exit(f"فشل تحميل رابط تيليجرام: {str(e)}")
+
+          asyncio.run(main())
+          PYEOF
+          # تحميل رابط عادي مباشرة
           elif [ -n "$VIDEO_URL" ]; then
             curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 \
               -o raw_input.mp4 "$VIDEO_URL"
