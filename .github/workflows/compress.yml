@@ -104,7 +104,7 @@ jobs:
           cmake --build vvenc/build --parallel "$(nproc)"
           cmake --install vvenc/build
 
-          # FFmpeg: AV1 decoder (libdav1d) + AV1/VVC encoders in build واحد.
+          # FFmpeg
           git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git
           export PKG_CONFIG_PATH="$HOME/codec-build/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
@@ -154,22 +154,6 @@ jobs:
           python3 -m pip install --user telethon requests beautifulsoup4 lxml
           python3 -m pip install --user yt-dlp gallery-dl you-get
           
-          # تثبيت lux - مع معالجة الخطأ إذا فشل
-          echo "محاولة تثبيت lux..."
-          if wget -q https://github.com/iawia002/lux/releases/latest/download/lux_linux_amd64.tar.gz -O /tmp/lux.tar.gz 2>/dev/null; then
-            if tar -xzf /tmp/lux.tar.gz -C /tmp/ 2>/dev/null; then
-              if sudo mv /tmp/lux /usr/local/bin/ 2>/dev/null; then
-                echo "✅ تم تثبيت lux بنجاح"
-              else
-                echo "⚠️ فشل نقل lux - سيتم تخطيه"
-              fi
-            else
-              echo "⚠️ فشل فك ضغط lux - سيتم تخطيه"
-            fi
-          else
-            echo "⚠️ فشل تحميل lux - سيتم تخطيه"
-          fi
-          
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           echo "✅ تم تثبيت جميع الأدوات"
 
@@ -192,26 +176,40 @@ jobs:
         run: |
           set -euo pipefail
 
+          # دالة للتحقق من أن الملف هو فيديو حقيقي
+          is_video_file() {
+            local file="$1"
+            if [ ! -s "$file" ]; then
+              return 1
+            fi
+            if ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep -q 'video'; then
+              return 0
+            fi
+            return 1
+          }
+
           check_download() {
-            if [ -s raw_input.mp4 ]; then
+            if [ -s raw_input.mp4 ] && is_video_file raw_input.mp4; then
               return 0
             else
+              rm -f raw_input.mp4
               return 1
             fi
           }
 
           rename_downloaded() {
             for ext in mp4 mkv webm flv ts avi mov; do
-              if [ -f "video.$ext" ]; then
+              if [ -f "video.$ext" ] && is_video_file "video.$ext"; then
                 mv "video.$ext" raw_input.mp4
                 return 0
               fi
             done
-            latest=$(find . -maxdepth 1 -type f \( -name "*.mp4" -o -name "*.mkv" -o -name "*.webm" -o -name "*.flv" \) -not -name "raw_input.mp4" | head -n 1)
-            if [ -n "$latest" ]; then
+            latest=$(find . -maxdepth 1 -type f \( -name "*.mp4" -o -name "*.mkv" -o -name "*.webm" -o -name "*.flv" -o -name "*.ts" \) -not -name "raw_input.mp4" | head -n 1)
+            if [ -n "$latest" ] && is_video_file "$latest"; then
               mv "$latest" raw_input.mp4
               return 0
             fi
+            find . -maxdepth 1 -type f \( -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" -o -name "*.gif" \) -delete
             return 1
           }
 
@@ -309,15 +307,17 @@ jobs:
             
             # 4.1 محاولة yt-dlp
             echo "محاولة yt-dlp..."
+            rm -f video.* 2>/dev/null || true
             if python3 -m yt_dlp \
               --no-playlist \
               --retries 3 \
               --fragment-retries 3 \
               --output "video.%(ext)s" \
-              --format "best[ext=mp4]/best" \
+              --format "best[ext=mp4]/best[vcodec!=none]/best" \
               "$VIDEO_URL" 2>/tmp/ytdlp_error.log; then
-              echo "✅ تم التحميل باستخدام yt-dlp"
-              rename_downloaded
+              if rename_downloaded; then
+                echo "✅ تم التحميل باستخدام yt-dlp"
+              fi
             fi
             
             # 4.2 محاولة gallery-dl
@@ -325,36 +325,22 @@ jobs:
               echo "محاولة gallery-dl..."
               if python3 -m gallery_dl \
                 --no-download \
-                --get-urls "$VIDEO_URL" 2>/dev/null | grep -E '\.(mp4|mkv|webm|flv)' | head -n 5 > /tmp/gallery_urls.txt; then
+                --get-urls "$VIDEO_URL" 2>/dev/null | grep -E '\.(mp4|mkv|webm|flv)(\?.*)?$' | head -n 5 > /tmp/gallery_urls.txt; then
                 while IFS= read -r direct_url; do
                   echo "محاولة: $direct_url"
                   if curl -fL --retry 3 --connect-timeout 15 -o raw_input.mp4 "$direct_url" 2>/dev/null; then
-                    echo "✅ تم التحميل باستخدام gallery-dl"
-                    break
+                    if is_video_file raw_input.mp4; then
+                      echo "✅ تم التحميل باستخدام gallery-dl"
+                      break
+                    else
+                      rm -f raw_input.mp4
+                    fi
                   fi
                 done < /tmp/gallery_urls.txt
               fi
             fi
             
-            # 4.3 محاولة you-get
-            if ! check_download; then
-              echo "محاولة you-get..."
-              if you-get --no-caption -o . -O video "$VIDEO_URL" 2>/dev/null; then
-                echo "✅ تم التحميل باستخدام you-get"
-                rename_downloaded
-              fi
-            fi
-            
-            # 4.4 محاولة lux (إذا تم تثبيته)
-            if ! check_download && command -v lux >/dev/null 2>&1; then
-              echo "محاولة lux..."
-              if lux -o . -O video "$VIDEO_URL" 2>/dev/null; then
-                echo "✅ تم التحميل باستخدام lux"
-                rename_downloaded
-              fi
-            fi
-            
-            # 4.5 تحليل متقدم للصفحة
+            # 4.3 تحليل متقدم للصفحة
             if ! check_download; then
               echo "محاولة التحليل المتقدم..."
               python3 <<'PYEOF'
@@ -383,7 +369,9 @@ jobs:
               parsed = urlparse(url)
               if not parsed.netloc or '.' not in parsed.netloc:
                   return False
-              return True
+              if re.search(r'\.(mp4|m3u8|webm|flv|ts)(\?.*)?$', url, re.IGNORECASE):
+                  return True
+              return False
           
           def decode_base64_urls(text):
               urls = []
@@ -520,7 +508,7 @@ jobs:
           fi
 
           if ! check_download; then
-            echo "❌ فشل التحميل - الملف غير موجود أو فارغ" >&2
+            echo "❌ فشل التحميل - الملف غير موجود أو فارغ أو ليس فيديو" >&2
             exit 1
           fi
           
