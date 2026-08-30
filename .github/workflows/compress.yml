@@ -86,7 +86,6 @@ jobs:
           mkdir -p "$HOME/codec-build" "$HOME/codec-sources"
           cd "$HOME/codec-sources"
 
-          # SVT-AV1 encoder
           git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
           cmake -S SVT-AV1 -B SVT-AV1/Build \
             -DCMAKE_BUILD_TYPE=Release \
@@ -95,7 +94,6 @@ jobs:
           cmake --build SVT-AV1/Build --parallel "$(nproc)"
           cmake --install SVT-AV1/Build
 
-          # VVenC encoder
           git clone --depth 1 https://github.com/fraunhoferhhi/vvenc.git
           cmake -S vvenc -B vvenc/build \
             -DCMAKE_BUILD_TYPE=Release \
@@ -104,7 +102,6 @@ jobs:
           cmake --build vvenc/build --parallel "$(nproc)"
           cmake --install vvenc/build
 
-          # FFmpeg
           git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git
           export PKG_CONFIG_PATH="$HOME/codec-build/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
@@ -152,7 +149,7 @@ jobs:
           
           python3 -m pip install --user --upgrade pip
           python3 -m pip install --user telethon requests beautifulsoup4 lxml
-          python3 -m pip install --user yt-dlp gallery-dl you-get
+          python3 -m pip install --user yt-dlp
           
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           echo "✅ تم تثبيت جميع الأدوات"
@@ -175,43 +172,6 @@ jobs:
           VIDEO_URL: ${{ github.event.inputs.url }}
         run: |
           set -euo pipefail
-
-          # دالة للتحقق من أن الملف هو فيديو حقيقي
-          is_video_file() {
-            local file="$1"
-            if [ ! -s "$file" ]; then
-              return 1
-            fi
-            if ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep -q 'video'; then
-              return 0
-            fi
-            return 1
-          }
-
-          check_download() {
-            if [ -s raw_input.mp4 ] && is_video_file raw_input.mp4; then
-              return 0
-            else
-              rm -f raw_input.mp4
-              return 1
-            fi
-          }
-
-          rename_downloaded() {
-            for ext in mp4 mkv webm flv ts avi mov; do
-              if [ -f "video.$ext" ] && is_video_file "video.$ext"; then
-                mv "video.$ext" raw_input.mp4
-                return 0
-              fi
-            done
-            latest=$(find . -maxdepth 1 -type f \( -name "*.mp4" -o -name "*.mkv" -o -name "*.webm" -o -name "*.flv" -o -name "*.ts" \) -not -name "raw_input.mp4" | head -n 1)
-            if [ -n "$latest" ] && is_video_file "$latest"; then
-              mv "$latest" raw_input.mp4
-              return 0
-            fi
-            find . -maxdepth 1 -type f \( -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" -o -name "*.gif" \) -delete
-            return 1
-          }
 
           # 1. تحميل من رسالة تيليجرام
           if [ -n "$MESSAGE_ID" ]; then
@@ -301,49 +261,10 @@ jobs:
             curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 \
               -o raw_input.mp4 "$VIDEO_URL"
           
-          # 4. محاولة التحميل من روابط غير مباشرة
+          # 4. تحميل ذكي من روابط غير مباشرة
           elif [ -n "$VIDEO_URL" ]; then
-            echo "📥 محاولة التحميل من رابط غير مباشر..."
-            
-            # 4.1 محاولة yt-dlp
-            echo "محاولة yt-dlp..."
-            rm -f video.* 2>/dev/null || true
-            if python3 -m yt_dlp \
-              --no-playlist \
-              --retries 3 \
-              --fragment-retries 3 \
-              --output "video.%(ext)s" \
-              --format "best[ext=mp4]/best[vcodec!=none]/best" \
-              "$VIDEO_URL" 2>/tmp/ytdlp_error.log; then
-              if rename_downloaded; then
-                echo "✅ تم التحميل باستخدام yt-dlp"
-              fi
-            fi
-            
-            # 4.2 محاولة gallery-dl
-            if ! check_download; then
-              echo "محاولة gallery-dl..."
-              if python3 -m gallery_dl \
-                --no-download \
-                --get-urls "$VIDEO_URL" 2>/dev/null | grep -E '\.(mp4|mkv|webm|flv)(\?.*)?$' | head -n 5 > /tmp/gallery_urls.txt; then
-                while IFS= read -r direct_url; do
-                  echo "محاولة: $direct_url"
-                  if curl -fL --retry 3 --connect-timeout 15 -o raw_input.mp4 "$direct_url" 2>/dev/null; then
-                    if is_video_file raw_input.mp4; then
-                      echo "✅ تم التحميل باستخدام gallery-dl"
-                      break
-                    else
-                      rm -f raw_input.mp4
-                    fi
-                  fi
-                done < /tmp/gallery_urls.txt
-              fi
-            fi
-            
-            # 4.3 تحليل متقدم للصفحة
-            if ! check_download; then
-              echo "محاولة التحليل المتقدم..."
-              python3 <<'PYEOF'
+            echo "📥 تحميل ذكي من الرابط..."
+            python3 <<'PYEOF'
           import os
           import sys
           import requests
@@ -351,6 +272,7 @@ jobs:
           import re
           import json
           import base64
+          import subprocess
           from urllib.parse import urljoin, urlparse
 
           url = os.environ["VIDEO_URL"]
@@ -362,7 +284,80 @@ jobs:
               'Connection': 'keep-alive',
               'Referer': url,
           }
-          
+
+          def get_video_duration(video_path):
+              """الحصول على مدة الفيديو باستخدام ffprobe"""
+              try:
+                  result = subprocess.run(
+                      ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
+                       '-of', 'csv=p=0', video_path],
+                      capture_output=True, text=True, timeout=30
+                  )
+                  if result.returncode == 0:
+                      return int(float(result.stdout.strip()))
+              except:
+                  pass
+              return 0
+
+          def get_video_size(video_path):
+              """الحصول على حجم الفيديو"""
+              try:
+                  return os.path.getsize(video_path)
+              except:
+                  return 0
+
+          def extract_expected_duration(html_content):
+              """استخراج المدة المتوقعة من الصفحة"""
+              patterns = [
+                  r'"duration"\s*:\s*(\d+)',
+                  r'"durationSeconds"\s*:\s*(\d+)',
+                  r'duration["\']?\s*[:=]\s*["\']?(\d+)[sS]?["\']?',
+                  r'(\d+):(\d+)(?::(\d+))?',  # تنسيق الوقت مثل 15:30
+                  r'itemprop="duration"[^>]*content="PT(\d+)M(\d+)S"',
+              ]
+              
+              for pattern in patterns:
+                  matches = re.findall(pattern, html_content)
+                  if matches:
+                      if ':' in str(matches[0]) and isinstance(matches[0], tuple):
+                          # تنسيق وقت
+                          parts = [int(p) for p in matches[0] if p]
+                          if len(parts) == 2:
+                              return parts[0] * 60 + parts[1]
+                          elif len(parts) == 3:
+                              return parts[0] * 3600 + parts[1] * 60 + parts[2]
+                      else:
+                          dur = int(matches[0])
+                          if dur > 30:  # أطول من 30 ثانية
+                              return dur
+              return 0
+
+          def extract_expected_size(html_content):
+              """استخراج الحجم المتوقع من الصفحة"""
+              patterns = [
+                  r'"size"\s*:\s*"?(\d+)"?',
+                  r'"filesize"\s*:\s*"?(\d+)"?',
+                  r'size["\']?\s*[:=]\s*["\']?(\d+(?:\.\d+)?)\s*(MB|GB|KB)?',
+              ]
+              for pattern in patterns:
+                  matches = re.findall(pattern, html_content, re.IGNORECASE)
+                  if matches:
+                      size = matches[0]
+                      if isinstance(size, tuple):
+                          num = float(size[0])
+                          unit = size[1] if len(size) > 1 else 'MB'
+                      else:
+                          num = float(size)
+                          unit = 'MB'
+                      
+                      if unit.upper() == 'GB':
+                          return int(num * 1024 * 1024 * 1024)
+                      elif unit.upper() == 'KB':
+                          return int(num * 1024)
+                      else:  # MB
+                          return int(num * 1024 * 1024)
+              return 0
+
           def is_valid_video_url(url):
               if not url or not url.startswith(('http://', 'https://')):
                   return False
@@ -372,27 +367,28 @@ jobs:
               if re.search(r'\.(mp4|m3u8|webm|flv|ts)(\?.*)?$', url, re.IGNORECASE):
                   return True
               return False
-          
-          def decode_base64_urls(text):
-              urls = []
-              base64_patterns = [
-                  r'base64,([A-Za-z0-9+/=]+)',
-                  r'atob\(["\']([A-Za-z0-9+/=]+)["\']\)',
+
+          def get_quality_score(video_url):
+              url_lower = video_url.lower()
+              quality_patterns = [
+                  (r'2160p|3840x|4k|uhd', 10),
+                  (r'1440p|2560x|2k|qhd', 9),
+                  (r'1080p|1920x|fhd|fullhd', 8),
+                  (r'720p|1280x|hd', 7),
+                  (r'480p|854x', 6),
+                  (r'360p|640x', 5),
+                  (r'240p|426x', 4),
+                  (r'180p|320x', 3),
               ]
-              for pattern in base64_patterns:
-                  matches = re.findall(pattern, text)
-                  for match in matches:
-                      try:
-                          decoded = base64.b64decode(match).decode('utf-8', errors='ignore')
-                          video_urls = re.findall(r'https?://[^\s"\']+\.(?:mp4|m3u8|webm|flv)[^\s"\']*', decoded)
-                          urls.extend(video_urls)
-                      except:
-                          pass
-              return urls
-          
-          def extract_video_urls(html_content, base_url):
+              for pattern, score in quality_patterns:
+                  if re.search(pattern, url_lower):
+                      return score
+              return 0
+
+          def extract_all_video_urls(html_content, base_url):
               urls = []
               
+              # أنماط JavaScript
               js_patterns = [
                   r'["\'](https?://[^"\']+\.(?:mp4|m3u8|webm|flv)[^"\']*)["\']',
                   r'videoUrl["\']?\s*[:=]\s*["\']([^"\']+)["\']',
@@ -411,108 +407,219 @@ jobs:
                       elif match.startswith('/'):
                           urls.append(urljoin(base_url, match))
               
-              urls.extend(decode_base64_urls(html_content))
+              # فك base64
+              base64_patterns = [
+                  r'base64,([A-Za-z0-9+/=]+)',
+                  r'atob\(["\']([A-Za-z0-9+/=]+)["\']\)',
+              ]
+              for pattern in base64_patterns:
+                  matches = re.findall(pattern, html_content)
+                  for match in matches:
+                      try:
+                          decoded = base64.b64decode(match).decode('utf-8', errors='ignore')
+                          video_urls = re.findall(r'https?://[^\s"\']+\.(?:mp4|m3u8|webm|flv)[^\s"\']*', decoded)
+                          urls.extend(video_urls)
+                      except:
+                          pass
               
+              # Meta tags
               soup = BeautifulSoup(html_content, 'html.parser')
               for meta in soup.find_all('meta'):
                   if meta.get('property') in ['og:video', 'og:video:url', 'og:video:secure_url']:
                       if is_valid_video_url(meta.get('content')):
                           urls.append(meta['content'])
               
+              # Video tags
               for video in soup.find_all('video'):
-                  if video.get('src') and is_valid_video_url(video['src']):
-                      urls.append(video['src'])
+                  for attr in ['src', 'data-src']:
+                      if video.get(attr) and is_valid_video_url(video[attr]):
+                          urls.append(video[attr])
                   for source in video.find_all('source'):
-                      if source.get('src') and is_valid_video_url(source['src']):
-                          urls.append(source['src'])
+                      for attr in ['src', 'data-src']:
+                          if source.get(attr) and is_valid_video_url(source[attr]):
+                              urls.append(source[attr])
               
-              for iframe in soup.find_all('iframe'):
-                  if iframe.get('src'):
-                      iframe_url = iframe['src']
-                      if not iframe_url.startswith('http'):
-                          iframe_url = urljoin(base_url, iframe_url)
+              # JSON data
+              json_patterns = [
+                  r'\{[^{}]*"(?:videoUrl|video_url|url|src|file)"[^{}]*\}',
+                  r'\[[^\]]*"(?:videoUrl|video_url|url|src|file)"[^\]]*\]',
+              ]
+              for json_pattern in json_patterns:
+                  matches = re.findall(json_pattern, html_content)
+                  for match in matches:
                       try:
-                          iframe_response = requests.get(iframe_url, headers=headers, timeout=15)
-                          if iframe_response.status_code == 200:
-                              iframe_urls = extract_video_urls(iframe_response.text, iframe_url)
-                              urls.extend(iframe_urls)
+                          data = json.loads(match)
+                          if isinstance(data, list):
+                              for item in data:
+                                  if isinstance(item, dict):
+                                      for key in ['videoUrl', 'video_url', 'url', 'src', 'file']:
+                                          if key in item and item[key]:
+                                              if is_valid_video_url(item[key]):
+                                                  urls.append(item[key])
+                          elif isinstance(data, dict):
+                              for key in ['videoUrl', 'video_url', 'url', 'src', 'file']:
+                                  if key in data and data[key]:
+                                      if is_valid_video_url(data[key]):
+                                          urls.append(data[key])
                       except:
-                          pass
-              
-              json_pattern = r'\{[^{}]*"(?:videoUrl|video_url|url|src|file)"[^{}]*\}'
-              matches = re.findall(json_pattern, html_content)
-              for match in matches:
-                  try:
-                      data = json.loads(match)
-                      for key in ['videoUrl', 'video_url', 'url', 'src', 'file']:
-                          if key in data and data[key]:
-                              if is_valid_video_url(data[key]):
-                                  urls.append(data[key])
-                  except:
-                      continue
+                          continue
               
               return urls
-          
+
+          # Main logic
           try:
+              print("📄 تحميل الصفحة...")
               response = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
               response.raise_for_status()
               
-              video_urls = extract_video_urls(response.text, url)
+              html_content = response.text
+              
+              # استخراج المدة والحجم المتوقعين
+              expected_duration = extract_expected_duration(html_content)
+              expected_size = extract_expected_size(html_content)
+              
+              print(f"⏱️ المدة المتوقعة: {expected_duration} ثانية")
+              print(f"📦 الحجم المتوقع: {expected_size} بايت")
+              
+              # استخراج جميع الروابط
+              video_urls = extract_all_video_urls(html_content, url)
               video_urls = list(set(video_urls))
               
-              if video_urls:
-                  print(f"تم العثور على {len(video_urls)} رابط محتمل")
-                  
-                  for video_url in video_urls:
-                      if not is_valid_video_url(video_url):
-                          continue
-                      
-                      print(f"محاولة: {video_url[:100]}...")
-                      try:
-                          video_response = requests.get(
-                              video_url, 
-                              headers=headers, 
-                              timeout=300, 
-                              stream=True,
-                              allow_redirects=True
-                          )
-                          
-                          if video_response.status_code == 200:
-                              content_type = video_response.headers.get('content-type', '')
-                              content_length = int(video_response.headers.get('content-length', 0))
-                              
-                              if 'video' in content_type or 'octet-stream' in content_type or content_length > 1000000:
-                                  with open("raw_input.mp4", "wb") as f:
-                                      for chunk in video_response.iter_content(chunk_size=8192):
-                                          if chunk:
-                                              f.write(chunk)
-                                  print(f"✅ تم التحميل من: {video_url}")
-                                  sys.exit(0)
-                      except Exception as e:
-                          continue
-                  
-                  print("لم يتمكن أي رابط من التحميل بنجاح")
+              if not video_urls:
+                  print("❌ لم يتم العثور على روابط فيديو")
                   sys.exit(1)
+              
+              print(f"🔗 تم العثور على {len(video_urls)} رابط محتمل")
+              
+              # ترتيب حسب الجودة
+              video_urls.sort(key=get_quality_score, reverse=True)
+              
+              # محاولة التحميل والتحقق
+              best_match = None
+              best_match_path = None
+              
+              for i, video_url in enumerate(video_urls[:15]):  # جرب أول 15 رابط
+                  if not is_valid_video_url(video_url):
+                      continue
+                  
+                  quality = get_quality_score(video_url)
+                  print(f"\n🔄 محاولة {i+1}: الجودة {quality}/10")
+                  print(f"   {video_url[:80]}...")
+                  
+                  try:
+                      # تحميل الملف
+                      temp_file = f"temp_video_{i}.mp4"
+                      video_response = requests.get(
+                          video_url, 
+                          headers=headers, 
+                          timeout=300, 
+                          stream=True,
+                          allow_redirects=True
+                      )
+                      
+                      if video_response.status_code == 200:
+                          content_type = video_response.headers.get('content-type', '')
+                          content_length = int(video_response.headers.get('content-length', 0))
+                          
+                          if 'video' in content_type or 'octet-stream' in content_type or content_length > 5000000:
+                              with open(temp_file, "wb") as f:
+                                  for chunk in video_response.iter_content(chunk_size=8192):
+                                      if chunk:
+                                          f.write(chunk)
+                              
+                              # التحقق من الملف
+                              file_size = get_video_size(temp_file)
+                              file_duration = get_video_duration(temp_file)
+                              
+                              print(f"   📦 الحجم: {file_size} بايت")
+                              print(f"   ⏱️ المدة: {file_duration} ثانية")
+                              
+                              # التقييم
+                              score = 0
+                              
+                              # إذا كانت المدة معروفة وتطابق
+                              if expected_duration > 0:
+                                  if file_duration > 0:
+                                      duration_diff = abs(file_duration - expected_duration)
+                                      if duration_diff < 30:  # فرق أقل من 30 ثانية
+                                          score += 10
+                                      elif duration_diff < 120:  # فرق أقل من دقيقتين
+                                          score += 5
+                              
+                              # إذا كان الحجم معروفاً ويطابق تقريباً
+                              if expected_size > 0:
+                                  if file_size > expected_size * 0.5:  # على الأقل نصف الحجم المتوقع
+                                      score += 5
+                              
+                              # جودة عالية
+                              score += quality
+                              
+                              # فيديو طويل (أكثر من 5 دقائق)
+                              if file_duration > 300:
+                                  score += 3
+                              
+                              print(f"   ⭐ النتيجة: {score}")
+                              
+                              if best_match is None or score > best_match:
+                                  best_match = score
+                                  if best_match_path and os.path.exists(best_match_path):
+                                      os.remove(best_match_path)
+                                  best_match_path = temp_file
+                                  # حفظ كملف نهائي
+                                  import shutil
+                                  shutil.copy(temp_file, "raw_input.mp4")
+                                  
+                                  # إذا كانت النتيجة ممتازة، توقف
+                                  if score >= 15:
+                                      print(f"✅ تم العثور على الفيديو الأساسي بنتيجة {score}")
+                                      break
+                              else:
+                                  # حذف الملف المؤقت
+                                  os.remove(temp_file)
+                      else:
+                          print(f"   ❌ فشل (status {video_response.status_code})")
+                  
+                  except Exception as e:
+                      print(f"   ❌ خطأ: {str(e)[:50]}")
+                      # تنظيف
+                      if os.path.exists(temp_file):
+                          os.remove(temp_file)
+              
+              # التحقق من النتيجة
+              if os.path.exists("raw_input.mp4"):
+                  final_size = get_video_size("raw_input.mp4")
+                  final_duration = get_video_duration("raw_input.mp4")
+                  print(f"\n✅ الفيديو النهائي:")
+                  print(f"   📦 الحجم: {final_size} بايت")
+                  print(f"   ⏱️ المدة: {final_duration} ثانية")
+                  
+                  if final_size > 1000000 and final_duration > 30:
+                      sys.exit(0)
+                  else:
+                      print("⚠️ الفيديو قصير جداً - قد لا يكون الفيديو الأساسي")
+                      sys.exit(1)
               else:
-                  print("لم يتم العثور على روابط فيديو")
+                  print("❌ لم يتم العثور على فيديو مناسب")
                   sys.exit(1)
                   
           except Exception as e:
-              print(f"خطأ: {str(e)}")
+              print(f"❌ خطأ: {str(e)}")
               sys.exit(1)
           PYEOF
-            fi
           else
             echo '❌ لا توجد رسالة تيليجرام ولا رابط مباشر.' >&2
             exit 1
           fi
 
-          if ! check_download; then
-            echo "❌ فشل التحميل - الملف غير موجود أو فارغ أو ليس فيديو" >&2
+          # التحقق النهائي
+          if [ ! -s raw_input.mp4 ]; then
+            echo "❌ فشل التحميل - الملف غير موجود أو فارغ" >&2
             exit 1
           fi
           
           echo "✅ حجم الملف المحمل: $(stat -c%s raw_input.mp4) بايت"
+          DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 raw_input.mp4 | cut -d. -f1)
+          echo "✅ مدة الفيديو: $DURATION ثانية"
           ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 raw_input.mp4 >/dev/null
 
       - name: اكتشاف الأشرطة السوداء فعلياً
