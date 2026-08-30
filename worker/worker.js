@@ -38,7 +38,7 @@ export default {
 
           const autoSession = {
             message_id: update.message.message_id,
-            url: "", // ← للإرسال لـ GitHub
+            url: "",
             codec: preset.codec || "av1",
             encode_mode: preset.encode_mode || "nofilters",
             filter_profile:
@@ -95,8 +95,8 @@ export default {
 
         const session = (await getSession(env, chatId)) || {};
 
-        // ★★★ دعم روابط تيليجرام ★★★
-        if (isTelegramLink(text)) {
+        // ★★★ قبول أي رابط ★★★
+        if (isAnyLink(text)) {
           if (session.awaiting_preset || session.awaiting_target_value || 
               session.awaiting_res || session.awaiting_filename || 
               session.awaiting_series_title || session.awaiting_episode_start ||
@@ -106,10 +106,11 @@ export default {
           }
 
           const preset = await getPreset(env, chatId);
+          const linkInfo = extractLinkInfo(text);
           const linkSession = {
             message_id: "",
-            url: text, // ← الرابط هنا
-            default_name: extractNameFromTelegramLink(text),
+            url: text,
+            default_name: linkInfo.name,
             pending_confirmation: false,
           };
 
@@ -117,7 +118,7 @@ export default {
             const finalName = buildAutomaticName(preset, linkSession.default_name || "video");
             const autoSession = {
               message_id: "",
-              url: text, // ← الرابط هنا
+              url: text,
               codec: preset.codec || "av1",
               encode_mode: preset.encode_mode || "nofilters",
               filter_profile:
@@ -131,7 +132,7 @@ export default {
               auto_advance_episode: preset.auto_naming === "series",
               pending_confirmation: false,
             };
-            await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ معالجة رابط تيليجرام تلقائياً: ${finalName}`);
+            await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ معالجة الرابط تلقائياً: ${finalName}`);
             await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, autoSession);
           } else {
             await setSession(env, chatId, linkSession);
@@ -139,14 +140,14 @@ export default {
           }
           return ok();
         }
-        // ★★★ نهاية دعم الروابط ★★★
+        // ★★★ نهاية قبول الروابط ★★★
 
         // التعامل مع رسائل التأكيد
         if (session.pending_confirmation) {
           if (text === "/confirm" || text === "✅ تأكيد") {
             session.pending_confirmation = false;
             await setSession(env, chatId, session);
-            await editMessage(BOT_TOKEN, chatId, session.confirmation_message_id, "✅ تم تأكيد العملية. جارٍ الإرسال...");
+            await sendMessage(BOT_TOKEN, chatId, "✅ تم تأكيد العملية. جارٍ الإرسال...");
             await finalizeAndTrigger(
               env,
               BOT_TOKEN,
@@ -167,6 +168,7 @@ export default {
           }
         }
 
+        // الأوامر
         if (text === "/start") {
           await sendMessage(BOT_TOKEN, chatId, startMessage(await getPreset(env, chatId)));
           return ok();
@@ -207,11 +209,17 @@ export default {
           return ok();
         }
 
-        // الاسم الذي سيظهر في تسمية مسلسل تلقائية ضمن /setup.
+        if (text === "/cancel") {
+          await deleteSession(env, chatId);
+          await sendMessage(BOT_TOKEN, chatId, "🚫 تم إلغاء العملية.");
+          return ok();
+        }
+
+        // بقية المعالجات...
         if (session.awaiting_series_title) {
           const seriesTitle = cleanFileName(text);
           if (!seriesTitle) {
-            await sendMessage(BOT_TOKEN, chatId, "📝 أرسل اسماً صحيحاً للمسلسل، مثل: Solo Leveling S02");
+            await sendMessage(BOT_TOKEN, chatId, "📝 أرسل اسماً صحيحاً للمسلسل، مثل: Solo Leveling S02\n\nللإلغاء أرسل /cancel");
             return ok();
           }
           session.series_title = seriesTitle;
@@ -222,7 +230,6 @@ export default {
           return ok();
         }
 
-        // رقم أول حلقة في تسمية مسلسل تلقائية ضمن /setup.
         if (session.awaiting_episode_start) {
           if (!/^[1-9]\d{0,5}$/.test(text)) {
             await sendMessage(BOT_TOKEN, chatId, "🔢 أرسل رقم حلقة موجباً فقط، مثل: 1 أو 12.\n\nللإلغاء أرسل /cancel");
@@ -235,7 +242,6 @@ export default {
           return ok();
         }
 
-        // إدخال رقم سرعة AV1 أو VVC.
         if (session.awaiting_preset) {
           const codec = session.codec || "av1";
           if (!isValidPreset(codec, text)) {
@@ -259,7 +265,6 @@ export default {
           return ok();
         }
 
-        // إدخال CRF أو QP أو معدل البت.
         if (session.awaiting_target_value) {
           if (!isValidTargetValue(session.codec, session.encode_method, text)) {
             await sendMessage(BOT_TOKEN, chatId, targetValueHint(session.codec, session.encode_method) + "\n\nللإلغاء أرسل /cancel");
@@ -285,7 +290,6 @@ export default {
           return ok();
         }
 
-        // إدخال دقة مخصصة.
         if (session.awaiting_res) {
           if (!isValidResolution(text)) {
             await sendMessage(BOT_TOKEN, chatId, "أرسل ارتفاعاً صحيحاً بين 144 و2160، مثل 550:\n\nللإلغاء أرسل /cancel");
@@ -298,7 +302,6 @@ export default {
           return ok();
         }
 
-        // إدخال اسم الملف النهائي.
         if (session.awaiting_filename) {
           session.filename = await applyCounterToName(env, chatId, text || session.default_name || "video");
           session.awaiting_filename = false;
@@ -306,7 +309,6 @@ export default {
           session.confirmation_message_id = null;
           await setSession(env, chatId, session);
           
-          // طلب التأكيد
           const confirmKeyboard = {
             inline_keyboard: [
               [
@@ -323,7 +325,7 @@ export default {
           return ok();
         }
 
-        await sendMessage(BOT_TOKEN, chatId, "📤 أرسل فيديو مباشرة أو رابط تيليجرام للبدء، أو استخدم /setup لحفظ إعداد تلقائي.");
+        await sendMessage(BOT_TOKEN, chatId, "📤 أرسل فيديو مباشرة أو أي رابط للبدء، أو استخدم /setup لحفظ إعداد تلقائي.");
         return ok();
       }
 
@@ -339,7 +341,6 @@ export default {
 
         const session = (await getSession(env, chatId)) || {};
 
-        // معالجة أزرار التأكيد
         if (data === "confirm_action") {
           if (!session.pending_confirmation) {
             await editMessage(BOT_TOKEN, chatId, query.message.message_id, "⚠️ لا توجد عملية معلقة للتأكيد.");
@@ -378,7 +379,6 @@ export default {
           return ok();
         }
 
-        // 1. اختيار المرمّز.
         if (data.startsWith("codec_")) {
           const codec = data.split("_")[1];
           if (!["av1", "vvc", "audio"].includes(codec)) return ok();
@@ -405,7 +405,6 @@ export default {
           return ok();
         }
 
-        // 2. اختيار «مع فلاتر» أو «بدون فلاتر».
         if (data.startsWith("mode_")) {
           const mode = data.split("_")[1];
           if (!["filters", "nofilters"].includes(mode)) return ok();
@@ -430,7 +429,6 @@ export default {
           return ok();
         }
 
-        // 3. اختيار ملف الفلاتر عند «مع فلاتر».
         if (data.startsWith("filter_")) {
           const profile = data.split("_")[1];
           if (!["anime", "realistic"].includes(profile)) return ok();
@@ -447,7 +445,6 @@ export default {
           return ok();
         }
 
-        // اختصار اختياري إن استعملت الأزرار القديمة في رسالة سابقة.
         if (data.startsWith("preset_")) {
           const presetValue = data.split("_")[1];
           if (!isValidPreset(session.codec || "av1", presetValue)) return ok();
@@ -463,7 +460,6 @@ export default {
           return ok();
         }
 
-        // 4. اختيار CRF أو QP أو Two-Pass أو VBR.
         if (data.startsWith("encmethod_")) {
           const method = data.split("_")[1];
           if (!isValidEncodeMethod(session.codec, method)) return ok();
@@ -475,7 +471,6 @@ export default {
           return ok();
         }
 
-        // 5. إعداد التسمية التلقائية كجزء من /setup.
         if (data === "autoname_keep") {
           session.auto_naming = "source";
           delete session.series_title;
@@ -499,7 +494,6 @@ export default {
           return ok();
         }
 
-        // 6. اختيار الدقة.
         if (data === "custom_res") {
           session.awaiting_res = true;
           await setSession(env, chatId, session);
@@ -525,7 +519,6 @@ export default {
           return ok();
         }
 
-        // 7. استعمال الاسم المرفق.
         if (data === "name_skip") {
           session.filename = await applyCounterToName(env, chatId, session.default_name || "video");
           session.awaiting_filename = false;
@@ -533,7 +526,6 @@ export default {
           session.confirmation_message_id = null;
           await setSession(env, chatId, session);
           
-          // طلب التأكيد
           const confirmKeyboard = {
             inline_keyboard: [
               [
@@ -557,6 +549,69 @@ export default {
     return ok();
   },
 };
+
+// دالة للتحقق من أي رابط
+function isAnyLink(text) {
+  // يقبل أي نص يبدأ بـ http:// أو https://
+  return /^https?:\/\/\S+$/i.test(text);
+}
+
+// دالة لاستخراج معلومات الرابط
+function extractLinkInfo(url) {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.replace(/^www\./, '');
+    
+    // استخراج اسم الملف من الرابط
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+    const lastPart = pathParts[pathParts.length - 1] || '';
+    
+    // التحقق من امتداد الفيديو
+    const videoExtensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts', '.m2ts', '.mts', '.vob', '.3gp', '.3g2', '.ogv', '.mpeg', '.mpg', '.m3u8'];
+    let filename = lastPart;
+    
+    if (videoExtensions.some(ext => lastPart.toLowerCase().includes(ext))) {
+      // إزالة الامتداد
+      filename = lastPart.replace(/\.[^/.]+$/, '');
+    } else {
+      // توليد اسم من الرابط
+      filename = generateNameFromLink(hostname, parsed, pathParts);
+    }
+    
+    return {
+      name: cleanFileName(filename) || `video_${Date.now()}`,
+      hostname: hostname,
+      fullUrl: url
+    };
+  } catch {
+    return {
+      name: `video_${Date.now()}`,
+      hostname: "unknown",
+      fullUrl: url
+    };
+  }
+}
+
+// دالة لتوليد اسم من الرابط
+function generateNameFromLink(hostname, parsed, pathParts) {
+  const timestamp = Date.now();
+  
+  // استخراج أي معرف من الرابط
+  const lastPath = pathParts[pathParts.length - 1] || '';
+  const queryParams = parsed.searchParams.toString();
+  
+  // محاولة استخراج اسم ذو معنى
+  if (lastPath && lastPath.length > 0 && lastPath.length < 100) {
+    // تنظيف الاسم
+    const cleanedName = cleanFileName(lastPath);
+    if (cleanedName && cleanedName.length > 0) {
+      return `${hostname}_${cleanedName}`;
+    }
+  }
+  
+  // إذا لم نجد اسم مناسب، نستخدم اسم المضيف والوقت
+  return `${hostname}_${timestamp}`;
+}
 
 // دالة لبناء ملخص العملية
 function buildSummaryMessage(session) {
@@ -720,18 +775,18 @@ function presetStatusText(preset) {
 
 function startMessage(preset) {
   return [
-    "🚀 أرسل فيديو مباشرة أو رابط تيليجرام للبدء.",
+    "🚀 أرسل فيديو مباشرة أو أي رابط للبدء.",
+    "",
+    "📎 يمكنك إرسال:",
+    "- فيديو مباشر من جهازك",
+    "- أي رابط فيديو (يوتيوب، تيليجرام، Google Drive، وغيرها)",
+    "- أي رابط مباشر",
     "",
     "الأوامر:",
     "/setup لحفظ إعداد تلقائي",
     "/preset لعرض الإعداد المحفوظ",
     "/auto_on و /auto_off لتشغيل أو إيقاف الوضع التلقائي",
     "/cancel لإلغاء أي عملية جارية",
-    "إعداد اسم السلسلة وعدّاد الحلقات موجود ضمن /setup.",
-    "",
-    "📎 يمكنك إرسال:",
-    "- فيديو مباشر من جهازك",
-    "- رابط تيليجرام مثل: https://t.me/channel/123",
     "",
     "🎯 خيارات الدقة تشمل:",
     "- دقة ثابتة (240p إلى 1080p)",
@@ -799,23 +854,6 @@ function encodeMethodPrompt(codec, method) {
   return "تم اختيار VBR. أرسل معدل البت المستهدف، مثل 250k أو 1000k:";
 }
 
-function isTelegramLink(text) {
-  return /^https?:\/\/(t\.me|telegram\.me)\/(?:c\/)?[^\/\s]+\/\d+/.test(text);
-}
-
-function extractNameFromTelegramLink(url) {
-  try {
-    const parsed = new URL(url);
-    const pathParts = parsed.pathname.split('/').filter(Boolean);
-    const channelName = pathParts[0] || "telegram";
-    const messageId = pathParts[1] || "";
-    return `${channelName}_${messageId}`;
-  } catch {
-    return "telegram_video";
-  }
-}
-
-// ★★★ جزء الإرسال - كما هو بالضبط من الكود الذي يعمل ★★★
 async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId) {
   const body = {
     ref: "main",
@@ -867,7 +905,6 @@ async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, c
   });
   return true;
 }
-// ★★★ نهاية جزء الإرسال ★★★
 
 async function finalizeAndTrigger(env, botToken, githubToken, githubRepo, githubWorkflow, chatId, session) {
   const success = await triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId);
