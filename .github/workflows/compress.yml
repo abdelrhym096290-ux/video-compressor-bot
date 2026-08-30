@@ -154,11 +154,24 @@ jobs:
           python3 -m pip install --user telethon requests beautifulsoup4 lxml
           python3 -m pip install --user yt-dlp gallery-dl you-get
           
-          wget -q https://github.com/iawia002/lux/releases/latest/download/lux_linux_amd64.tar.gz -O /tmp/lux.tar.gz
-          tar -xzf /tmp/lux.tar.gz -C /tmp/
-          sudo mv /tmp/lux /usr/local/bin/
+          # تثبيت lux - مع معالجة الخطأ إذا فشل
+          echo "محاولة تثبيت lux..."
+          if wget -q https://github.com/iawia002/lux/releases/latest/download/lux_linux_amd64.tar.gz -O /tmp/lux.tar.gz 2>/dev/null; then
+            if tar -xzf /tmp/lux.tar.gz -C /tmp/ 2>/dev/null; then
+              if sudo mv /tmp/lux /usr/local/bin/ 2>/dev/null; then
+                echo "✅ تم تثبيت lux بنجاح"
+              else
+                echo "⚠️ فشل نقل lux - سيتم تخطيه"
+              fi
+            else
+              echo "⚠️ فشل فك ضغط lux - سيتم تخطيه"
+            fi
+          else
+            echo "⚠️ فشل تحميل lux - سيتم تخطيه"
+          fi
           
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "✅ تم تثبيت جميع الأدوات"
 
       - name: استعادة FFmpeg الموحد عند الحاجة
         if: github.event.inputs.codec != 'audio'
@@ -332,8 +345,8 @@ jobs:
               fi
             fi
             
-            # 4.4 محاولة lux
-            if ! check_download; then
+            # 4.4 محاولة lux (إذا تم تثبيته)
+            if ! check_download && command -v lux >/dev/null 2>&1; then
               echo "محاولة lux..."
               if lux -o . -O video "$VIDEO_URL" 2>/dev/null; then
                 echo "✅ تم التحميل باستخدام lux"
