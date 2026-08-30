@@ -1,4 +1,4 @@
-name: مقارنة SVG مع AV1 على أنمي
+name: بروتوكول كامل على أنمي حقيقي
 
 on:
   workflow_dispatch:
@@ -6,25 +6,21 @@ on:
       url:
         description: 'رابط مباشر لفيديو الأنمي'
         required: true
-      palette_size:
-        description: 'حجم قاموس الألوان (16/32/64)'
+      k:
+        description: 'حجم القاموس (12/16/20/30)'
         required: true
-        default: '16'
+        default: '12'
       epsilon:
         description: 'دقة المنحنيات (1.5 أدق، 3.0 أخشن)'
         required: true
         default: '1.5'
-      crf:
-        description: 'CRF لـ AV1'
+      resolution:
+        description: 'الارتفاع النهائي (مثل 480)'
         required: true
-        default: '30'
-      preset:
-        description: 'preset لـ SVT-AV1'
-        required: true
-        default: '8'
+        default: '480'
 
 concurrency:
-  group: svg-vs-av1
+  group: full-protocol-anime
   cancel-in-progress: false
 
 permissions:
@@ -41,7 +37,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: svg-av1-build-v1
+          key: protocol-av1-build-v1
 
       - name: بناء SVT-AV1 وFFmpeg
         if: steps.cache-build.outputs.cache-hit != 'true'
@@ -65,8 +61,8 @@ jobs:
           make -j"$(nproc)"
           make install
 
-  run-comparison:
-    name: تشغيل المقارنة
+  run-protocol:
+    name: تشغيل البروتوكول الكامل
     needs: build-codec
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -78,14 +74,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/codec-build
-          key: svg-av1-build-v1
+          key: protocol-av1-build-v1
 
       - name: تجهيز الأدوات
         run: |
           set -euo pipefail
           sudo apt update
           sudo apt install -y ffmpeg libdav1d-dev libopus0 python3-opencv
-          pip install --user --break-system-packages numpy
+          pip install --user --break-system-packages numpy scikit-learn
 
       - name: تحميل الفيديو
         env:
@@ -94,32 +90,64 @@ jobs:
           set -euo pipefail
           curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 -o input.mp4 "$VIDEO_URL"
           test -s input.mp4
-          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 input.mp4
 
-      - name: تشغيل المقارنة
+      - name: تشغيل البروتوكول
         env:
-          PALETTE_SIZE: ${{ github.event.inputs.palette_size }}
+          K: ${{ github.event.inputs.k }}
           EPSILON: ${{ github.event.inputs.epsilon }}
-          CRF: ${{ github.event.inputs.crf }}
-          PRESET: ${{ github.event.inputs.preset }}
+          RESOLUTION: ${{ github.event.inputs.resolution }}
         run: |
           set -euo pipefail
           export PATH="$HOME/codec-build/bin:$PATH"
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           
-          python3 svg_video_codec.py input.mp4 results \
-            --palette-size "$PALETTE_SIZE" \
+          python3 curve_video_codec.py input.mp4 results \
+            --k "$K" \
             --epsilon "$EPSILON" \
-            --crf "$CRF" \
-            --preset "$PRESET"
+            --resolution "$RESOLUTION"
           
           echo "=== النتائج ==="
           cat results/results.json
 
+      - name: رفع النتائج إلى تيليجرام
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          TG_SESSION: ${{ secrets.TG_SESSION }}
+          TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
+        run: |
+          set -euo pipefail
+          pip install --user --break-system-packages telethon
+          
+          python3 << 'PYEOF'
+          import asyncio
+          import os
+          from telethon import TelegramClient
+          from telethon.sessions import StringSession
+
+          async def main():
+              client = TelegramClient(
+                  StringSession(os.environ["TG_SESSION"]),
+                  int(os.environ["TG_API_ID"]),
+                  os.environ["TG_API_HASH"],
+              )
+              await client.start()
+              async with client:
+                  with open("results/results.json", "rb") as f:
+                      await client.send_file(
+                          int(os.environ["TG_CHANNEL_ID"]),
+                          f,
+                          caption="📊 نتائج البروتوكول الكامل على أنمي حقيقي",
+                          force_document=True,
+                      )
+
+          asyncio.run(main())
+          PYEOF
+
       - name: رفع النتائج
         uses: actions/upload-artifact@v4
         with:
-          name: svg-vs-av1-results
+          name: full-protocol-results
           path: results/
           retention-days: 7
           if-no-files-found: error
