@@ -78,45 +78,23 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt update
-          sudo apt install -y \
-            build-essential cmake git nasm pkg-config \
-            libdav1d-dev libogg-dev libopus-dev
-
+          sudo apt install -y build-essential cmake git nasm pkg-config libdav1d-dev libogg-dev libopus-dev
           rm -rf "$HOME/codec-build" "$HOME/codec-sources"
           mkdir -p "$HOME/codec-build" "$HOME/codec-sources"
           cd "$HOME/codec-sources"
-
           git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
-          cmake -S SVT-AV1 -B SVT-AV1/Build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
-            -DCMAKE_INSTALL_PREFIX="$HOME/codec-build"
+          cmake -S SVT-AV1 -B SVT-AV1/Build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$HOME/codec-build"
           cmake --build SVT-AV1/Build --parallel "$(nproc)"
           cmake --install SVT-AV1/Build
-
           git clone --depth 1 https://github.com/fraunhoferhhi/vvenc.git
-          cmake -S vvenc -B vvenc/build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
-            -DCMAKE_INSTALL_PREFIX="$HOME/codec-build"
+          cmake -S vvenc -B vvenc/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$HOME/codec-build"
           cmake --build vvenc/build --parallel "$(nproc)"
           cmake --install vvenc/build
-
           git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git
           export PKG_CONFIG_PATH="$HOME/codec-build/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
           cd FFmpeg
-          ./configure \
-            --prefix="$HOME/codec-build" \
-            --enable-gpl \
-            --enable-version3 \
-            --disable-doc \
-            --enable-libopus \
-            --enable-libdav1d \
-            --enable-libsvtav1 \
-            --enable-libvvenc \
-            --extra-cflags="-I$HOME/codec-build/include" \
-            --extra-ldflags="-L$HOME/codec-build/lib"
+          ./configure --prefix="$HOME/codec-build" --enable-gpl --enable-version3 --disable-doc --enable-libopus --enable-libdav1d --enable-libsvtav1 --enable-libvvenc --extra-cflags="-I$HOME/codec-build/include" --extra-ldflags="-L$HOME/codec-build/lib"
           make -j"$(nproc)"
           make install
 
@@ -177,16 +155,14 @@ jobs:
           import asyncio, os, sys
           from telethon import TelegramClient
           from telethon.sessions import StringSession
-
           async def main():
               client = TelegramClient(StringSession(), int(os.environ["TG_API_ID"]), os.environ["TG_API_HASH"])
               await client.start(bot_token=os.environ["BOT_TOKEN"])
               async with client:
                   message = await client.get_messages(int(os.environ["SOURCE_CHAT_ID"]), ids=int(os.environ["MESSAGE_ID"]))
                   if message is None or not message.media:
-                      sys.exit("لم يتم العثور على فيديو في رسالة تيليجرام المطلوبة.")
+                      sys.exit("لم يتم العثور على فيديو.")
                   await client.download_media(message, file="raw_input.mp4")
-
           asyncio.run(main())
           PYEOF
 
@@ -197,7 +173,6 @@ jobs:
           import asyncio, os, sys, re
           from telethon import TelegramClient
           from telethon.sessions import StringSession
-
           async def main():
               client = TelegramClient(StringSession(os.environ["TG_SESSION"]), int(os.environ["TG_API_ID"]), os.environ["TG_API_HASH"])
               await client.start()
@@ -225,7 +200,6 @@ jobs:
                               sys.exit("لم يتم العثور على فيديو.")
                       else:
                           sys.exit(f"فشل: {str(e)}")
-
           asyncio.run(main())
           PYEOF
 
@@ -234,7 +208,7 @@ jobs:
             echo "📥 تحميل من رابط مباشر..."
             curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 -o raw_input.mp4 "$VIDEO_URL"
 
-          # 4. تحميل ذكي من روابط غير مباشرة
+          # 4. تحميل ذكي
           elif [ -n "$VIDEO_URL" ]; then
             echo "📥 تحميل ذكي من الرابط..."
             python3 <<'PYEOF'
@@ -264,20 +238,23 @@ jobs:
               except: return 0
 
           def extract_expected_duration(html):
+              # البحث عن duration في JSON
               for p in [r'"duration"\s*:\s*"?(\d+)"?', r'"durationSeconds"\s*:\s*"?(\d+)"?']:
                   m = re.findall(p, html, re.IGNORECASE)
                   if m:
                       try:
                           v = int(m[0])
-                          if v > 30: return v
+                          if 30 < v < 7200: return v
                       except: pass
+              # PT#M#S
               m = re.findall(r'itemprop="duration"[^>]*content="PT(\d+)M(\d+)S"', html)
               if m:
                   try:
                       v = int(m[0][0])*60 + int(m[0][1])
-                      if v > 30: return v
+                      if 30 < v < 7200: return v
                   except: pass
-              for p in [r'"duration"\s*:\s*"(\d+):(\d+)(?::(\d+))?"', r'>(\d+):(\d+)(?::(\d+))?<']:
+              # تنسيق الوقت HH:MM:SS أو MM:SS
+              for p in [r'"duration"\s*:\s*"(\d+):(\d+)(?::(\d+))?"', r'>(\d+):(\d+)(?::(\d+))?<', r'(\d+):(\d+)(?::(\d+))?\s*(?:min|دقيقة)']:
                   m = re.findall(p, html)
                   if m:
                       parts = [int(x) for x in m[0] if x]
@@ -285,7 +262,7 @@ jobs:
                           if len(parts)==2: v = parts[0]*60+parts[1]
                           elif len(parts)==3: v = parts[0]*3600+parts[1]*60+parts[2]
                           else: continue
-                          if v > 30: return v
+                          if 30 < v < 7200: return v
                       except: pass
               return 0
 
@@ -295,15 +272,16 @@ jobs:
                   if m:
                       try:
                           v = int(m[0])
-                          if v > 1000000: return v
+                          if v > 5000000: return v  # أكبر من 5MB
                       except: pass
               m = re.findall(r'(\d+(?:\.\d+)?)\s*(GB|MB|KB)', html, re.IGNORECASE)
               if m:
                   try:
                       num = float(m[0][0]); unit = m[0][1].upper()
-                      if unit=='GB': return int(num*1073741824)
-                      elif unit=='KB': return int(num*1024)
-                      else: return int(num*1048576)
+                      if unit=='GB': v = int(num*1073741824)
+                      elif unit=='KB': v = int(num*1024)
+                      else: v = int(num*1048576)
+                      if v > 5000000: return v
                   except: pass
               return 0
 
@@ -315,24 +293,47 @@ jobs:
 
           def get_quality_score(u):
               ul = u.lower()
-              for pat, sc in [(r'2160p|4k|uhd',10),(r'1440p|2k|qhd',9),(r'1080p|fhd|fullhd',8),(r'720p|hd',7),(r'480p',6),(r'360p',5),(r'240p',4),(r'180p',3)]:
-                  if re.search(pat, ul): return sc
+              # البحث عن أنماط الجودة ككلمات منفصلة
+              patterns = [
+                  (r'(?:^|[/_.-])(2160p|4k|uhd)(?:[/_.-]|$)', 10),
+                  (r'(?:^|[/_.-])(1440p|2k|qhd)(?:[/_.-]|$)', 9),
+                  (r'(?:^|[/_.-])(1080p|fhd|fullhd)(?:[/_.-]|$)', 8),
+                  (r'(?:^|[/_.-])(720p|hd)(?:[/_.-]|$)', 7),
+                  (r'(?:^|[/_.-])(480p)(?:[/_.-]|$)', 6),
+                  (r'(?:^|[/_.-])(360p)(?:[/_.-]|$)', 5),
+                  (r'(?:^|[/_.-])(240p)(?:[/_.-]|$)', 4),
+                  (r'(?:^|[/_.-])(180p)(?:[/_.-]|$)', 3),
+                  (r'(?:^|[/_.-])(120p)(?:[/_.-]|$)', 2),
+              ]
+              for pat, sc in patterns:
+                  if re.search(pat, ul, re.IGNORECASE):
+                      return sc
               return 0
 
           def extract_all_video_urls(html, base):
               urls = []
-              for p in [r'["\'](https?://[^"\']+\.(?:mp4|m3u8|webm|flv)[^"\']*)["\']', r'videoUrl["\']?\s*[:=]\s*["\']([^"\']+)["\']', r'video_url["\']?\s*[:=]\s*["\']([^"\']+)["\']', r'file["\']?\s*[:=]\s*["\']([^"\']+\.(?:mp4|m3u8|webm|flv)[^"\']*)["\']', r'src["\']?\s*[:=]\s*["\']([^"\']+\.(?:mp4|m3u8|webm|flv)[^"\']*)["\']']:
+              # أنماط البحث
+              patterns = [
+                  r'["\'](https?://[^"\']+\.(?:mp4|m3u8|webm|flv|ts)[^"\']*)["\']',
+                  r'videoUrl["\']?\s*[:=]\s*["\']([^"\']+)["\']',
+                  r'video_url["\']?\s*[:=]\s*["\']([^"\']+)["\']',
+                  r'file["\']?\s*[:=]\s*["\']([^"\']+\.(?:mp4|m3u8|webm|flv|ts)[^"\']*)["\']',
+                  r'src["\']?\s*[:=]\s*["\']([^"\']+\.(?:mp4|m3u8|webm|flv|ts)[^"\']*)["\']',
+                  r'data-(?:video|src|url)["\']?\s*[:=]\s*["\']([^"\']+)["\']',
+              ]
+              for p in patterns:
                   for m in re.findall(p, html, re.IGNORECASE):
                       if isinstance(m, tuple): m = m[-1] if m else ''
                       if not isinstance(m, str): continue
                       if is_valid_video_url(m): urls.append(m)
                       elif m.startswith('//'): urls.append('https:'+m)
                       elif m.startswith('/'): urls.append(urljoin(base, m))
+              # base64
               for p in [r'base64,([A-Za-z0-9+/=]+)', r'atob\(["\']([A-Za-z0-9+/=]+)["\']\)']:
                   for m in re.findall(p, html):
                       try:
                           d = base64.b64decode(m).decode('utf-8', errors='ignore')
-                          urls.extend(re.findall(r'https?://[^\s"\']+\.(?:mp4|m3u8|webm|flv)[^\s"\']*', d))
+                          urls.extend(re.findall(r'https?://[^\s"\']+\.(?:mp4|m3u8|webm|flv|ts)[^\s"\']*', d))
                       except: pass
               soup = BeautifulSoup(html, 'html.parser')
               for meta in soup.find_all('meta'):
@@ -347,7 +348,44 @@ jobs:
                       for a in ['src','data-src']:
                           val = s.get(a)
                           if val and is_valid_video_url(val): urls.append(val)
+              # iframes
+              for iframe in soup.find_all('iframe'):
+                  src = iframe.get('src', '')
+                  if src and 'http' in src:
+                      try:
+                          ir = requests.get(src, headers=headers, timeout=15)
+                          if ir.status_code == 200:
+                              urls.extend(extract_all_video_urls(ir.text, src))
+                      except: pass
               return urls
+
+          def download_with_ytdlp(url):
+              try:
+                  cmd = ['yt-dlp', '--no-playlist', '-o', 'ytdlp_output.%(ext)s',
+                         '--user-agent', headers['User-Agent'], '--referer', url,
+                         '--max-filesize', '10G', url]
+                  r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                  if r.returncode == 0:
+                      for f in os.listdir('.'):
+                          if f.startswith('ytdlp_output'):
+                              shutil.move(f, 'raw_input.mp4')
+                              return True
+              except: pass
+              return False
+
+          def download_m3u8_with_ffmpeg(m3u8_url):
+              try:
+                  headers_str = '\r\n'.join([f'{k}: {v}' for k, v in headers.items()])
+                  cmd = ['ffmpeg', '-y', '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+                         '-headers', headers_str, '-i', m3u8_url, '-c', 'copy', 'raw_input.mp4']
+                  r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                  if r.returncode == 0 and os.path.exists('raw_input.mp4') and os.path.getsize('raw_input.mp4') > 1000000:
+                      return True
+                  # حذف الملف إذا فشل
+                  if os.path.exists('raw_input.mp4'):
+                      os.remove('raw_input.mp4')
+              except: pass
+              return False
 
           try:
               print("📄 تحميل الصفحة...")
@@ -360,49 +398,100 @@ jobs:
               print(f"⏱️ المدة المتوقعة: {exp_dur} ثانية")
               print(f"📦 الحجم المتوقع: {exp_size} بايت")
 
+              # محاولة yt-dlp أولاً
+              print("🔄 محاولة yt-dlp...")
+              if download_with_ytdlp(url):
+                  fd = get_video_duration("raw_input.mp4")
+                  fs = get_video_size("raw_input.mp4")
+                  print(f"✅ yt-dlp نجح: 📦 {fs} بايت | ⏱️ {fd} ثانية")
+                  if fd > 60:
+                      print("✅ تم العثور على الفيديو الكامل")
+                      sys.exit(0)
+                  else:
+                      os.remove("raw_input.mp4")
+                      print("⚠️ الفيديو قصير، محاولة طرق أخرى...")
+
               urls = list(set(extract_all_video_urls(html, url)))
               if not urls:
                   print("❌ لم يتم العثور على روابط فيديو")
                   sys.exit(1)
 
               print(f"🔗 تم العثور على {len(urls)} رابط محتمل")
-              urls.sort(key=get_quality_score, reverse=True)
 
-              best_score = -1
-              for i, vu in enumerate(urls[:15]):
+              # فصل روابط HLS
+              m3u8_urls = [u for u in urls if 'm3u8' in u.lower()]
+              direct_urls = [u for u in urls if 'm3u8' not in u.lower()]
+
+              # ترتيب حسب الجودة
+              m3u8_urls.sort(key=get_quality_score, reverse=True)
+              direct_urls.sort(key=get_quality_score, reverse=True)
+
+              # محاولة HLS أولاً
+              if m3u8_urls:
+                  print(f"📺 روابط HLS: {len(m3u8_urls)}")
+                  for m3u8_url in m3u8_urls[:5]:
+                      print(f"🔄 محاولة HLS: {m3u8_url[:80]}...")
+                      if download_m3u8_with_ffmpeg(m3u8_url):
+                          fd = get_video_duration("raw_input.mp4")
+                          fs = get_video_size("raw_input.mp4")
+                          print(f"✅ HLS: 📦 {fs} بايت | ⏱️ {fd} ثانية")
+                          if fd > 60:
+                              print("✅ تم العثور على الفيديو الكامل")
+                              sys.exit(0)
+                          else:
+                              os.remove("raw_input.mp4")
+
+              # محاولة الروابط المباشرة
+              best_duration = 0
+              best_file = None
+
+              for i, vu in enumerate(direct_urls[:10]):
                   if not is_valid_video_url(vu): continue
                   q = get_quality_score(vu)
-                  print(f"\n🔄 محاولة {i+1}: الجودة {q}/10")
-                  print(f"   {vu[:80]}...")
+                  print(f"\n🔄 محاولة {i+1}: الجودة {q}/10 | {vu[:80]}...")
                   tf = f"temp_video_{i}.mp4"
                   try:
                       vr = requests.get(vu, headers=headers, timeout=300, stream=True, allow_redirects=True)
                       if vr.status_code == 200:
                           ct = vr.headers.get('content-type','')
                           cl = int(vr.headers.get('content-length',0))
+                          if 'm3u8' in ct:
+                              # HLS stream
+                              print("   📺 HLS stream detected")
+                              if download_m3u8_with_ffmpeg(vu):
+                                  fd = get_video_duration("raw_input.mp4")
+                                  if fd > best_duration and fd > 60:
+                                      best_duration = fd
+                                      print(f"   ✅ HLS: {fd} ثانية")
+                                      break
+                              continue
                           if 'video' in ct or 'octet-stream' in ct or cl > 5000000:
                               with open(tf,'wb') as f:
                                   for ch in vr.iter_content(chunk_size=8192):
                                       if ch: f.write(ch)
                               fs = get_video_size(tf)
                               fd = get_video_duration(tf)
-                              print(f"   📦 الحجم: {fs} بايت | ⏱️ المدة: {fd} ثانية")
-                              sc = 0
+                              print(f"   📦 {fs} بايت | ⏱️ {fd} ثانية")
+                              
+                              # إذا كانت المدة قريبة من المتوقع، اقبل فوراً
                               if exp_dur > 0 and fd > 0:
                                   diff = abs(fd - exp_dur)
-                                  if diff < 30: sc += 10; print("   ✓ المدة تطابق")
-                                  elif diff < 120: sc += 5; print("   ✓ المدة قريبة")
-                              if exp_size > 0 and fs > exp_size * 0.5: sc += 5; print("   ✓ الحجم مناسب")
-                              sc += q
-                              if fd > 300: sc += 3
-                              print(f"   ⭐ النتيجة: {sc}")
-                              if sc > best_score:
-                                  best_score = sc
+                                  if diff < 60:
+                                      print("   ✅ المدة تطابق المتوقع")
+                                      shutil.copy(tf, "raw_input.mp4")
+                                      if os.path.exists(tf): os.remove(tf)
+                                      sys.exit(0)
+                              
+                              # حفظ أفضل ملف حتى الآن
+                              if fd > best_duration:
+                                  best_duration = fd
+                                  if best_file and os.path.exists(best_file):
+                                      os.remove(best_file)
+                                  best_file = tf
                                   shutil.copy(tf, "raw_input.mp4")
-                                  if sc >= 15:
-                                      print(f"✅ تم العثور على الفيديو الأساسي")
-                                      break
-                              if os.path.exists(tf): os.remove(tf)
+                                  if os.path.exists(tf): os.remove(tf)
+                              else:
+                                  if os.path.exists(tf): os.remove(tf)
                           else:
                               if os.path.exists(tf): os.remove(tf)
                       else:
@@ -411,14 +500,12 @@ jobs:
                       print(f"   ❌ خطأ: {str(e)[:50]}")
                       if os.path.exists(tf): os.remove(tf)
 
-              for f in os.listdir('.'):
-                  if f.startswith('temp_video_'): os.remove(f)
-
+              # التحقق النهائي
               if os.path.exists("raw_input.mp4"):
                   fs = get_video_size("raw_input.mp4")
                   fd = get_video_duration("raw_input.mp4")
                   print(f"\n✅ النهائي: 📦 {fs} بايت | ⏱️ {fd} ثانية")
-                  if fs > 1000000 and fd > 30:
+                  if fd > 60 and fs > 1000000:
                       sys.exit(0)
                   else:
                       print("⚠️ الفيديو قصير جداً")
@@ -775,13 +862,11 @@ jobs:
           import asyncio, os
           from telethon import TelegramClient
           from telethon.sessions import StringSession
-
           async def main():
               client = TelegramClient(StringSession(os.environ["TG_SESSION"]), int(os.environ["TG_API_ID"]), os.environ["TG_API_HASH"])
               await client.start()
               async with client:
                   await client.send_file(int(os.environ["TG_CHANNEL_ID"]), os.environ["UPLOAD_FILE"], caption=os.environ["CAPTION"], force_document=True)
-
           asyncio.run(main())
           PYEOF
           MESSAGE=$(printf '✅ تم الضغط بنجاح!\n\n🎬 %s\n📦 %s MB\n📐 %s\n⏱️ %s' "$FINAL_NAME" "$SIZE_MB" "$ACTUAL_RES" "$DURATION_FMT")
