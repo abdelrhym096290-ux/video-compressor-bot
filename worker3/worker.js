@@ -1,5 +1,11 @@
 export default {
   async fetch(request, env) {
+    if (request.method === 'GET') {
+      return new Response('FOX AI Worker is running', {
+        headers: { 'Content-Type': 'text/plain' },
+      });
+    }
+
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         headers: {
