@@ -1,153 +1,56 @@
-name: بروتوكول كامل على أنمي حقيقي
+name: FOX AI Terminal
 
 on:
   workflow_dispatch:
     inputs:
-      url:
-        description: 'رابط مباشر لفيديو الأنمي'
+      command:
+        description: 'الأمر الذي سيُنفذ'
         required: true
-      k:
-        description: 'حجم القاموس (12/16/20/30)'
-        required: true
-        default: '12'
-      epsilon:
-        description: 'دقة المنحنيات (1.5 أدق، 3.0 أخشن)'
-        required: true
-        default: '1.5'
-      resolution:
-        description: 'الارتفاع النهائي (مثل 480)'
-        required: true
-        default: '480'
+        default: 'echo مرحبا'
 
 concurrency:
-  group: full-protocol-anime
+  group: fox-ai-terminal
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  build-codec:
-    name: بناء FFmpeg مع SVT-AV1
+  execute:
+    name: تنفيذ الأمر
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 30
     steps:
-      - name: استعادة البناء
-        id: cache-build
-        uses: actions/cache@v4
-        with:
-          path: ~/codec-build
-          key: protocol-av1-build-v1
-
-      - name: بناء SVT-AV1 وFFmpeg
-        if: steps.cache-build.outputs.cache-hit != 'true'
+      - name: تجهيز البيئة
         run: |
-          set -euo pipefail
           sudo apt update
-          sudo apt install -y build-essential cmake git nasm pkg-config libdav1d-dev libogg-dev libopus-dev
-          mkdir -p "$HOME/codec-build" "$HOME/codec-sources"
-          cd "$HOME/codec-sources"
-          git clone --depth 1 --branch v4.2.0 https://gitlab.com/AOMediaCodec/SVT-AV1.git
-          cmake -S SVT-AV1 -B SVT-AV1/Build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX="$HOME/codec-build"
-          cmake --build SVT-AV1/Build --parallel "$(nproc)"
-          cmake --install SVT-AV1/Build
-          git clone --depth 1 https://github.com/FFmpeg/FFmpeg.git
-          export PKG_CONFIG_PATH="$HOME/codec-build/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
-          cd FFmpeg
-          ./configure --prefix="$HOME/codec-build" --enable-gpl --enable-version3 --disable-doc \
-            --enable-libsvtav1 --enable-libdav1d \
-            --extra-cflags="-I$HOME/codec-build/include" --extra-ldflags="-L$HOME/codec-build/lib"
-          make -j"$(nproc)"
-          make install
+          sudo apt install -y python3 python3-pip git curl
 
-  run-protocol:
-    name: تشغيل البروتوكول الكامل
-    needs: build-codec
-    runs-on: ubuntu-24.04
-    timeout-minutes: 360
-    steps:
-      - name: استخراج الكود
-        uses: actions/checkout@v4
-
-      - name: استعادة FFmpeg
-        uses: actions/cache@v4
-        with:
-          path: ~/codec-build
-          key: protocol-av1-build-v1
-
-      - name: تجهيز الأدوات
-        run: |
-          set -euo pipefail
-          sudo apt update
-          sudo apt install -y ffmpeg libdav1d-dev libopus0 python3-opencv
-          pip install --user --break-system-packages numpy scikit-learn
-
-      - name: تحميل الفيديو
+      - name: تنفيذ الأمر
+        id: execute
         env:
-          VIDEO_URL: ${{ github.event.inputs.url }}
+          USER_COMMAND: ${{ github.event.inputs.command }}
         run: |
-          set -euo pipefail
-          curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 -o input.mp4 "$VIDEO_URL"
-          test -s input.mp4
+          set +e
+          OUTPUT=$(eval "$USER_COMMAND" 2>&1)
+          EXIT_CODE=$?
+          set -e
+          
+          echo "=== OUTPUT ==="
+          echo "$OUTPUT"
+          echo "=== END ==="
+          
+          {
+            echo "stdout=$OUTPUT"
+            echo "exit_code=$EXIT_CODE"
+          } >> result.txt
+          
+          cat result.txt
 
-      - name: تشغيل البروتوكول
-        env:
-          K: ${{ github.event.inputs.k }}
-          EPSILON: ${{ github.event.inputs.epsilon }}
-          RESOLUTION: ${{ github.event.inputs.resolution }}
+      - name: إرسال النتيجة إلى العامل
         run: |
-          set -euo pipefail
-          export PATH="$HOME/codec-build/bin:$PATH"
-          export LD_LIBRARY_PATH="$HOME/codec-build/lib:${LD_LIBRARY_PATH:-}"
+          OUTPUT=$(cat result.txt | sed 's/"/\\"/g' | tr '\n' ' ')
           
-          python3 curve_video_codec.py input.mp4 results \
-            --k "$K" \
-            --epsilon "$EPSILON" \
-            --resolution "$RESOLUTION"
-          
-          echo "=== النتائج ==="
-          cat results/results.json
-
-      - name: رفع النتائج إلى تيليجرام
-        env:
-          TG_API_ID: ${{ secrets.TG_API_ID }}
-          TG_API_HASH: ${{ secrets.TG_API_HASH }}
-          TG_SESSION: ${{ secrets.TG_SESSION }}
-          TG_CHANNEL_ID: ${{ secrets.TG_CHANNEL_ID }}
-        run: |
-          set -euo pipefail
-          pip install --user --break-system-packages telethon
-          
-          python3 << 'PYEOF'
-          import asyncio
-          import os
-          from telethon import TelegramClient
-          from telethon.sessions import StringSession
-
-          async def main():
-              client = TelegramClient(
-                  StringSession(os.environ["TG_SESSION"]),
-                  int(os.environ["TG_API_ID"]),
-                  os.environ["TG_API_HASH"],
-              )
-              await client.start()
-              async with client:
-                  with open("results/results.json", "rb") as f:
-                      await client.send_file(
-                          int(os.environ["TG_CHANNEL_ID"]),
-                          f,
-                          caption="📊 نتائج البروتوكول الكامل على أنمي حقيقي",
-                          force_document=True,
-                      )
-
-          asyncio.run(main())
-          PYEOF
-
-      - name: رفع النتائج
-        uses: actions/upload-artifact@v4
-        with:
-          name: full-protocol-results
-          path: results/
-          retention-days: 7
-          if-no-files-found: error
+          curl -X POST "https://fox1-ai.abdelrhym096290.workers.dev/result" \
+            -H "Content-Type: application/json" \
+            -d "{\"output\":\"$OUTPUT\"}"
