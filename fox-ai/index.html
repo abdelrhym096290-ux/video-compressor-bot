@@ -317,6 +317,7 @@ let darkMode = true;
 let currentChatId = localStorage.getItem('fox-current-chat') || Date.now().toString();
 let chats = JSON.parse(localStorage.getItem('fox-chats') || '[]');
 let attachments = [];
+let currentContextMessage = null;
 
 menuBtn.addEventListener('click', () => sidebar.classList.toggle('hidden'));
 
@@ -504,8 +505,6 @@ function addMessage(text, role) {
   messagesEl.appendChild(msgDiv);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
-
-let currentContextMessage = null;
 
 document.addEventListener('click', () => contextMenu.classList.remove('visible'));
 
