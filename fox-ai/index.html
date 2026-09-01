@@ -221,6 +221,10 @@ body {
 #send-btn:active {
   transform: scale(0.95);
 }
+#send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* الوضع الفاتح */
 body.light {
@@ -272,7 +276,7 @@ body.light .chat-item {
     <strong>FOX AI</strong>
   </div>
   
-  <button class="new-chat-btn">+ محادثة جديدة</button>
+  <button class="new-chat-btn" id="new-chat-btn">+ محادثة جديدة</button>
   
   <div class="sidebar-label">المحادثات</div>
   <div id="chat-list"></div>
@@ -308,6 +312,8 @@ body.light .chat-item {
 </div>
 
 <script>
+const WORKER_URL = 'https://purple-snowflake-997b.abdelrhym096290.workers.dev';
+
 const messagesEl = document.getElementById('messages');
 const userInput = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
@@ -315,8 +321,11 @@ const themeBtn = document.getElementById('theme-btn');
 const chatList = document.getElementById('chat-list');
 const sidebar = document.getElementById('sidebar');
 const menuBtn = document.getElementById('menu-btn');
+const newChatBtn = document.getElementById('new-chat-btn');
 
 let darkMode = true;
+let currentChatId = localStorage.getItem('fox-current-chat') || Date.now().toString();
+let chats = JSON.parse(localStorage.getItem('fox-chats') || '[]');
 
 // إظهار/إخفاء الشريط الجانبي
 menuBtn.addEventListener('click', function() {
@@ -330,18 +339,58 @@ themeBtn.addEventListener('click', function() {
   if (darkMode) {
     document.body.classList.remove('light');
     themeBtn.textContent = '🌙 تغيير المظهر';
+    localStorage.setItem('fox-theme', 'dark');
   } else {
     document.body.classList.add('light');
     themeBtn.textContent = '☀️ تغيير المظهر';
+    localStorage.setItem('fox-theme', 'light');
   }
 });
 
-// إرسال رسالة
+// تطبيق المظهر المحفوظ
+if (localStorage.getItem('fox-theme') === 'light') {
+  darkMode = false;
+  document.body.classList.add('light');
+  themeBtn.textContent = '☀️ تغيير المظهر';
+}
+
+// محادثة جديدة
+newChatBtn.addEventListener('click', function() {
+  currentChatId = Date.now().toString();
+  localStorage.setItem('fox-current-chat', currentChatId);
+  
+  chats.unshift({ id: currentChatId, title: 'محادثة جديدة' });
+  localStorage.setItem('fox-chats', JSON.stringify(chats));
+  
+  messagesEl.innerHTML = '<div class="message ai">مرحبًا! أنا FOX AI. كيف يمكنني مساعدتك؟</div>';
+  renderChatList();
+  sidebar.classList.add('hidden');
+});
+
+// عرض قائمة المحادثات
+function renderChatList() {
+  chatList.innerHTML = '';
+  
+  chats.forEach(chat => {
+    const div = document.createElement('div');
+    div.className = 'chat-item ' + (chat.id === currentChatId ? 'active' : '');
+    div.textContent = chat.title;
+    div.addEventListener('click', function() {
+      currentChatId = chat.id;
+      localStorage.setItem('fox-current-chat', currentChatId);
+      loadChatHistory();
+      renderChatList();
+      sidebar.classList.add('hidden');
+    });
+    chatList.appendChild(div);
+  });
+}
+
+// عرض رسالة
 function addMessage(text, role) {
   const div = document.createElement('div');
   div.className = 'message ' + role;
   
-  // إذا كانت الرسالة طويلة جدًا
   if (text.length > 500) {
     div.textContent = text.substring(0, 500) + '... (رسالة طويلة)';
     
@@ -366,23 +415,98 @@ function addMessage(text, role) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-// إرسال
-sendBtn.addEventListener('click', function() {
+// تحميل محادثة من الذاكرة
+async function loadChatHistory() {
+  messagesEl.innerHTML = '<div class="message ai">... جارٍ التحميل ...</div>';
+  
+  try {
+    const response = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'load',
+        chatId: currentChatId
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.messages && data.messages.length > 0) {
+      messagesEl.innerHTML = '';
+      data.messages.forEach(msg => addMessage(msg.content, msg.role));
+    } else {
+      messagesEl.innerHTML = '<div class="message ai">مرحبًا! أنا FOX AI. كيف يمكنني مساعدتك؟</div>';
+    }
+  } catch (error) {
+    messagesEl.innerHTML = '<div class="message ai">عذرًا، تعذر تحميل المحادثة.</div>';
+  }
+}
+
+// إرسال رسالة
+async function sendMessage() {
   const text = userInput.value.trim();
   if (!text) return;
   
   addMessage(text, 'user');
   userInput.value = '';
+  sendBtn.disabled = true;
   
-  const aiResponse = 'هذه رسالة تجريبية.\n\n```python\nprint("مرحبا")\n```\n\nلم يتم ربط النموذج بعد.';
-  addMessage(aiResponse, 'ai');
-});
+  const loadingDiv = document.createElement('div');
+  loadingDiv.className = 'message ai';
+  loadingDiv.textContent = '...';
+  loadingDiv.id = 'loading-msg';
+  messagesEl.appendChild(loadingDiv);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  
+  try {
+    const response = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'chat',
+        chatId: currentChatId,
+        messages: [{ role: 'user', content: text }]
+      })
+    });
+    
+    const data = await response.json();
+    
+    document.getElementById('loading-msg')?.remove();
+    
+    if (data.response) {
+      addMessage(data.response, 'ai');
+      
+      // تحديث عنوان المحادثة
+      const chat = chats.find(c => c.id === currentChatId);
+      if (chat && chat.title === 'محادثة جديدة') {
+        chat.title = text.substring(0, 30);
+        localStorage.setItem('fox-chats', JSON.stringify(chats));
+        renderChatList();
+      }
+    } else if (data.error) {
+      addMessage('خطأ: ' + data.error, 'ai');
+    }
+  } catch (error) {
+    document.getElementById('loading-msg')?.remove();
+    addMessage('عذرًا، حدث خطأ في الاتصال.', 'ai');
+  }
+  
+  sendBtn.disabled = false;
+}
+
+// أحداث
+sendBtn.addEventListener('click', sendMessage);
 
 userInput.addEventListener('keydown', function(e) {
   if (e.key === 'Enter') {
-    sendBtn.click();
+    e.preventDefault();
+    sendMessage();
   }
 });
+
+// تهيئة
+renderChatList();
+loadChatHistory();
 </script>
 
 </body>
