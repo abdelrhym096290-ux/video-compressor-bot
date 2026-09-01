@@ -1,3 +1,10 @@
-name = "fox1-ia"
+name = "fox1-ai"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+keep_vars = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fox-ai-db"
+database_id = "00000002-00000000-000050d9-aca445ee3fde29d4267ec2cd7f65a6a5"
+
