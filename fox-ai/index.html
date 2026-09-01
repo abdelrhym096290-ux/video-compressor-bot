@@ -560,14 +560,6 @@ sendBtn.addEventListener('click', () => {
 
 userInput.addEventListener('input', autoGrow);
 
-// Enter يرسل مباشرة — Shift+Enter لسطر جديد
-userInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
-
 renderChatList();
 renderMessages();
 </script>
