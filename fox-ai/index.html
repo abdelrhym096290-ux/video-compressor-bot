@@ -129,7 +129,11 @@ body {
   border: 1px solid #2a2a45;
   border-top-right-radius: 5px;
 }
-
+.message img {
+  max-width: 100%;
+  border-radius: 12px;
+  margin-top: 8px;
+}
 .download-btn {
   background: #2a2a45;
   border: none;
@@ -143,13 +147,31 @@ body {
 
 #input-area {
   display: flex;
-  align-items: center;
-  padding: 15px;
+  flex-direction: column;
+  padding: 10px 15px;
   border-top: 1px solid #2a2a45;
-  gap: 10px;
+  gap: 8px;
+}
+#attachments {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.attach-chip {
+  background: #2a2a45;
+  border-radius: 12px;
+  padding: 5px 10px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.attach-chip .remove {
+  cursor: pointer;
+  color: #ff6b6b;
+  font-weight: bold;
 }
 #input-container {
-  flex: 1;
   display: flex;
   align-items: center;
   background: #1a1a30;
@@ -188,6 +210,30 @@ body {
 #send-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+#toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.tool-btn {
+  background: none;
+  border: none;
+  color: #8888a0;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 5px;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+.tool-btn:hover {
+  background: #222240;
+  color: white;
+}
+.tool-btn.recording {
+  background: #ff4444;
+  color: white;
 }
 
 body.light {
@@ -260,6 +306,16 @@ body.light .chat-item {
   </div>
   
   <div id="input-area">
+    <div id="attachments"></div>
+    
+    <div id="toolbar">
+      <button class="tool-btn" id="image-btn" title="رفع صورة">📷</button>
+      <button class="tool-btn" id="file-btn" title="رفع ملف">📎</button>
+      <button class="tool-btn" id="voice-btn" title="تسجيل صوتي">🎤</button>
+      <input type="file" id="image-input" accept="image/*" hidden>
+      <input type="file" id="file-input" hidden>
+    </div>
+    
     <div id="input-container">
       <input type="text" id="user-input" placeholder="اكتب رسالتك هنا...">
       <button id="send-btn">
@@ -283,18 +339,25 @@ const chatList = document.getElementById('chat-list');
 const sidebar = document.getElementById('sidebar');
 const menuBtn = document.getElementById('menu-btn');
 const newChatBtn = document.getElementById('new-chat-btn');
+const attachmentsEl = document.getElementById('attachments');
+const imageBtn = document.getElementById('image-btn');
+const fileBtn = document.getElementById('file-btn');
+const voiceBtn = document.getElementById('voice-btn');
+const imageInput = document.getElementById('image-input');
+const fileInput = document.getElementById('file-input');
 
 let darkMode = true;
 let currentChatId = localStorage.getItem('fox-current-chat') || Date.now().toString();
 let chats = JSON.parse(localStorage.getItem('fox-chats') || '[]');
+let attachments = [];
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
 
-menuBtn.addEventListener('click', function() {
-  sidebar.classList.toggle('hidden');
-});
+menuBtn.addEventListener('click', () => sidebar.classList.toggle('hidden'));
 
-themeBtn.addEventListener('click', function() {
+themeBtn.addEventListener('click', () => {
   darkMode = !darkMode;
-  
   if (darkMode) {
     document.body.classList.remove('light');
     themeBtn.textContent = '🌙 تغيير المظهر';
@@ -312,26 +375,25 @@ if (localStorage.getItem('fox-theme') === 'light') {
   themeBtn.textContent = '☀️ تغيير المظهر';
 }
 
-newChatBtn.addEventListener('click', function() {
+newChatBtn.addEventListener('click', () => {
   currentChatId = Date.now().toString();
   localStorage.setItem('fox-current-chat', currentChatId);
-  
   chats.unshift({ id: currentChatId, title: 'محادثة جديدة' });
   localStorage.setItem('fox-chats', JSON.stringify(chats));
-  
   messagesEl.innerHTML = '<div class="message ai">مرحبًا! أنا FOX AI. كيف يمكنني مساعدتك؟</div>';
+  attachments = [];
+  renderAttachments();
   renderChatList();
   sidebar.classList.add('hidden');
 });
 
 function renderChatList() {
   chatList.innerHTML = '';
-  
   chats.forEach(chat => {
     const div = document.createElement('div');
     div.className = 'chat-item ' + (chat.id === currentChatId ? 'active' : '');
     div.textContent = chat.title;
-    div.addEventListener('click', function() {
+    div.addEventListener('click', () => {
       currentChatId = chat.id;
       localStorage.setItem('fox-current-chat', currentChatId);
       loadChatHistory();
@@ -342,17 +404,88 @@ function renderChatList() {
   });
 }
 
+function renderAttachments() {
+  attachmentsEl.innerHTML = '';
+  attachments.forEach((att, index) => {
+    const chip = document.createElement('div');
+    chip.className = 'attach-chip';
+    chip.textContent = att.name.substring(0, 20);
+    const remove = document.createElement('span');
+    remove.className = 'remove';
+    remove.textContent = '✕';
+    remove.addEventListener('click', () => {
+      attachments.splice(index, 1);
+      renderAttachments();
+    });
+    chip.appendChild(remove);
+    attachmentsEl.appendChild(chip);
+  });
+}
+
+imageBtn.addEventListener('click', () => imageInput.click());
+fileBtn.addEventListener('click', () => fileInput.click());
+
+imageInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) {
+    attachments.push({ type: 'image', file, name: file.name });
+    renderAttachments();
+  }
+});
+
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) {
+    attachments.push({ type: 'file', file, name: file.name });
+    renderAttachments();
+  }
+});
+
+voiceBtn.addEventListener('click', async () => {
+  if (isRecording) {
+    mediaRecorder.stop();
+    isRecording = false;
+    voiceBtn.classList.remove('recording');
+    voiceBtn.textContent = '🎤';
+    return;
+  }
+  
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+    
+    mediaRecorder.ondataavailable = (e) => {
+      audioChunks.push(e.data);
+    };
+    
+    mediaRecorder.onstop = () => {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      const file = new File([audioBlob], 'voice.webm', { type: 'audio/webm' });
+      attachments.push({ type: 'audio', file, name: '🎤 تسجيل صوتي' });
+      renderAttachments();
+      stream.getTracks().forEach(track => track.stop());
+    };
+    
+    mediaRecorder.start();
+    isRecording = true;
+    voiceBtn.classList.add('recording');
+    voiceBtn.textContent = '⏹️';
+  } catch (error) {
+    alert('تعذر الوصول للميكروفون');
+  }
+});
+
 function addMessage(text, role) {
   const div = document.createElement('div');
   div.className = 'message ' + role;
   
   if (text.length > 500) {
     div.textContent = text.substring(0, 500) + '... (رسالة طويلة)';
-    
     const downloadBtn = document.createElement('button');
     downloadBtn.className = 'download-btn';
     downloadBtn.textContent = '⬇️ تحميل الرسالة كاملة';
-    downloadBtn.addEventListener('click', function() {
+    downloadBtn.addEventListener('click', () => {
       const blob = new Blob([text], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -372,19 +505,13 @@ function addMessage(text, role) {
 
 async function loadChatHistory() {
   messagesEl.innerHTML = '<div class="message ai">... جارٍ التحميل ...</div>';
-  
   try {
     const response = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'load',
-        chatId: currentChatId
-      })
+      body: JSON.stringify({ action: 'load', chatId: currentChatId })
     });
-    
     const data = await response.json();
-    
     if (data.messages && data.messages.length > 0) {
       messagesEl.innerHTML = '';
       data.messages.forEach(msg => addMessage(msg.content, msg.role));
@@ -398,10 +525,33 @@ async function loadChatHistory() {
 
 async function sendMessage() {
   const text = userInput.value.trim();
-  if (!text) return;
+  if (!text && attachments.length === 0) return;
   
-  addMessage(text, 'user');
+  if (attachments.length > 0) {
+    for (const att of attachments) {
+      if (att.type === 'image') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const div = document.createElement('div');
+          div.className = 'message user';
+          const img = document.createElement('img');
+          img.src = e.target.result;
+          div.appendChild(img);
+          messagesEl.appendChild(div);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        };
+        reader.readAsDataURL(att.file);
+      }
+    }
+  }
+  
+  if (text) {
+    addMessage(text, 'user');
+  }
+  
   userInput.value = '';
+  attachments = [];
+  renderAttachments();
   sendBtn.disabled = true;
   
   const loadingDiv = document.createElement('div');
@@ -418,17 +568,15 @@ async function sendMessage() {
       body: JSON.stringify({
         action: 'chat',
         chatId: currentChatId,
-        messages: [{ role: 'user', content: text }]
+        messages: [{ role: 'user', content: text || '📎 مرفق' }]
       })
     });
     
     const data = await response.json();
-    
     document.getElementById('loading-msg')?.remove();
     
     if (data.response) {
       addMessage(data.response, 'ai');
-      
       const chat = chats.find(c => c.id === currentChatId);
       if (chat && chat.title === 'محادثة جديدة') {
         chat.title = text.substring(0, 30);
@@ -447,8 +595,7 @@ async function sendMessage() {
 }
 
 sendBtn.addEventListener('click', sendMessage);
-
-userInput.addEventListener('keydown', function(e) {
+userInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
     sendMessage();
