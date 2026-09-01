@@ -1,56 +1,334 @@
-name: FOX AI Terminal
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const path = url.pathname;
 
-on:
-  workflow_dispatch:
-    inputs:
-      command:
-        description: 'الأمر الذي سيُنفذ'
-        required: true
-        default: 'echo مرحبا'
+    // استقبال النتيجة من GitHub Actions
+    if (path === '/result' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const { output } = body;
+        
+        await env.DB.prepare(
+          'INSERT INTO results (output, created_at) VALUES (?, ?)'
+        ).bind(output, new Date().toISOString()).run();
+        
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ error: error.message }), {
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+    }
 
-concurrency:
-  group: fox-ai-terminal
-  cancel-in-progress: false
+    if (request.method === 'GET') {
+      return new Response('FOX AI Worker is running', {
+        headers: { 'Content-Type': 'text/plain' },
+      });
+    }
 
-permissions:
-  contents: read
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+        },
+      });
+    }
 
-jobs:
-  execute:
-    name: تنفيذ الأمر
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - name: تجهيز البيئة
-        run: |
-          sudo apt update
-          sudo apt install -y python3 python3-pip git curl
+    if (request.method !== 'POST') {
+      return new Response('Method not allowed', { status: 405 });
+    }
 
-      - name: تنفيذ الأمر
-        id: execute
-        env:
-          USER_COMMAND: ${{ github.event.inputs.command }}
-        run: |
-          set +e
-          OUTPUT=$(eval "$USER_COMMAND" 2>&1)
-          EXIT_CODE=$?
-          set -e
+    try {
+      const body = await request.json();
+      const { action, chatId, messages } = body;
+
+      if (action === 'load') {
+        const history = await loadChat(env.DB, chatId);
+        return new Response(JSON.stringify({ messages: history }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+
+      if (action === 'check_result') {
+        const result = await getLatestResult(env.DB);
+        return new Response(JSON.stringify({ result }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+
+      if (action === 'chat') {
+        const history = await loadChat(env.DB, chatId);
+        const allMessages = [...history, ...messages];
+
+        const geminiResult = await callGeminiWithTools(env.GEMINI_API_KEY, allMessages);
+
+        if (geminiResult.toolCall) {
+          const command = geminiResult.toolCall.command;
+          await runGithubWorkflow(env.GITHUB_TOKEN, command);
           
-          echo "=== OUTPUT ==="
-          echo "$OUTPUT"
-          echo "=== END ==="
+          await saveMessage(env.DB, chatId, { role: 'user', content: messages[messages.length - 1].content });
           
-          {
-            echo "stdout=$OUTPUT"
-            echo "exit_code=$EXIT_CODE"
-          } >> result.txt
-          
-          cat result.txt
+          return new Response(JSON.stringify({ 
+            response: '⚙️ جاري تنفيذ الأمر في الطرفية...',
+            waiting: true,
+            command: command
+          }), {
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            },
+          });
+        }
 
-      - name: إرسال النتيجة إلى العامل
-        run: |
-          OUTPUT=$(cat result.txt | sed 's/"/\\"/g' | tr '\n' ' ')
+        await saveMessage(env.DB, chatId, { role: 'user', content: messages[messages.length - 1].content });
+        await saveMessage(env.DB, chatId, { role: 'ai', content: geminiResult.text });
+
+        return new Response(JSON.stringify({ response: geminiResult.text }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+
+      if (action === 'process_result') {
+        const result = await getLatestResult(env.DB);
+        
+        if (result) {
+          const history = await loadChat(env.DB, chatId);
+          const analysis = await analyzeResult(env.GEMINI_API_KEY, history, result.output);
           
-          curl -X POST "https://fox1-ai.abdelrhym096290.workers.dev/result" \
-            -H "Content-Type: application/json" \
-            -d "{\"output\":\"$OUTPUT\"}"
+          await saveMessage(env.DB, chatId, { role: 'ai', content: analysis.text });
+          
+          if (analysis.toolCall) {
+            await runGithubWorkflow(env.GITHUB_TOKEN, analysis.toolCall.command);
+            return new Response(JSON.stringify({ 
+              response: '⚙️ إعادة المحاولة بأمر معدل...',
+              waiting: true 
+            }), {
+              headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+              },
+            });
+          }
+          
+          return new Response(JSON.stringify({ response: analysis.text }), {
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            },
+          });
+        }
+        
+        return new Response(JSON.stringify({ response: null }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+
+      return new Response(JSON.stringify({ error: 'Invalid action' }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
+  },
+};
+
+async function callGeminiWithTools(apiKey, messages) {
+  const contents = messages.map(msg => ({
+    role: msg.role === 'user' ? 'user' : 'model',
+    parts: [{ text: msg.content }],
+  }));
+
+  const systemPrompt = `أنت FOX AI، وكيل ذكي مع صلاحية تنفيذ أوامر في بيئة طرفية Linux عبر GitHub Actions.
+عندما يطلب المستخدم تنفيذ شيء، استدعِ run_command مع الأمر المناسب.`;
+
+  contents.unshift({
+    role: 'user',
+    parts: [{ text: systemPrompt }]
+  });
+
+  const tools = [{
+    functionDeclarations: [{
+      name: 'run_command',
+      description: 'تشغيل أمر في بيئة طرفية Linux عبر GitHub Actions',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          command: {
+            type: 'STRING',
+            description: 'الأمر الذي سيُنفذ'
+          }
+        },
+        required: ['command']
+      }
+    }]
+  }];
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent';
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    },
+    body: JSON.stringify({ contents, tools }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error?.message || 'Gemini API error');
+  }
+
+  const parts = data.candidates?.[0]?.content?.parts || [];
+
+  for (const part of parts) {
+    if (part.functionCall) {
+      return {
+        toolCall: {
+          command: part.functionCall.args?.command || ''
+        }
+      };
+    }
+  }
+
+  const text = parts.find(p => p.text)?.text || 'لا يوجد رد';
+  return { text };
+}
+
+async function analyzeResult(apiKey, history, output) {
+  const contents = [
+    {
+      role: 'user',
+      parts: [{ text: `نتيجة تنفيذ الأمر:\n${output}\n\nحلل النتيجة. إذا نجح الأمر، اكتب ردًا نهائيًا يشرح ما حدث. إذا فشل، استدعِ run_command بأمر معدل.` }]
+    }
+  ];
+
+  const tools = [{
+    functionDeclarations: [{
+      name: 'run_command',
+      description: 'إعادة تشغيل أمر معدل في الطرفية',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          command: {
+            type: 'STRING',
+            description: 'الأمر المعدل'
+          }
+        },
+        required: ['command']
+      }
+    }]
+  }];
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent';
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    },
+    body: JSON.stringify({ contents, tools }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error?.message || 'Gemini API error');
+  }
+
+  const parts = data.candidates?.[0]?.content?.parts || [];
+
+  for (const part of parts) {
+    if (part.functionCall) {
+      return {
+        toolCall: {
+          command: part.functionCall.args?.command || ''
+        }
+      };
+    }
+  }
+
+  const text = parts.find(p => p.text)?.text || 'تم التنفيذ';
+  return { text };
+}
+
+async function runGithubWorkflow(token, command) {
+  const response = await fetch(`https://api.github.com/repos/abdelrhym096290-ux/video-compressor-bot/actions/workflows/compress1.yml/dispatches`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/vnd.github.v3+json',
+    },
+    body: JSON.stringify({
+      ref: 'main',
+      inputs: {
+        command: command
+      }
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error('فشل تشغيل GitHub Actions');
+  }
+
+  return true;
+}
+
+async function saveMessage(db, chatId, message) {
+  await db.prepare(
+    'INSERT INTO messages (chat_id, role, content, created_at) VALUES (?, ?, ?, ?)'
+  ).bind(chatId, message.role, message.content, new Date().toISOString()).run();
+}
+
+async function loadChat(db, chatId) {
+  const result = await db.prepare(
+    'SELECT role, content FROM messages WHERE chat_id = ? ORDER BY id ASC'
+  ).bind(chatId).all();
+
+  return result.results || [];
+}
+
+async function getLatestResult(db) {
+  const result = await db.prepare(
+    'SELECT output, created_at FROM results ORDER BY id DESC LIMIT 1'
+  ).all();
+
+  return result.results?.[0] || null;
+}
