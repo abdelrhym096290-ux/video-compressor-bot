@@ -15,7 +15,6 @@ body {
   overflow: hidden;
 }
 
-/* الشريط الجانبي */
 #sidebar {
   width: 250px;
   background: #16162b;
@@ -82,7 +81,6 @@ body {
   font-size: 13px;
 }
 
-/* المحتوى الرئيسي */
 #main {
   flex: 1;
   display: flex;
@@ -108,7 +106,6 @@ body {
   background: #222240;
 }
 
-/* الرسائل */
 #messages {
   flex: 1;
   overflow-y: auto;
@@ -133,38 +130,6 @@ body {
   border-top-right-radius: 5px;
 }
 
-/* صندوق الأكواد */
-.code-block {
-  background: #0a0a1e;
-  border-radius: 12px;
-  margin: 8px 0;
-  overflow: hidden;
-  position: relative;
-}
-.code-block pre {
-  padding: 12px;
-  overflow-x: auto;
-  font-size: 12px;
-  direction: ltr;
-  text-align: left;
-}
-.copy-btn {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  background: #2a2a45;
-  border: none;
-  border-radius: 8px;
-  color: white;
-  padding: 5px 10px;
-  cursor: pointer;
-  font-size: 11px;
-}
-.copy-btn:hover {
-  background: #3a3a55;
-}
-
-/* زر تحميل الرسالة الطويلة */
 .download-btn {
   background: #2a2a45;
   border: none;
@@ -176,7 +141,6 @@ body {
   margin-top: 8px;
 }
 
-/* منطقة الإدخال */
 #input-area {
   display: flex;
   align-items: center;
@@ -226,7 +190,6 @@ body {
   cursor: not-allowed;
 }
 
-/* الوضع الفاتح */
 body.light {
   background: #f5f5f7;
   color: #1a1a1a;
@@ -269,7 +232,6 @@ body.light .chat-item {
 </head>
 <body>
 
-<!-- الشريط الجانبي -->
 <div id="sidebar">
   <div class="sidebar-header">
     <span>🦊</span>
@@ -286,7 +248,6 @@ body.light .chat-item {
   </div>
 </div>
 
-<!-- المحتوى الرئيسي -->
 <div id="main">
   <div id="header">
     <button class="menu-btn" id="menu-btn">☰</button>
@@ -312,7 +273,7 @@ body.light .chat-item {
 </div>
 
 <script>
- const WORKER_URL = 'https://fox1-ai.abdelrhym096290.workers.dev';
+const WORKER_URL = 'https://fox1-ai.abdelrhym096290.workers.dev';
 
 const messagesEl = document.getElementById('messages');
 const userInput = document.getElementById('user-input');
@@ -327,12 +288,10 @@ let darkMode = true;
 let currentChatId = localStorage.getItem('fox-current-chat') || Date.now().toString();
 let chats = JSON.parse(localStorage.getItem('fox-chats') || '[]');
 
-// إظهار/إخفاء الشريط الجانبي
 menuBtn.addEventListener('click', function() {
   sidebar.classList.toggle('hidden');
 });
 
-// تغيير المظهر
 themeBtn.addEventListener('click', function() {
   darkMode = !darkMode;
   
@@ -347,14 +306,12 @@ themeBtn.addEventListener('click', function() {
   }
 });
 
-// تطبيق المظهر المحفوظ
 if (localStorage.getItem('fox-theme') === 'light') {
   darkMode = false;
   document.body.classList.add('light');
   themeBtn.textContent = '☀️ تغيير المظهر';
 }
 
-// محادثة جديدة
 newChatBtn.addEventListener('click', function() {
   currentChatId = Date.now().toString();
   localStorage.setItem('fox-current-chat', currentChatId);
@@ -367,7 +324,6 @@ newChatBtn.addEventListener('click', function() {
   sidebar.classList.add('hidden');
 });
 
-// عرض قائمة المحادثات
 function renderChatList() {
   chatList.innerHTML = '';
   
@@ -386,7 +342,6 @@ function renderChatList() {
   });
 }
 
-// عرض رسالة
 function addMessage(text, role) {
   const div = document.createElement('div');
   div.className = 'message ' + role;
@@ -415,7 +370,6 @@ function addMessage(text, role) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-// تحميل محادثة من الذاكرة
 async function loadChatHistory() {
   messagesEl.innerHTML = '<div class="message ai">... جارٍ التحميل ...</div>';
   
@@ -438,11 +392,10 @@ async function loadChatHistory() {
       messagesEl.innerHTML = '<div class="message ai">مرحبًا! أنا FOX AI. كيف يمكنني مساعدتك؟</div>';
     }
   } catch (error) {
-    messagesEl.innerHTML = '<div class="message ai">عذرًا، تعذر تحميل المحادثة.</div>';
+    messagesEl.innerHTML = '<div class="message ai">مرحبًا! أنا FOX AI. كيف يمكنني مساعدتك؟</div>';
   }
 }
 
-// إرسال رسالة
 async function sendMessage() {
   const text = userInput.value.trim();
   if (!text) return;
@@ -476,7 +429,6 @@ async function sendMessage() {
     if (data.response) {
       addMessage(data.response, 'ai');
       
-      // تحديث عنوان المحادثة
       const chat = chats.find(c => c.id === currentChatId);
       if (chat && chat.title === 'محادثة جديدة') {
         chat.title = text.substring(0, 30);
@@ -494,7 +446,6 @@ async function sendMessage() {
   sendBtn.disabled = false;
 }
 
-// أحداث
 sendBtn.addEventListener('click', sendMessage);
 
 userInput.addEventListener('keydown', function(e) {
@@ -504,7 +455,6 @@ userInput.addEventListener('keydown', function(e) {
   }
 });
 
-// تهيئة
 renderChatList();
 loadChatHistory();
 </script>
