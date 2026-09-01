@@ -6,5 +6,4 @@ keep_vars = true
 [[d1_databases]]
 binding = "DB"
 database_name = "fox-ai-db"
-database_id = "00000002-00000000-000050d9-aca445ee3fde29d4267ec2cd7f65a6a5"
-
+database_id = "af119c1d-6f40-41d3-aab0-590cdce0462e"
