@@ -14,7 +14,6 @@ body {
   display: flex;
   overflow: hidden;
 }
-
 #sidebar {
   width: 260px;
   background: #16162b;
@@ -34,26 +33,21 @@ body {
   margin: 12px; padding: 12px;
   background: #1e3a5f; border: none; border-radius: 20px;
   color: white; cursor: pointer; font-size: 14px;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
 }
 .sidebar-label { font-size: 12px; color: #8888a0; padding: 10px 15px; }
 #chat-list { flex: 1; overflow-y: auto; }
 .chat-item {
   padding: 10px 15px; cursor: pointer; font-size: 13px;
   border-radius: 12px; margin: 4px 8px;
-  display: flex; align-items: center; justify-content: space-between;
 }
 .chat-item:hover { background: #222240; }
 .chat-item.active { background: #1e3a5f; }
-.chat-item .delete-chat { opacity: 0; cursor: pointer; font-size: 12px; }
-.chat-item:hover .delete-chat { opacity: 1; }
 .sidebar-footer { padding: 12px; border-top: 1px solid #2a2a45; }
 .theme-btn {
   width: 100%; padding: 10px; background: none;
   border: 1px solid #2a2a45; border-radius: 20px;
   color: #e8e8f0; cursor: pointer; font-size: 13px;
 }
-
 #main { flex: 1; display: flex; flex-direction: column; }
 #header {
   display: flex; align-items: center; padding: 12px 15px;
@@ -64,7 +58,6 @@ body {
   font-size: 20px; cursor: pointer; padding: 8px; border-radius: 50%;
 }
 .menu-btn:hover { background: #222240; }
-
 #messages { flex: 1; overflow-y: auto; padding: 20px; }
 .message {
   margin-bottom: 20px; max-width: 85%;
@@ -84,70 +77,15 @@ body {
   background: #1a1a30; border: 1px solid #2a2a45; border-top-right-radius: 5px;
 }
 .message-time { font-size: 10px; color: #666; margin-top: 4px; }
-
-.steps-container {
-  background: #0a0a1e;
-  border: 1px solid #2a2a45;
-  border-radius: 12px;
-  margin: 10px 0;
-  overflow: hidden;
-}
-.step {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 15px;
-  border-bottom: 1px solid #1a1a30;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-.step:last-child { border-bottom: none; }
-.step:hover { background: #16162b; }
-.step-icon {
-  width: 20px; height: 20px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.step-icon svg { width: 14px; height: 14px; }
-.step-content { flex: 1; font-size: 13px; line-height: 1.5; }
-.step-title { font-weight: 500; }
-.step-detail {
-  display: none;
-  margin-top: 8px;
-  padding: 10px;
-  background: #0d0d1a;
-  border-radius: 8px;
-  font-size: 12px;
-  direction: ltr;
-  text-align: left;
-  max-height: 200px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-.step.open .step-detail { display: block; }
-.step-status { font-size: 11px; color: #8888a0; }
-.step.running .step-status { color: #ffd76a; }
-.step.done .step-status { color: #6fe08a; }
-.step.failed .step-status { color: #ff6b6b; }
-
 .download-btn {
   background: #2a2a45; border: none; border-radius: 8px;
   color: white; padding: 5px 10px; cursor: pointer;
   font-size: 11px; margin-top: 8px;
 }
-
 #input-area {
   display: flex; flex-direction: column;
   padding: 10px 15px; border-top: 1px solid #2a2a45; gap: 8px;
 }
-#attachments { display: flex; gap: 8px; flex-wrap: wrap; }
-.attach-chip {
-  background: #2a2a45; border-radius: 12px; padding: 5px 10px;
-  font-size: 11px; display: flex; align-items: center; gap: 5px;
-}
-.attach-chip .remove { cursor: pointer; color: #ff6b6b; font-weight: bold; }
-
 #input-container {
   display: flex; align-items: center;
   background: #1a1a30; border: 1px solid #2a2a45;
@@ -157,8 +95,6 @@ body {
   flex: 1; padding: 10px 15px; background: none;
   border: none; color: white; font-size: 14px; outline: none;
 }
-#char-count { font-size: 10px; color: #666; padding: 0 5px; }
-
 #send-btn {
   width: 36px; height: 36px; border-radius: 50%;
   background: #4a9eff; border: none; cursor: pointer;
@@ -168,40 +104,6 @@ body {
 #send-btn:hover { background: #5aafff; }
 #send-btn:active { transform: scale(0.95); }
 #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-#add-btn {
-  width: 36px; height: 36px; border-radius: 50%;
-  background: none; border: 1px solid #2a2a45; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px; color: #8888a0; flex-shrink: 0;
-}
-#add-btn:hover { background: #222240; color: white; }
-
-#add-menu {
-  position: absolute; bottom: 80px; right: 15px;
-  background: #1a1a30; border: 1px solid #2a2a45;
-  border-radius: 16px; padding: 8px; display: none;
-  z-index: 100;
-}
-#add-menu.visible { display: block; }
-.add-menu-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 15px; cursor: pointer; border-radius: 10px;
-  font-size: 13px; color: #e8e8f0;
-}
-.add-menu-item:hover { background: #222240; }
-
-#context-menu {
-  position: fixed; background: #1a1a30; border: 1px solid #2a2a45;
-  border-radius: 12px; padding: 5px; display: none; z-index: 200;
-}
-#context-menu.visible { display: block; }
-.context-item {
-  padding: 8px 15px; cursor: pointer; border-radius: 8px;
-  font-size: 12px; color: #e8e8f0;
-}
-.context-item:hover { background: #222240; }
-
 body.light { background: #f5f5f7; color: #1a1a1a; }
 body.light #sidebar { background: #ffffff; border-color: #ddd; }
 body.light .message.ai .message-bubble { background: #ffffff; border-color: #ddd; }
@@ -211,15 +113,7 @@ body.light #user-input { color: #1a1a1a; }
 body.light .menu-btn { color: #1a1a1a; }
 body.light .menu-btn:hover { background: #e0e0e0; }
 body.light .theme-btn { color: #1a1a1a; border-color: #ddd; }
-body.light .new-chat-btn { color: #1a1a1a; }
 body.light .chat-item { color: #1a1a1a; }
-body.light #add-menu { background: #ffffff; border-color: #ddd; }
-body.light .add-menu-item { color: #1a1a1a; }
-body.light #context-menu { background: #ffffff; border-color: #ddd; }
-body.light .context-item { color: #1a1a1a; }
-body.light .steps-container { background: #f0f0f5; border-color: #ddd; }
-body.light .step-detail { background: #e8e8f0; }
-body.light .step:hover { background: #e0e0e0; }
 </style>
 </head>
 <body>
@@ -227,47 +121,32 @@ body.light .step:hover { background: #e0e0e0; }
 <div id="sidebar">
   <div class="sidebar-header">
     <div class="logo">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff8c42" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
       <strong>FOX AI</strong>
     </div>
   </div>
-  <button class="new-chat-btn" id="new-chat-btn">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    محادثة جديدة
-  </button>
+  <button class="new-chat-btn" id="new-chat-btn">+ محادثة جديدة</button>
   <div class="sidebar-label">المحادثات</div>
   <div id="chat-list"></div>
   <div class="sidebar-footer">
-    <button class="theme-btn" id="theme-btn">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-      المظهر
-    </button>
+    <button class="theme-btn" id="theme-btn">تغيير المظهر</button>
   </div>
 </div>
 
 <div id="main">
   <div id="header">
-    <button class="menu-btn" id="menu-btn">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-    </button>
+    <button class="menu-btn" id="menu-btn">☰</button>
     <strong>FOX AI</strong>
   </div>
   
   <div id="messages">
     <div class="message ai">
       <div class="message-bubble">مرحبًا! أنا FOX AI. كيف يمكنني مساعدتك؟</div>
-      <div class="message-time"></div>
     </div>
   </div>
   
   <div id="input-area">
-    <div id="attachments"></div>
     <div id="input-container">
-      <button id="add-btn">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      </button>
       <input type="text" id="user-input" placeholder="اكتب رسالتك هنا...">
-      <span id="char-count">0/4000</span>
       <button id="send-btn">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
       </button>
@@ -275,49 +154,21 @@ body.light .step:hover { background: #e0e0e0; }
   </div>
 </div>
 
-<div id="add-menu">
-  <div class="add-menu-item" data-type="image">صورة</div>
-  <div class="add-menu-item" data-type="file">ملف</div>
-  <div class="add-menu-item" data-type="voice">تسجيل صوتي</div>
-  <div class="add-menu-item" data-type="camera">كاميرا</div>
-  <div class="add-menu-item" data-type="location">موقع</div>
-</div>
-
-<div id="context-menu">
-  <div class="context-item" data-action="copy">نسخ</div>
-  <div class="context-item" data-action="resend">إعادة إرسال</div>
-  <div class="context-item" data-action="delete">حذف</div>
-</div>
-
-<input type="file" id="image-input" accept="image/*" hidden>
-<input type="file" id="file-input" hidden>
-<input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
-
 <script>
 const WORKER_URL = 'https://fox1-ai.abdelrhym096290.workers.dev';
 
 const messagesEl = document.getElementById('messages');
 const userInput = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
-const addBtn = document.getElementById('add-btn');
-const addMenu = document.getElementById('add-menu');
-const contextMenu = document.getElementById('context-menu');
-const charCount = document.getElementById('char-count');
-const attachmentsEl = document.getElementById('attachments');
 const themeBtn = document.getElementById('theme-btn');
 const sidebar = document.getElementById('sidebar');
 const menuBtn = document.getElementById('menu-btn');
 const newChatBtn = document.getElementById('new-chat-btn');
 const chatList = document.getElementById('chat-list');
-const imageInput = document.getElementById('image-input');
-const fileInput = document.getElementById('file-input');
-const cameraInput = document.getElementById('camera-input');
 
 let darkMode = true;
 let currentChatId = localStorage.getItem('fox-current-chat') || Date.now().toString();
 let chats = JSON.parse(localStorage.getItem('fox-chats') || '[]');
-let attachments = [];
-let currentContextMessage = null;
 
 menuBtn.addEventListener('click', () => sidebar.classList.toggle('hidden'));
 
@@ -343,111 +194,16 @@ newChatBtn.addEventListener('click', () => {
   chats.unshift({ id: currentChatId, title: 'محادثة جديدة' });
   localStorage.setItem('fox-chats', JSON.stringify(chats));
   messagesEl.innerHTML = '<div class="message ai"><div class="message-bubble">مرحبًا! أنا FOX AI. كيف يمكنني مساعدتك؟</div></div>';
-  attachments = [];
-  renderAttachments();
   renderChatList();
   sidebar.classList.add('hidden');
 });
-
-addBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  addMenu.classList.toggle('visible');
-});
-
-document.addEventListener('click', () => addMenu.classList.remove('visible'));
-
-addMenu.addEventListener('click', (e) => {
-  const item = e.target.closest('.add-menu-item');
-  if (item) {
-    const type = item.dataset.type;
-    if (type === 'image') imageInput.click();
-    else if (type === 'file') fileInput.click();
-    else if (type === 'camera') cameraInput.click();
-    else if (type === 'voice') startVoiceRecording();
-    else if (type === 'location') {
-      attachments.push({ type: 'location', name: 'موقع', file: null });
-      renderAttachments();
-    }
-    addMenu.classList.remove('visible');
-  }
-});
-
-imageInput.addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (file) attachments.push({ type: 'image', file, name: file.name });
-  renderAttachments();
-});
-
-fileInput.addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (file) attachments.push({ type: 'file', file, name: file.name });
-  renderAttachments();
-});
-
-cameraInput.addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (file) attachments.push({ type: 'image', file, name: 'صورة' });
-  renderAttachments();
-});
-
-function startVoiceRecording() {
-  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-    const mediaRecorder = new MediaRecorder(stream);
-    const audioChunks = [];
-    mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
-    mediaRecorder.onstop = () => {
-      const blob = new Blob(audioChunks, { type: 'audio/webm' });
-      const file = new File([blob], 'voice.webm', { type: 'audio/webm' });
-      attachments.push({ type: 'audio', file, name: 'تسجيل صوتي' });
-      renderAttachments();
-      stream.getTracks().forEach(t => t.stop());
-    };
-    mediaRecorder.start();
-    setTimeout(() => mediaRecorder.stop(), 10000);
-  }).catch(() => alert('تعذر الوصول للميكروفون'));
-}
-
-function renderAttachments() {
-  attachmentsEl.innerHTML = '';
-  attachments.forEach((att, i) => {
-    const chip = document.createElement('div');
-    chip.className = 'attach-chip';
-    chip.textContent = att.name.substring(0, 20);
-    const remove = document.createElement('span');
-    remove.className = 'remove';
-    remove.textContent = '×';
-    remove.addEventListener('click', () => {
-      attachments.splice(i, 1);
-      renderAttachments();
-    });
-    chip.appendChild(remove);
-    attachmentsEl.appendChild(chip);
-  });
-}
 
 function renderChatList() {
   chatList.innerHTML = '';
   chats.forEach(chat => {
     const div = document.createElement('div');
     div.className = 'chat-item ' + (chat.id === currentChatId ? 'active' : '');
-    const titleSpan = document.createElement('span');
-    titleSpan.textContent = chat.title;
-    titleSpan.style.flex = '1';
-    titleSpan.style.overflow = 'hidden';
-    titleSpan.style.textOverflow = 'ellipsis';
-    titleSpan.style.whiteSpace = 'nowrap';
-    const del = document.createElement('span');
-    del.className = 'delete-chat';
-    del.textContent = '×';
-    del.addEventListener('click', (e) => {
-      e.stopPropagation();
-      chats = chats.filter(c => c.id !== chat.id);
-      localStorage.setItem('fox-chats', JSON.stringify(chats));
-      if (currentChatId === chat.id) currentChatId = Date.now().toString();
-      renderChatList();
-    });
-    div.appendChild(titleSpan);
-    div.appendChild(del);
+    div.textContent = chat.title;
     div.addEventListener('click', () => {
       currentChatId = chat.id;
       localStorage.setItem('fox-current-chat', currentChatId);
@@ -459,68 +215,16 @@ function renderChatList() {
   });
 }
 
-function getTime() {
-  const now = new Date();
-  return now.getHours() + ':' + String(now.getMinutes()).padStart(2, '0');
-}
-
 function addMessage(text, role) {
   const msgDiv = document.createElement('div');
   msgDiv.className = 'message ' + role;
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
-  
-  if (text.length > 500) {
-    bubble.textContent = text.substring(0, 500) + '... (رسالة طويلة)';
-    const btn = document.createElement('button');
-    btn.className = 'download-btn';
-    btn.textContent = 'تحميل كاملة';
-    btn.addEventListener('click', () => {
-      const blob = new Blob([text], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = 'message.txt'; a.click();
-      URL.revokeObjectURL(url);
-    });
-    bubble.appendChild(btn);
-  } else {
-    bubble.textContent = text;
-  }
-  
+  bubble.textContent = text;
   msgDiv.appendChild(bubble);
-  
-  const time = document.createElement('div');
-  time.className = 'message-time';
-  time.textContent = getTime();
-  msgDiv.appendChild(time);
-  
-  msgDiv.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    currentContextMessage = { text, element: msgDiv };
-    contextMenu.classList.add('visible');
-    contextMenu.style.left = e.clientX + 'px';
-    contextMenu.style.top = e.clientY + 'px';
-  });
-  
   messagesEl.appendChild(msgDiv);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
-
-document.addEventListener('click', () => contextMenu.classList.remove('visible'));
-
-contextMenu.addEventListener('click', (e) => {
-  const item = e.target.closest('.context-item');
-  if (item && currentContextMessage) {
-    const action = item.dataset.action;
-    if (action === 'copy') navigator.clipboard.writeText(currentContextMessage.text);
-    else if (action === 'delete') currentContextMessage.element.remove();
-    else if (action === 'resend') {
-      userInput.value = currentContextMessage.text;
-      sendMessage();
-    }
-    contextMenu.classList.remove('visible');
-  }
-});
 
 async function loadChatHistory() {
   messagesEl.innerHTML = '<div class="message ai"><div class="message-bubble">... جارٍ التحميل ...</div></div>';
@@ -542,77 +246,20 @@ async function loadChatHistory() {
   }
 }
 
-function createStepsContainer() {
-  const container = document.createElement('div');
-  container.className = 'steps-container';
-  return container;
-}
-
-function addStep(container, title, detail) {
-  const step = document.createElement('div');
-  step.className = 'step running';
-  step.innerHTML = `
-    <div class="step-icon">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
-    </div>
-    <div class="step-content">
-      <div class="step-title">${title}</div>
-      <div class="step-status">جارية...</div>
-      ${detail ? `<div class="step-detail">${detail}</div>` : ''}
-    </div>
-  `;
-  step.addEventListener('click', () => step.classList.toggle('open'));
-  container.appendChild(step);
-  return step;
-}
-
-function updateStep(step, status, detail) {
-  step.classList.remove('running', 'done', 'failed');
-  
-  if (status === 'done') {
-    step.classList.add('done');
-    step.querySelector('.step-icon').innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-    step.querySelector('.step-status').textContent = 'تم';
-  } else if (status === 'failed') {
-    step.classList.add('failed');
-    step.querySelector('.step-icon').innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-    step.querySelector('.step-status').textContent = 'فشل';
-  } else {
-    step.classList.add('running');
-    step.querySelector('.step-status').textContent = 'جارية...';
-  }
-  
-  if (detail) {
-    let detailEl = step.querySelector('.step-detail');
-    if (!detailEl) {
-      detailEl = document.createElement('div');
-      detailEl.className = 'step-detail';
-      step.querySelector('.step-content').appendChild(detailEl);
-    }
-    detailEl.textContent = detail;
-  }
-}
-
 async function sendMessage() {
   const text = userInput.value.trim();
   if (!text) return;
   
   addMessage(text, 'user');
   userInput.value = '';
-  charCount.textContent = '0/4000';
   sendBtn.disabled = true;
   
-  const msgDiv = document.createElement('div');
-  msgDiv.className = 'message ai';
-  const bubble = document.createElement('div');
-  bubble.className = 'message-bubble';
-  const stepsContainer = createStepsContainer();
-  bubble.appendChild(stepsContainer);
-  msgDiv.appendChild(bubble);
-  messagesEl.appendChild(msgDiv);
+  const loadingDiv = document.createElement('div');
+  loadingDiv.className = 'message ai';
+  loadingDiv.id = 'loading-msg';
+  loadingDiv.innerHTML = '<div class="message-bubble">...</div>';
+  messagesEl.appendChild(loadingDiv);
   messagesEl.scrollTop = messagesEl.scrollHeight;
-  
-  const step1 = addStep(stepsContainer, 'تحليل الطلب');
   
   try {
     const response = await fetch(WORKER_URL, {
@@ -626,85 +273,27 @@ async function sendMessage() {
     });
     
     const data = await response.json();
-    updateStep(step1, 'done');
+    document.getElementById('loading-msg')?.remove();
     
-    if (data.waiting) {
-      const step2 = addStep(stepsContainer, 'إرسال الأمر إلى GitHub', data.command);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      updateStep(step2, 'done', data.command);
-      
-      const step3 = addStep(stepsContainer, 'التنفيذ في الطرفية');
-      pollForResult(stepsContainer, step3, bubble);
-    } else if (data.response) {
-      const finalText = document.createElement('div');
-      finalText.style.marginTop = '10px';
-      finalText.textContent = data.response;
-      bubble.appendChild(finalText);
+    if (data.response) {
+      addMessage(data.response, 'ai');
+    } else if (data.error) {
+      addMessage('خطأ: ' + data.error, 'ai');
     }
   } catch (error) {
-    updateStep(step1, 'failed', error.message);
+    document.getElementById('loading-msg')?.remove();
+    addMessage('عذرًا، حدث خطأ في الاتصال.', 'ai');
   }
   
   sendBtn.disabled = false;
 }
 
-async function pollForResult(stepsContainer, step3, bubble) {
-  let attempts = 0;
-  const maxAttempts = 30;
-  
-  const pollInterval = setInterval(async () => {
-    attempts++;
-    
-    try {
-      const response = await fetch(WORKER_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'check_result', chatId: currentChatId })
-      });
-      
-      const data = await response.json();
-      
-      if (data.result && data.result.output) {
-        clearInterval(pollInterval);
-        updateStep(step3, 'done', data.result.output);
-        
-        const step4 = addStep(stepsContainer, 'تحليل النتيجة');
-        
-        const processResponse = await fetch(WORKER_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'process_result', chatId: currentChatId })
-        });
-        
-        const processData = await processResponse.json();
-        
-        if (processData.response) {
-          updateStep(step4, 'done', processData.response);
-          const finalText = document.createElement('div');
-          finalText.style.marginTop = '10px';
-          finalText.textContent = processData.response;
-          bubble.appendChild(finalText);
-        }
-      } else if (attempts >= maxAttempts) {
-        clearInterval(pollInterval);
-        updateStep(step3, 'failed', 'انتهت المهلة');
-      }
-    } catch (error) {
-      clearInterval(pollInterval);
-      updateStep(step3, 'failed', error.message);
-    }
-  }, 5000);
-}
-
 sendBtn.addEventListener('click', sendMessage);
 userInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter') {
     e.preventDefault();
     sendMessage();
   }
-});
-userInput.addEventListener('input', () => {
-  charCount.textContent = userInput.value.length + '/4000';
 });
 
 renderChatList();
