@@ -1,6 +1,5 @@
 export default {
   async fetch(request, env) {
-    // معالجة CORS للسماح للواجهة بالاتصال
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         headers: {
@@ -11,18 +10,53 @@ export default {
       });
     }
 
-    // فقط POST مسموح
     if (request.method !== 'POST') {
       return new Response('Method not allowed', { status: 405 });
     }
 
     try {
-      const { messages } = await request.json();
+      const body = await request.json();
+      const { action, chatId, messages } = body;
 
-      // استدعاء Gemini API
-      const geminiResponse = await callGemini(env.GEMINI_API_KEY, messages);
+      if (action === 'save') {
+        await saveMessage(env.DB, chatId, messages[messages.length - 1]);
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
 
-      return new Response(JSON.stringify({ response: geminiResponse }), {
+      if (action === 'load') {
+        const history = await loadChat(env.DB, chatId);
+        return new Response(JSON.stringify({ messages: history }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+
+      if (action === 'chat') {
+        const history = await loadChat(env.DB, chatId);
+        const allMessages = [...history, ...messages];
+
+        const geminiResponse = await callGemini(env.GEMINI_API_KEY, allMessages);
+
+        await saveMessage(env.DB, chatId, { role: 'user', content: messages[messages.length - 1].content });
+        await saveMessage(env.DB, chatId, { role: 'ai', content: geminiResponse });
+
+        return new Response(JSON.stringify({ response: geminiResponse }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+
+      return new Response(JSON.stringify({ error: 'Invalid action' }), {
+        status: 400,
         headers: {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*',
@@ -41,7 +75,6 @@ export default {
 };
 
 async function callGemini(apiKey, messages) {
-  // تحويل رسائل FOX AI إلى صيغة Gemini
   const contents = messages.map(msg => ({
     role: msg.role === 'user' ? 'user' : 'model',
     parts: [{ text: msg.content }],
@@ -64,8 +97,19 @@ async function callGemini(apiKey, messages) {
     throw new Error(data.error?.message || 'Gemini API error');
   }
 
-  // استخراج الرد
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'لا يوجد رد';
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || 'لا يوجد رد';
+}
 
-  return text;
+async function saveMessage(db, chatId, message) {
+  await db.prepare(
+    'INSERT INTO messages (chat_id, role, content, created_at) VALUES (?, ?, ?, ?)'
+  ).bind(chatId, message.role, message.content, new Date().toISOString()).run();
+}
+
+async function loadChat(db, chatId) {
+  const result = await db.prepare(
+    'SELECT role, content FROM messages WHERE chat_id = ? ORDER BY id ASC'
+  ).bind(chatId).all();
+
+  return result.results || [];
 }
