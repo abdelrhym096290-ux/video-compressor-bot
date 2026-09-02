@@ -100,20 +100,50 @@ export default {
       }
 
       const selectedProvider = provider || 'gemini';
+      const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+      const userText = lastUserMessage?.content || '';
 
-      let responseText;
+      if (!userText) {
+        return new Response(JSON.stringify({ error: 'لا توجد رسالة مستخدم' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
+
+      // 1) قراءة الذاكرة الحالية من D1
+      let currentMemory = '';
+      try {
+        const memResult = await env.DB.prepare(
+          'SELECT content FROM project_memory WHERE chat_id = ?'
+        ).bind(chatId).first();
+        currentMemory = memResult?.content || '';
+      } catch (dbError) {
+        console.error('D1 read memory error (non-fatal):', dbError.message);
+      }
+
+      // 2) بناء السياق المختصر: الذاكرة + آخر رسالة فقط
+      const contextMessages = [];
+      if (currentMemory) {
+        contextMessages.push({
+          role: 'system',
+          content: `أنت مساعد ذكي. هذه وثيقة مشروعك الحية (ذاكرتك الدائمة للمحادثة). استخدمها كسياق لفهم ما سبق. بعد الرد، ستُحدّثها بمعلومات جديدة.\n\n${currentMemory}`
+        });
+      }
+      contextMessages.push({ role: 'user', content: userText });
+
+      // 3) استدعاء النموذج المختار
+      let rawResponse = '';
 
       if (selectedProvider === 'gemini') {
         if (!env.GEMINI_API_KEY) {
-          console.error('GEMINI_API_KEY is not set on this worker');
-          return new Response(JSON.stringify({ error: 'GEMINI_API_KEY غير معرّف في إعدادات الـ Worker. شغّل: wrangler secret put GEMINI_API_KEY' }), {
+          return new Response(JSON.stringify({ error: 'GEMINI_API_KEY غير معرّف في إعدادات الـ Worker.' }), {
             status: 500,
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         }
-        responseText = await callGemini(env.GEMINI_API_KEY, messages);
+        rawResponse = await callGemini(env.GEMINI_API_KEY, contextMessages);
       } else if (WORKERS_AI_MODELS[selectedProvider]) {
-        responseText = await callWorkersAI(env, selectedProvider, messages);
+        rawResponse = await callWorkersAI(env, selectedProvider, contextMessages);
       } else {
         return new Response(JSON.stringify({ error: `مزود غير مدعوم: ${selectedProvider}` }), {
           status: 400,
@@ -121,23 +151,20 @@ export default {
         });
       }
 
-      // تحديث الذاكرة تلقائياً بعد كل رد
-      let memoryContent = '';
+      // 4) تحديث الذاكرة — باستدعاء منفصل (أبسط وأضمن)
+      let updatedMemory = '';
       try {
-        const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
-        memoryContent = await updateMemory(
-          env,
-          chatId,
-          lastUserMessage?.content || '',
-          responseText
-        );
+        updatedMemory = await updateMemory(env, chatId, userText, rawResponse);
+        if (!updatedMemory) updatedMemory = currentMemory;
       } catch (memoryError) {
         console.error('Memory update failed (non-fatal):', memoryError.message);
+        updatedMemory = currentMemory;
       }
 
+      // 5) إرجاع الرد + الذاكرة
       return new Response(JSON.stringify({
-        response: responseText,
-        memory: memoryContent
+        response: rawResponse,
+        memory: updatedMemory
       }), {
         headers: { 'Content-Type': 'application/json', ...CORS },
       });
@@ -161,12 +188,15 @@ const WORKERS_AI_MODELS = {
 };
 
 async function callGemini(apiKey, messages) {
-  const contents = messages.map(m => ({
-    role: m.role === 'user' ? 'user' : 'model',
-    parts: [{ text: m.content }],
-  }));
+  const contents = messages.map(m => {
+    const role = m.role === 'user' ? 'user' : 'model';
+    return {
+      role: role,
+      parts: [{ text: m.content }],
+    };
+  });
 
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent';
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
   const response = await fetch(url, {
     method: 'POST',
@@ -211,7 +241,7 @@ async function callWorkersAI(env, provider, messages) {
       model,
       {
         messages: messages.map(m => ({
-          role: m.role,
+          role: m.role === 'system' ? 'system' : m.role,
           content: m.content,
         })),
         max_tokens: 4096,
@@ -243,15 +273,13 @@ async function updateMemory(env, chatId, userMessage, aiResponse) {
   if (!chatId || !userMessage || !aiResponse) return '';
 
   try {
-    // قراءة الذاكرة الحالية
     const existing = await env.DB.prepare(
       'SELECT content FROM project_memory WHERE chat_id = ?'
     ).bind(chatId).first();
 
     const currentMemory = existing?.content || '';
 
-    // بناء prompt لتحديث الوثيقة
-    const memoryPrompt = `أنت مساعد ذكي يدير وثيقة مشروع حية. مهمتك دمج المعلومات الجديدة في الوثيقة الحالية.
+    const memoryPrompt = `أنت مدير وثيقة مشروع حية. دمج المعلومات الجديدة في الوثيقة الحالية.
 
 الوثيقة الحالية:
 ${currentMemory || '(فارغة - هذه أول رسالة)'}
@@ -259,12 +287,11 @@ ${currentMemory || '(فارغة - هذه أول رسالة)'}
 آخر رسالة من المستخدم:
 ${userMessage}
 
-ردك الأخير:
+رد المساعد:
 ${aiResponse}
 
-أعد كتابة الوثيقة الكاملة كنص Markdown محدث. أضف المعلومات الجديدة، حدّث القديم، واحذف ما لم يعد مهماً. حافظ على تنظيم واضح. أعد الوثيقة فقط بدون أي مقدمات.`;
+أعد كتابة الوثيقة الكاملة كنص Markdown محدث. أضف المعلومات الجديدة، حدّث القديم، واحذف ما لم يعد مهماً. أعد الوثيقة فقط بدون أي مقدمات.`;
 
-    // استدعاء Workers AI لتحديث الوثيقة
     const response = await env.AI.run(
       '@cf/qwen/qwen2.5-coder-32b-instruct',
       {
@@ -276,7 +303,6 @@ ${aiResponse}
     const updatedContent = response.response || '';
     if (!updatedContent) return currentMemory;
 
-    // حفظ الوثيقة المحدثة
     await env.DB.prepare(
       `INSERT INTO project_memory (chat_id, content, updated_at)
        VALUES (?, ?, ?)
