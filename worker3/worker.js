@@ -178,28 +178,28 @@ export default {
   },
 };
 
-// ============ 15 نموذجاً ============
+// ============ 15 نموذجاً محدثاً (سبتمبر 2026) ============
 const WORKERS_AI_MODELS = {
-  // --- نماذج الكود والبرمجة ---
+  // --- الأفضل للبرمجة ---
+  'cf-glm-flash': '@cf/zai-org/glm-4.7-flash',
+  'cf-qwen3-coder': '@cf/qwen/qwen3.8-27b',
   'cf-coder': '@cf/qwen/qwen2.5-coder-32b-instruct',
-  'cf-qwen3-coder': '@cf/qwen/qwen3-coder-30b-a3b-instruct',
+  'cf-qwen3': '@cf/qwen/qwen3-30b-a3b-fp8',
+  'cf-gpt-oss-20b': '@cf/openai/gpt-oss-20b',
+
+  // --- الأقوى للتفكير والمنطق ---
+  'cf-gemma-4': '@cf/google/gemma-4-26b-a4b-it',
+  'cf-nemotron': '@cf/nvidia/nemotron-3-120b-a12b',
+  'cf-gpt-oss-120b': '@cf/openai/gpt-oss-120b',
   'cf-deepseek-r1': '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
   'cf-qwq': '@cf/qwen/qwq-32b',
-  'cf-gpt-oss': '@cf/openai/gpt-oss-20b',
 
-  // --- نماذج عامة قوية ---
-  'cf-qwen3': '@cf/qwen/qwen3-30b-a3b-fp8',
-  'cf-llama-3': '@cf/meta/llama-3.1-8b-instruct',
+  // --- نماذج عامة ورؤية ---
   'cf-llama-4': '@cf/meta/llama-4-scout-17b-16e-instruct',
-  'cf-mistral': '@cf/mistral/mistral-7b-instruct-v0.2',
-  'cf-gemma': '@cf/google/gemma-2-27b-it',
-
-  // --- نماذج متخصصة ---
-  'cf-coder-small': '@cf/qwen/qwen2.5-coder-7b-instruct',
-  'cf-phi': '@cf/microsoft/phi-4-mini-instruct',
-  'cf-flux': '@cf/qwen/qwen2.5-72b-instruct',
-  'cf-nemotron': '@cf/nvidia/llama-3.1-nemotron-70b-instruct',
-  'cf-command': '@cf/cohere/command-r-plus',
+  'cf-mistral': '@cf/mistralai/mistral-small-3.1-24b-instruct',
+  'cf-llama-70b': '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+  'cf-llama-vision': '@cf/meta/llama-3.2-11b-vision-instruct',
+  'cf-granite': '@cf/ibm-granite/granite-4.0-h-micro',
 };
 
 async function callGemini(apiKey, messages) {
