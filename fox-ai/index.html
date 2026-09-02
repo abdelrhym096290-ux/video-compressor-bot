@@ -106,6 +106,14 @@
   .memory-toggle-btn:active{ background:var(--accent-soft); }
   .memory-toggle-btn.active{ color:var(--accent); }
 
+  #usage-panel{
+    display:none; flex-shrink:0; border-top:1px solid var(--border);
+    padding:12px 14px; background:var(--sidebar-bg); max-height:35vh;
+    overflow-y:auto; -webkit-overflow-scrolling:touch;
+  }
+  #usage-panel.open{ display:block; }
+  .usage-content{ font-size:13px; color:var(--text); white-space:pre-wrap; line-height:1.7; }
+
   #memory-panel{
     display:none; flex-shrink:0; border-top:1px solid var(--border);
     padding:12px 14px; background:var(--sidebar-bg); max-height:35vh;
@@ -231,7 +239,6 @@
   #send-btn:disabled{ opacity:.4; cursor:not-allowed; }
   #send-btn.generating{ background:var(--text-soft); }
 
-  /* ============ شاشة القفل ============ */
   #lock-screen{
     position:fixed; inset:0; background:var(--bg); z-index:100;
     display:flex; align-items:center; justify-content:center; flex-direction:column; gap:16px;
@@ -256,7 +263,6 @@
 </head>
 <body>
 
-<!-- شاشة القفل -->
 <div id="lock-screen">
   <div class="lock-box">
     <div class="logo-mark" style="margin:0 auto 12px; width:32px; height:32px; font-size:16px;">F</div>
@@ -289,6 +295,9 @@
     </button>
     <strong>FOX AI</strong>
     <select id="modelSelect" class="model-select" title="اختيار النموذج"></select>
+    <button class="memory-toggle-btn" id="usage-toggle-btn" type="button" title="الاستهلاك">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+    </button>
     <button class="memory-toggle-btn" id="memory-toggle-btn" type="button" title="ذاكرة المشروع">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
     </button>
@@ -300,6 +309,17 @@
 
   <div id="messages"></div>
 
+  <div id="usage-panel">
+    <div class="memory-header">
+      <span>استهلاك Workers AI اليوم</span>
+      <button class="icon-square-btn" id="usage-close-btn" type="button" aria-label="إغلاق">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="usage-content" class="usage-content">اضغط تحديث...</div>
+    <button class="memory-save-btn" id="usage-load-btn" type="button">تحديث</button>
+  </div>
+
   <div id="memory-panel">
     <div class="memory-header">
       <span>ذاكرة المشروع</span>
@@ -307,7 +327,7 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
-    <textarea id="memory-content" placeholder="لا توجد ذاكرة بعد. ابدأ محادثة وسيتم إنشاؤها تلقائياً..."></textarea>
+    <textarea id="memory-content" placeholder="لا توجد ذاكرة بعد..."></textarea>
     <button class="memory-save-btn" id="memory-save-btn" type="button">حفظ</button>
   </div>
 
@@ -354,6 +374,11 @@ const lockScreen = document.getElementById('lock-screen');
 const lockInput = document.getElementById('lock-input');
 const lockBtn = document.getElementById('lock-btn');
 const lockError = document.getElementById('lock-error');
+const usageToggleBtn = document.getElementById('usage-toggle-btn');
+const usageCloseBtn = document.getElementById('usage-close-btn');
+const usagePanel = document.getElementById('usage-panel');
+const usageContent = document.getElementById('usage-content');
+const usageLoadBtn = document.getElementById('usage-load-btn');
 
 /* ============ كلمة المرور ============ */
 let accessPassword = localStorage.getItem('fox-pass') || '';
@@ -453,6 +478,51 @@ modelSelect.addEventListener('change', function(){
   localStorage.setItem('fox-model', modelSelect.value);
   updateModelDesc();
 });
+
+/* ============ لوحة الاستهلاك ============ */
+
+usageToggleBtn.addEventListener('click', function(){
+  usagePanel.classList.toggle('open');
+  usageToggleBtn.classList.toggle('active');
+  if (usagePanel.classList.contains('open')) {
+    loadUsage();
+  }
+});
+
+usageCloseBtn.addEventListener('click', function(){
+  usagePanel.classList.remove('open');
+  usageToggleBtn.classList.remove('active');
+});
+
+usageLoadBtn.addEventListener('click', loadUsage);
+
+async function loadUsage(){
+  usageContent.textContent = 'جاري التحميل...';
+  try {
+    const response = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'usage',
+        accessPassword: accessPassword
+      })
+    });
+    const data = await response.json();
+    if (data.error) throw new Error(data.error);
+
+    let html = '';
+    html += 'إجمالي الطلبات: ' + data.totals.requests + '\n';
+    html += 'إجمالي التوكنات: ' + data.totals.tokens + '\n\n';
+    html += 'حسب النموذج:\n';
+    Object.keys(data.byModel).forEach(function(model){
+      html += '• ' + model + ': ' + data.byModel[model].requests + ' طلب\n';
+    });
+    if (data.note) html += '\n' + data.note;
+    usageContent.textContent = html;
+  } catch (error) {
+    usageContent.textContent = 'خطأ: ' + error.message;
+  }
+}
 
 /* ============ الذاكرة ============ */
 
