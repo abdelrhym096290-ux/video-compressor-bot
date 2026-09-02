@@ -350,7 +350,6 @@ async function getUsageFromGateway(env) {
             count
             dimensions {
               datetimeHour
-              modelName
               statusCode
             }
             sum {
@@ -382,18 +381,10 @@ async function getUsageFromGateway(env) {
 
   let totalRequests = 0;
   let totalTokens = 0;
-  const modelStats = {};
 
   groups.forEach(function(g) {
-    const reqs = g.sum?.requests || 0;
-    const toks = g.sum?.tokens || 0;
-    totalRequests += reqs;
-    totalTokens += toks;
-
-    const model = g.dimensions?.modelName || 'unknown';
-    if (!modelStats[model]) modelStats[model] = { requests: 0, tokens: 0 };
-    modelStats[model].requests += reqs;
-    modelStats[model].tokens += toks;
+    totalRequests += g.sum?.requests || 0;
+    totalTokens += g.sum?.tokens || 0;
   });
 
   return {
@@ -402,7 +393,6 @@ async function getUsageFromGateway(env) {
       requests: totalRequests,
       tokens: totalTokens,
     },
-    byModel: modelStats,
     note: 'الاستهلاك الفعلي بوحدة Neurons قد يظهر هنا حسب توفر الحقل في مخطط GraphQL'
   };
 }
