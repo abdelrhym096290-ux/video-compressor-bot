@@ -84,6 +84,15 @@ async function callGemini(apiKey, messages) {
 
   if (!response.ok) {
     console.error('Gemini API error:', JSON.stringify(data));
+    if (response.status === 429) {
+      // try to read Google's suggested retry delay if it sent one
+      const retryDetail = data.error?.details?.find(d => d['@type']?.includes('RetryInfo'));
+      const retrySeconds = retryDetail?.retryDelay ? parseInt(retryDetail.retryDelay) : null;
+      throw new Error(
+        'تم تجاوز الحد المجاني المسموح به من Google للنموذج حاليًا. ' +
+        (retrySeconds ? ('حاول مرة أخرى خلال ' + retrySeconds + ' ثانية.') : 'حاول مرة أخرى بعد قليل، أو فعّل الفوترة في مشروع Google Cloud لرفع الحد المسموح.')
+      );
+    }
     throw new Error(data.error?.message || ('Gemini API error (status ' + response.status + ')'));
   }
 
