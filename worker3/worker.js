@@ -92,6 +92,16 @@ export default {
         }
       }
 
+      // ============ USAGE (عداد الحصة) ============
+      if (action === 'usage') {
+        return new Response(JSON.stringify({
+          message: 'عداد الحصة الدقيق يتطلب GraphQL Analytics API وسيُضاف لاحقاً',
+          gateway: 'fox-gateway'
+        }), {
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
+
       // ============ CHAT ============
       if (action !== 'chat') {
         return new Response(JSON.stringify({ error: 'Invalid action' }), {
@@ -268,7 +278,8 @@ async function callWorkersAI(env, provider, messages) {
           content: m.content,
         })),
         max_tokens: 4096,
-      }
+      },
+      { gateway: { id: 'fox-gateway' } }
     );
 
     const content =
@@ -320,7 +331,8 @@ ${aiResponse}
       {
         messages: [{ role: 'user', content: memoryPrompt }],
         max_tokens: 2000,
-      }
+      },
+      { gateway: { id: 'fox-gateway' } }
     );
 
     const updatedContent = response.response || '';
