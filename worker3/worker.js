@@ -329,7 +329,6 @@ async function updateMemory(env, chatId, userMessage, aiResponse) {
 
 async function getUsageFromGateway(env) {
   const ACCOUNT_ID = '83880c2ae9ec32b24fc954ea8dd57d6d';
-  const GATEWAY_NAME = 'fox-gateway';
 
   const now = new Date();
   const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -344,7 +343,6 @@ async function getUsageFromGateway(env) {
             filter: {
               datetimeHour_geq: "${startISO}"
               datetimeHour_leq: "${endISO}"
-              gatewayId: "${GATEWAY_NAME}"
             }
             limit: 1000
             orderBy: [datetimeHour_DESC]
@@ -399,7 +397,6 @@ async function getUsageFromGateway(env) {
   });
 
   return {
-    gateway: GATEWAY_NAME,
     period: { from: startISO, to: endISO },
     totals: {
       requests: totalRequests,
