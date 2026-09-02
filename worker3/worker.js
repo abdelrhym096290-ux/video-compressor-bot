@@ -25,7 +25,6 @@ export default {
       const { action, messages, provider, chatId, content, accessPassword } = body;
       console.log('FOX AI request:', action, 'messages:', messages?.length, 'provider:', provider, 'chatId:', chatId);
 
-      // ============ تحقق كلمة المرور ============
       if (accessPassword !== env.ACCESS_PASSWORD) {
         return new Response(JSON.stringify({ error: 'كلمة المرور غير صحيحة', authRequired: true }), {
           status: 401,
@@ -33,7 +32,6 @@ export default {
         });
       }
 
-      // ============ GET MEMORY ============
       if (action === 'get_memory') {
         if (!chatId) {
           return new Response(JSON.stringify({ error: 'chatId مطلوب' }), {
@@ -61,7 +59,6 @@ export default {
         }
       }
 
-      // ============ MEMORY UPDATE (يدوي) ============
       if (action === 'memory_update') {
         if (!chatId) {
           return new Response(JSON.stringify({ error: 'chatId مطلوب' }), {
@@ -92,7 +89,6 @@ export default {
         }
       }
 
-      // ============ USAGE ============
       if (action === 'usage') {
         try {
           const usageData = await getUsageFromGateway(env);
@@ -108,7 +104,6 @@ export default {
         }
       }
 
-      // ============ CHAT ============
       if (action !== 'chat') {
         return new Response(JSON.stringify({ error: 'Invalid action' }), {
           status: 400,
@@ -345,17 +340,8 @@ async function getUsageFromGateway(env) {
               datetimeHour_leq: "${endISO}"
             }
             limit: 1000
-            orderBy: [datetimeHour_DESC]
           ) {
             count
-            dimensions {
-              datetimeHour
-              statusCode
-            }
-            sum {
-              requests
-              tokens
-            }
           }
         }
       }
@@ -380,19 +366,16 @@ async function getUsageFromGateway(env) {
   const groups = data.data?.viewer?.accounts?.[0]?.aiGatewayRequestsAdaptiveGroups || [];
 
   let totalRequests = 0;
-  let totalTokens = 0;
 
   groups.forEach(function(g) {
-    totalRequests += g.sum?.requests || 0;
-    totalTokens += g.sum?.tokens || 0;
+    totalRequests += g.count || 0;
   });
 
   return {
     period: { from: startISO, to: endISO },
     totals: {
       requests: totalRequests,
-      tokens: totalTokens,
     },
-    note: 'الاستهلاك الفعلي بوحدة Neurons قد يظهر هنا حسب توفر الحقل في مخطط GraphQL'
+    note: 'عدد الطلبات المسجلة عبر AI Gateway اليوم'
   };
 }
