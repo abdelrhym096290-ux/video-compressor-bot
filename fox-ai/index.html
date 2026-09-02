@@ -101,7 +101,7 @@
   .memory-toggle-btn{
     background:none; border:none; color:var(--text-soft); cursor:pointer;
     padding:7px; border-radius:8px; display:flex; align-items:center; justify-content:center;
-    flex-shrink:0; font-size:16px;
+    flex-shrink:0;
   }
   .memory-toggle-btn:active{ background:var(--accent-soft); }
   .memory-toggle-btn.active{ color:var(--accent); }
@@ -230,9 +230,42 @@
   }
   #send-btn:disabled{ opacity:.4; cursor:not-allowed; }
   #send-btn.generating{ background:var(--text-soft); }
+
+  /* ============ شاشة القفل ============ */
+  #lock-screen{
+    position:fixed; inset:0; background:var(--bg); z-index:100;
+    display:flex; align-items:center; justify-content:center; flex-direction:column; gap:16px;
+  }
+  .lock-box{
+    background:var(--bubble-ai); border:1px solid var(--border); border-radius:16px;
+    padding:24px 20px; width:300px; max-width:90vw; text-align:center;
+  }
+  .lock-box h2{ font-size:17px; margin-bottom:16px; color:var(--text); }
+  .lock-input{
+    width:100%; padding:10px 14px; background:var(--input-bg); color:var(--text);
+    border:1px solid var(--border); border-radius:10px; font-size:15px; outline:none;
+    text-align:center; font-family:inherit;
+  }
+  .lock-input:focus{ border-color:var(--accent); }
+  .lock-btn{
+    width:100%; margin-top:12px; padding:10px; background:var(--accent); border:none;
+    border-radius:10px; color:#fff; cursor:pointer; font-size:14px; font-weight:500;
+  }
+  .lock-error{ font-size:12.5px; color:#d33; margin-top:8px; display:none; }
 </style>
 </head>
 <body>
+
+<!-- شاشة القفل -->
+<div id="lock-screen">
+  <div class="lock-box">
+    <div class="logo-mark" style="margin:0 auto 12px; width:32px; height:32px; font-size:16px;">F</div>
+    <h2>أدخل كلمة المرور</h2>
+    <input type="password" id="lock-input" class="lock-input" placeholder="••••••••" autocomplete="off">
+    <button id="lock-btn" class="lock-btn" type="button">دخول</button>
+    <div id="lock-error" class="lock-error">كلمة المرور غير صحيحة</div>
+  </div>
+</div>
 
 <div id="backdrop"></div>
 
@@ -256,7 +289,9 @@
     </button>
     <strong>FOX AI</strong>
     <select id="modelSelect" class="model-select" title="اختيار النموذج"></select>
-    <button class="memory-toggle-btn" id="memory-toggle-btn" type="button" title="ذاكرة المشروع">📝</button>
+    <button class="memory-toggle-btn" id="memory-toggle-btn" type="button" title="ذاكرة المشروع">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
+    </button>
     <button class="icon-square-btn" id="header-new-btn" type="button" aria-label="محادثة جديدة">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
     </button>
@@ -267,7 +302,7 @@
 
   <div id="memory-panel">
     <div class="memory-header">
-      <span>📝 ذاكرة المشروع</span>
+      <span>ذاكرة المشروع</span>
       <button class="icon-square-btn" id="memory-close-btn" type="button" aria-label="إغلاق">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -315,31 +350,78 @@ const memoryCloseBtn = document.getElementById('memory-close-btn');
 const memoryPanel = document.getElementById('memory-panel');
 const memoryContent = document.getElementById('memory-content');
 const memorySaveBtn = document.getElementById('memory-save-btn');
+const lockScreen = document.getElementById('lock-screen');
+const lockInput = document.getElementById('lock-input');
+const lockBtn = document.getElementById('lock-btn');
+const lockError = document.getElementById('lock-error');
 
-/* ============ 16 نموذجاً مع الشعارات والوصف ============ */
+/* ============ كلمة المرور ============ */
+let accessPassword = localStorage.getItem('fox-pass') || '';
+
+lockBtn.addEventListener('click', verifyPassword);
+lockInput.addEventListener('keydown', function(e){
+  if (e.key === 'Enter') verifyPassword();
+});
+
+function verifyPassword(){
+  const entered = lockInput.value.trim();
+  if (!entered) return;
+  accessPassword = entered;
+  localStorage.setItem('fox-pass', entered);
+  checkPassword();
+}
+
+async function checkPassword(){
+  try {
+    const response = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'get_memory',
+        chatId: 'auth-check',
+        accessPassword: accessPassword
+      })
+    });
+    const data = await response.json();
+    if (data.authRequired) {
+      lockError.style.display = 'block';
+      localStorage.removeItem('fox-pass');
+      accessPassword = '';
+      lockInput.value = '';
+      lockInput.focus();
+    } else {
+      lockScreen.style.display = 'none';
+    }
+  } catch (error) {
+    lockError.style.display = 'block';
+  }
+}
+
+if (accessPassword) {
+  checkPassword();
+} else {
+  lockScreen.style.display = 'flex';
+  lockInput.focus();
+}
+
+/* ============ النماذج ============ */
 const PROVIDERS = [
-  { value: 'gemini', label: '✳️ Gemini', desc: 'Google — عام سريع، حصة منفصلة 20/يوم' },
-
-  // --- الأفضل للبرمجة ---
-  { value: 'cf-glm-flash', label: '⚡ GLM 4.7 Flash', desc: 'Z.ai — أفضل للبرمجة + Agents + سياق 131K' },
-  { value: 'cf-qwen3-coder', label: '🅀 Qwen3.8 27B', desc: 'Alibaba — برمجة + رؤية + سياق 262K' },
-  { value: 'cf-coder', label: '🅀 Qwen Coder 32B', desc: 'Alibaba — كود معقد + سياق 32K' },
-  { value: 'cf-qwen3', label: '🅀 Qwen3 30B', desc: 'Alibaba — برمجة + متعدد اللغات' },
-  { value: 'cf-gpt-oss-20b', label: '🤖 GPT-OSS 20B', desc: 'OpenAI — كود + سرعة' },
-
-  // --- الأقوى للتفكير ---
-  { value: 'cf-gemma-4', label: '💎 Gemma 4 26B', desc: 'Google — تفكير + عملاء + رؤية' },
-  { value: 'cf-nemotron', label: '🖥️ Nemotron 3 120B', desc: 'NVIDIA — تفكير عميق + عملاء' },
-  { value: 'cf-gpt-oss-120b', label: '🤖 GPT-OSS 120B', desc: 'OpenAI — تفكير + برمجة + إنتاج' },
-  { value: 'cf-deepseek-r1', label: '🐋 DeepSeek R1', desc: 'DeepSeek — منطق + رياضيات + كود' },
-  { value: 'cf-qwq', label: '🦉 QwQ 32B', desc: 'Alibaba — تفكير عميق + رياضيات' },
-
-  // --- عامة ورؤية ---
-  { value: 'cf-llama-4', label: '🦙 Llama 4 Scout', desc: 'Meta — عام + رؤية' },
-  { value: 'cf-mistral', label: '🌬️ Mistral 24B', desc: 'Mistral AI — كتابة + برمجة + رؤية' },
-  { value: 'cf-llama-70b', label: '🦙 Llama 3.3 70B', desc: 'Meta — محادثة + كود قوي' },
-  { value: 'cf-llama-vision', label: '👁️ Llama Vision 11B', desc: 'Meta — تحليل صور + محادثة' },
-  { value: 'cf-granite', label: '⛰️ Granite 4.0', desc: 'IBM — Agents + RAG + خفيف سريع' },
+  { value: 'gemini', label: 'Gemini', desc: 'Google — عام سريع، حصة منفصلة 20/يوم' },
+  { value: 'cf-glm-flash', label: 'GLM 4.7 Flash', desc: 'Z.ai — برمجة + Agents + سياق 131K' },
+  { value: 'cf-qwen3-coder', label: 'Qwen3.8 27B', desc: 'Alibaba — برمجة + رؤية + سياق 262K' },
+  { value: 'cf-coder', label: 'Qwen Coder 32B', desc: 'Alibaba — كود معقد + سياق 32K' },
+  { value: 'cf-qwen3', label: 'Qwen3 30B', desc: 'Alibaba — برمجة + متعدد اللغات' },
+  { value: 'cf-gpt-oss-20b', label: 'GPT-OSS 20B', desc: 'OpenAI — كود + سرعة' },
+  { value: 'cf-gemma-4', label: 'Gemma 4 26B', desc: 'Google — تفكير + عملاء + رؤية' },
+  { value: 'cf-nemotron', label: 'Nemotron 3 120B', desc: 'NVIDIA — تفكير عميق + عملاء' },
+  { value: 'cf-gpt-oss-120b', label: 'GPT-OSS 120B', desc: 'OpenAI — تفكير + برمجة + إنتاج' },
+  { value: 'cf-deepseek-r1', label: 'DeepSeek R1', desc: 'DeepSeek — منطق + رياضيات + كود' },
+  { value: 'cf-qwq', label: 'QwQ 32B', desc: 'Alibaba — تفكير عميق + رياضيات' },
+  { value: 'cf-llama-4', label: 'Llama 4 Scout', desc: 'Meta — عام + رؤية' },
+  { value: 'cf-mistral', label: 'Mistral 24B', desc: 'Mistral AI — كتابة + برمجة + رؤية' },
+  { value: 'cf-llama-70b', label: 'Llama 3.3 70B', desc: 'Meta — محادثة + كود قوي' },
+  { value: 'cf-llama-vision', label: 'Llama Vision 11B', desc: 'Meta — تحليل صور + محادثة' },
+  { value: 'cf-granite', label: 'Granite 4.0', desc: 'IBM — Agents + RAG + خفيف سريع' },
 ];
 
 function initModelSelect(){
@@ -372,7 +454,7 @@ modelSelect.addEventListener('change', function(){
   updateModelDesc();
 });
 
-/* ============ MEMORY PANEL ============ */
+/* ============ الذاكرة ============ */
 
 memoryToggleBtn.addEventListener('click', function(){
   memoryPanel.classList.toggle('open');
@@ -396,7 +478,8 @@ async function loadMemory(){
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         action: 'get_memory',
-        chatId: currentChatId
+        chatId: currentChatId,
+        accessPassword: accessPassword
       })
     });
     const data = await response.json();
@@ -416,7 +499,8 @@ async function saveMemoryManually(){
       body: JSON.stringify({
         action: 'memory_update',
         chatId: currentChatId,
-        content: memoryContent.value
+        content: memoryContent.value,
+        accessPassword: accessPassword
       })
     });
     const data = await response.json();
@@ -467,7 +551,7 @@ if (localStorage.getItem('fox-theme') === 'dark') document.body.classList.add('d
 newChatBtn.addEventListener('click', createNewChat);
 headerNewBtn.addEventListener('click', createNewChat);
 
-/* ============ STATE / STORAGE ============ */
+/* ============ الحالة والتخزين ============ */
 
 let chats = JSON.parse(localStorage.getItem('fox-chats') || '[]');
 let currentChatId = localStorage.getItem('fox-current-chat');
@@ -520,7 +604,7 @@ function renderChatList(){
   });
 }
 
-/* ============ MARKDOWN RENDERER ============ */
+/* ============ MARKDOWN ============ */
 
 function escapeHtml(s){
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -637,7 +721,7 @@ function enhanceCodeBlocks(container){
   });
 }
 
-/* ============ MESSAGE RENDERING ============ */
+/* ============ عرض الرسائل ============ */
 
 function makeIconBtn(icon, title, onClick){
   const btn = document.createElement('button');
@@ -739,7 +823,7 @@ function showTyping(){
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-/* ============ SENDING ============ */
+/* ============ الإرسال ============ */
 
 function setGeneratingUI(active){
   isGenerating = active;
@@ -761,7 +845,8 @@ function requestAIResponse(chat){
       action: 'chat',
       chatId: currentChatId,
       provider: getSelectedProvider(),
-      messages: chat.messages.map(function(m){ return { role: m.role === 'user' ? 'user' : 'model', content: m.content }; })
+      messages: chat.messages.map(function(m){ return { role: m.role === 'user' ? 'user' : 'model', content: m.content }; }),
+      accessPassword: accessPassword
     }),
     signal: currentController.signal
   }).then(function(response){
@@ -821,7 +906,7 @@ function sendMessage(){
   requestAIResponse(chat);
 }
 
-/* ============ INITIAL RENDER ============ */
+/* ============ البداية ============ */
 
 initModelSelect();
 renderChatList();
