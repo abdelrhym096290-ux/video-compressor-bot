@@ -92,14 +92,20 @@ export default {
         }
       }
 
-      // ============ USAGE (عداد الحصة) ============
+      // ============ USAGE (عداد الحصة الدقيق) ============
       if (action === 'usage') {
-        return new Response(JSON.stringify({
-          message: 'عداد الحصة الدقيق يتطلب GraphQL Analytics API وسيُضاف لاحقاً',
-          gateway: 'fox-gateway'
-        }), {
-          headers: { 'Content-Type': 'application/json', ...CORS },
-        });
+        try {
+          const usageData = await getUsageFromGateway(env);
+          return new Response(JSON.stringify(usageData), {
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        } catch (usageError) {
+          console.error('Usage error:', usageError.message);
+          return new Response(JSON.stringify({ error: 'خطأ في جلب الاستهلاك: ' + usageError.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
       }
 
       // ============ CHAT ============
@@ -198,21 +204,16 @@ export default {
 
 // ============ 15 نموذجاً محدثاً (سبتمبر 2026) ============
 const WORKERS_AI_MODELS = {
-  // --- الأفضل للبرمجة ---
   'cf-glm-flash': '@cf/zai-org/glm-4.7-flash',
   'cf-qwen3-coder': '@cf/qwen/qwen3.8-27b',
   'cf-coder': '@cf/qwen/qwen2.5-coder-32b-instruct',
   'cf-qwen3': '@cf/qwen/qwen3-30b-a3b-fp8',
   'cf-gpt-oss-20b': '@cf/openai/gpt-oss-20b',
-
-  // --- الأقوى للتفكير والمنطق ---
   'cf-gemma-4': '@cf/google/gemma-4-26b-a4b-it',
   'cf-nemotron': '@cf/nvidia/nemotron-3-120b-a12b',
   'cf-gpt-oss-120b': '@cf/openai/gpt-oss-120b',
   'cf-deepseek-r1': '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
   'cf-qwq': '@cf/qwen/qwq-32b',
-
-  // --- نماذج عامة ورؤية ---
   'cf-llama-4': '@cf/meta/llama-4-scout-17b-16e-instruct',
   'cf-mistral': '@cf/mistralai/mistral-small-3.1-24b-instruct',
   'cf-llama-70b': '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
@@ -223,20 +224,14 @@ const WORKERS_AI_MODELS = {
 async function callGemini(apiKey, messages) {
   const contents = messages.map(m => {
     const role = m.role === 'user' ? 'user' : 'model';
-    return {
-      role: role,
-      parts: [{ text: m.content }],
-    };
+    return { role: role, parts: [{ text: m.content }] };
   });
 
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey,
-    },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify({ contents }),
   });
 
@@ -287,9 +282,7 @@ async function callWorkersAI(env, provider, messages) {
       response.choices?.[0]?.message?.content ||
       (typeof response === 'string' ? response : '');
 
-    if (!content) {
-      throw new Error('استجابة فارغة من النموذج');
-    }
+    if (!content) throw new Error('استجابة فارغة من النموذج');
 
     return content;
   } catch (error) {
@@ -313,25 +306,11 @@ async function updateMemory(env, chatId, userMessage, aiResponse) {
 
     const currentMemory = existing?.content || '';
 
-    const memoryPrompt = `أنت مدير وثيقة مشروع حية. دمج المعلومات الجديدة في الوثيقة الحالية.
-
-الوثيقة الحالية:
-${currentMemory || '(فارغة - هذه أول رسالة)'}
-
-آخر رسالة من المستخدم:
-${userMessage}
-
-رد المساعد:
-${aiResponse}
-
-أعد كتابة الوثيقة الكاملة كنص Markdown محدث. أضف المعلومات الجديدة، حدّث القديم، واحذف ما لم يعد مهماً. أعد الوثيقة فقط بدون أي مقدمات.`;
+    const memoryPrompt = `أنت مدير وثيقة مشروع حية. دمج المعلومات الجديدة في الوثيقة الحالية.\n\nالوثيقة الحالية:\n${currentMemory || '(فارغة - هذه أول رسالة)'}\n\nآخر رسالة من المستخدم:\n${userMessage}\n\nرد المساعد:\n${aiResponse}\n\nأعد كتابة الوثيقة الكاملة كنص Markdown محدث. أعد الوثيقة فقط بدون أي مقدمات.`;
 
     const response = await env.AI.run(
       '@cf/qwen/qwen2.5-coder-32b-instruct',
-      {
-        messages: [{ role: 'user', content: memoryPrompt }],
-        max_tokens: 2000,
-      },
+      { messages: [{ role: 'user', content: memoryPrompt }], max_tokens: 2000 },
       { gateway: { id: 'fox-gateway' } }
     );
 
@@ -352,4 +331,88 @@ ${aiResponse}
     console.error('updateMemory error:', error.message);
     return '';
   }
+}
+
+// ============ دالة جلب الاستهلاك من AI Gateway عبر GraphQL ============
+async function getUsageFromGateway(env) {
+  const ACCOUNT_ID = '83880c2ae9ec32b24fc954ea8dd57d6d';
+  const GATEWAY_NAME = 'fox-gateway';
+
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const startISO = startOfDay.toISOString();
+  const endISO = now.toISOString();
+
+  const query = `
+    query {
+      viewer {
+        accounts(filter: { accountTag: "${ACCOUNT_ID}" }) {
+          aiGatewayRequestsAdaptiveGroups(
+            filter: {
+              datetimeHour_geq: "${startISO}"
+              datetimeHour_leq: "${endISO}"
+              gatewayName: "${GATEWAY_NAME}"
+            }
+            limit: 1000
+            orderBy: [datetimeHour_DESC]
+          ) {
+            count
+            dimensions {
+              datetimeHour
+              modelName
+              statusCode
+            }
+            sum {
+              requests
+              tokens
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + env.CF_API_TOKEN,
+    },
+    body: JSON.stringify({ query }),
+  });
+
+  const data = await response.json();
+
+  if (data.errors) {
+    throw new Error(data.errors[0]?.message || 'GraphQL error');
+  }
+
+  const groups = data.data?.viewer?.accounts?.[0]?.aiGatewayRequestsAdaptiveGroups || [];
+
+  let totalRequests = 0;
+  let totalTokens = 0;
+  const modelStats = {};
+
+  groups.forEach(function(g) {
+    const reqs = g.sum?.requests || 0;
+    const toks = g.sum?.tokens || 0;
+    totalRequests += reqs;
+    totalTokens += toks;
+
+    const model = g.dimensions?.modelName || 'unknown';
+    if (!modelStats[model]) modelStats[model] = { requests: 0, tokens: 0 };
+    modelStats[model].requests += reqs;
+    modelStats[model].tokens += toks;
+  });
+
+  return {
+    gateway: GATEWAY_NAME,
+    period: { from: startISO, to: endISO },
+    totals: {
+      requests: totalRequests,
+      tokens: totalTokens,
+    },
+    byModel: modelStats,
+    note: 'الاستهلاك الفعلي بوحدة Neurons قد يظهر هنا حسب توفر الحقل في مخطط GraphQL'
+  };
 }
