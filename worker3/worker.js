@@ -22,9 +22,69 @@ export default {
 
     try {
       const body = await request.json();
-      const { action, messages, provider, chatId } = body;
-      console.log('FOX AI request:', action, 'messages:', messages?.length, 'provider:', provider);
+      const { action, messages, provider, chatId, content } = body;
+      console.log('FOX AI request:', action, 'messages:', messages?.length, 'provider:', provider, 'chatId:', chatId);
 
+      // ============ GET MEMORY ============
+      if (action === 'get_memory') {
+        if (!chatId) {
+          return new Response(JSON.stringify({ error: 'chatId مطلوب' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+
+        try {
+          const result = await env.DB.prepare(
+            'SELECT content FROM project_memory WHERE chat_id = ?'
+          ).bind(chatId).first();
+
+          return new Response(JSON.stringify({
+            content: result?.content || ''
+          }), {
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        } catch (dbError) {
+          console.error('D1 get_memory error:', dbError.message);
+          return new Response(JSON.stringify({ error: 'خطأ في قراءة الذاكرة: ' + dbError.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+      }
+
+      // ============ MEMORY UPDATE (يدوي) ============
+      if (action === 'memory_update') {
+        if (!chatId) {
+          return new Response(JSON.stringify({ error: 'chatId مطلوب' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+
+        try {
+          await env.DB.prepare(
+            `INSERT INTO project_memory (chat_id, content, updated_at)
+             VALUES (?, ?, ?)
+             ON CONFLICT(chat_id) DO UPDATE
+             SET content = ?, updated_at = ?`
+          )
+          .bind(chatId, content || '', Date.now(), content || '', Date.now())
+          .run();
+
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        } catch (dbError) {
+          console.error('D1 memory_update error:', dbError.message);
+          return new Response(JSON.stringify({ error: 'خطأ في حفظ الذاكرة: ' + dbError.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+      }
+
+      // ============ CHAT ============
       if (action !== 'chat') {
         return new Response(JSON.stringify({ error: 'Invalid action' }), {
           status: 400,
@@ -61,7 +121,24 @@ export default {
         });
       }
 
-      return new Response(JSON.stringify({ response: responseText }), {
+      // تحديث الذاكرة تلقائياً بعد كل رد
+      let memoryContent = '';
+      try {
+        const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+        memoryContent = await updateMemory(
+          env,
+          chatId,
+          lastUserMessage?.content || '',
+          responseText
+        );
+      } catch (memoryError) {
+        console.error('Memory update failed (non-fatal):', memoryError.message);
+      }
+
+      return new Response(JSON.stringify({
+        response: responseText,
+        memory: memoryContent
+      }), {
         headers: { 'Content-Type': 'application/json', ...CORS },
       });
     } catch (error) {
@@ -159,5 +236,59 @@ async function callWorkersAI(env, provider, messages) {
     }
 
     throw new Error(`خطأ من Workers AI (${provider}): ${error.message || 'خطأ غير معروف'}`);
+  }
+}
+
+async function updateMemory(env, chatId, userMessage, aiResponse) {
+  if (!chatId || !userMessage || !aiResponse) return '';
+
+  try {
+    // قراءة الذاكرة الحالية
+    const existing = await env.DB.prepare(
+      'SELECT content FROM project_memory WHERE chat_id = ?'
+    ).bind(chatId).first();
+
+    const currentMemory = existing?.content || '';
+
+    // بناء prompt لتحديث الوثيقة
+    const memoryPrompt = `أنت مساعد ذكي يدير وثيقة مشروع حية. مهمتك دمج المعلومات الجديدة في الوثيقة الحالية.
+
+الوثيقة الحالية:
+${currentMemory || '(فارغة - هذه أول رسالة)'}
+
+آخر رسالة من المستخدم:
+${userMessage}
+
+ردك الأخير:
+${aiResponse}
+
+أعد كتابة الوثيقة الكاملة كنص Markdown محدث. أضف المعلومات الجديدة، حدّث القديم، واحذف ما لم يعد مهماً. حافظ على تنظيم واضح. أعد الوثيقة فقط بدون أي مقدمات.`;
+
+    // استدعاء Workers AI لتحديث الوثيقة
+    const response = await env.AI.run(
+      '@cf/qwen/qwen2.5-coder-32b-instruct',
+      {
+        messages: [{ role: 'user', content: memoryPrompt }],
+        max_tokens: 2000,
+      }
+    );
+
+    const updatedContent = response.response || '';
+    if (!updatedContent) return currentMemory;
+
+    // حفظ الوثيقة المحدثة
+    await env.DB.prepare(
+      `INSERT INTO project_memory (chat_id, content, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(chat_id) DO UPDATE
+       SET content = ?, updated_at = ?`
+    )
+    .bind(chatId, updatedContent, Date.now(), updatedContent, Date.now())
+    .run();
+
+    return updatedContent;
+  } catch (error) {
+    console.error('updateMemory error:', error.message);
+    return '';
   }
 }
