@@ -7,3 +7,7 @@ keep_vars = true
 binding = "DB"
 database_name = "fox-ai-db"
 database_id = "af119c1d-6f40-41d3-aab0-590cdce0462e"
+
+# إضافة ربط الذكاء الاصطناعي هنا
+[ai]
+binding = "AI"
