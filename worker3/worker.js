@@ -22,8 +22,16 @@ export default {
 
     try {
       const body = await request.json();
-      const { action, messages, provider, chatId, content } = body;
+      const { action, messages, provider, chatId, content, accessPassword } = body;
       console.log('FOX AI request:', action, 'messages:', messages?.length, 'provider:', provider, 'chatId:', chatId);
+
+      // ============ تحقق كلمة المرور ============
+      if (accessPassword !== env.ACCESS_PASSWORD) {
+        return new Response(JSON.stringify({ error: 'كلمة المرور غير صحيحة', authRequired: true }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
 
       // ============ GET MEMORY ============
       if (action === 'get_memory') {
