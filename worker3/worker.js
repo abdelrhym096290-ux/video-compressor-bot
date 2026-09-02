@@ -92,7 +92,7 @@ export default {
         }
       }
 
-      // ============ USAGE (عداد الحصة الدقيق) ============
+      // ============ USAGE ============
       if (action === 'usage') {
         try {
           const usageData = await getUsageFromGateway(env);
@@ -134,7 +134,6 @@ export default {
         });
       }
 
-      // 1) قراءة الذاكرة الحالية
       let currentMemory = '';
       try {
         const memResult = await env.DB.prepare(
@@ -145,7 +144,6 @@ export default {
         console.error('D1 read memory error (non-fatal):', dbError.message);
       }
 
-      // 2) بناء السياق المختصر
       const contextMessages = [];
       if (currentMemory) {
         contextMessages.push({
@@ -155,7 +153,6 @@ export default {
       }
       contextMessages.push({ role: 'user', content: userText });
 
-      // 3) استدعاء النموذج
       let rawResponse = '';
 
       if (selectedProvider === 'gemini') {
@@ -175,7 +172,6 @@ export default {
         });
       }
 
-      // 4) تحديث الذاكرة
       let updatedMemory = '';
       try {
         updatedMemory = await updateMemory(env, chatId, userText, rawResponse);
@@ -185,7 +181,6 @@ export default {
         updatedMemory = currentMemory;
       }
 
-      // 5) إرجاع الرد + الذاكرة
       return new Response(JSON.stringify({
         response: rawResponse,
         memory: updatedMemory
@@ -202,7 +197,6 @@ export default {
   },
 };
 
-// ============ 15 نموذجاً محدثاً (سبتمبر 2026) ============
 const WORKERS_AI_MODELS = {
   'cf-glm-flash': '@cf/zai-org/glm-4.7-flash',
   'cf-qwen3-coder': '@cf/qwen/qwen3.8-27b',
@@ -333,7 +327,6 @@ async function updateMemory(env, chatId, userMessage, aiResponse) {
   }
 }
 
-// ============ دالة جلب الاستهلاك من AI Gateway عبر GraphQL ============
 async function getUsageFromGateway(env) {
   const ACCOUNT_ID = '83880c2ae9ec32b24fc954ea8dd57d6d';
   const GATEWAY_NAME = 'fox-gateway';
@@ -351,7 +344,7 @@ async function getUsageFromGateway(env) {
             filter: {
               datetimeHour_geq: "${startISO}"
               datetimeHour_leq: "${endISO}"
-              gatewayName: "${GATEWAY_NAME}"
+              gatewayId: "${GATEWAY_NAME}"
             }
             limit: 1000
             orderBy: [datetimeHour_DESC]
