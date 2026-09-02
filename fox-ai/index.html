@@ -79,6 +79,23 @@
   .icon-square-btn:active{ background:var(--accent-soft); }
   #header strong{ font-size:14.5px; flex:1; text-align:center; }
 
+  /* ---------- model selector ---------- */
+  .model-select{
+    background:var(--input-bg);
+    color:var(--text);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:5px 8px;
+    font-size:12px;
+    cursor:pointer;
+    outline:none;
+    font-family:inherit;
+    max-width:110px;
+    flex-shrink:0;
+  }
+  .model-select:hover{ border-color:var(--text-soft); }
+  .model-select:focus{ border-color:var(--accent); }
+
   #messages{
     flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch;
     padding:20px 16px; max-width:820px; width:100%; margin:0 auto; min-width:0;
@@ -128,7 +145,6 @@
   .message-bubble img,.message-bubble pre{ max-width:100%; }
   .message-bubble hr{ border:none; border-top:1px solid var(--border); margin:14px 0; }
 
-  /* code blocks, Claude-style: dark, LTR, with a header bar */
   .code-block{ margin:12px 0; border-radius:10px; overflow:hidden; background:#1E1E1C; border:1px solid #000; }
   .code-block.terminal{ background:#0D0D0D; }
   .code-header{
@@ -166,7 +182,6 @@
   .dots span:nth-child(2){ animation-delay:.15s; } .dots span:nth-child(3){ animation-delay:.3s; }
   @keyframes blink{ 0%,80%,100%{opacity:.3;} 40%{opacity:1;} }
 
-  /* ---------- input ---------- */
   #input-area{ padding:10px 14px calc(14px + env(safe-area-inset-bottom)); flex-shrink:0; }
   #input-container{
     max-width:820px; margin:0 auto; display:flex; align-items:flex-end; gap:6px;
@@ -209,6 +224,7 @@
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
     </button>
     <strong>FOX AI</strong>
+    <select id="modelSelect" class="model-select" title="اختيار النموذج"></select>
     <button class="icon-square-btn" id="header-new-btn" type="button" aria-label="محادثة جديدة">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
     </button>
@@ -253,20 +269,52 @@ const menuBtn = document.getElementById('menu-btn');
 const newChatBtn = document.getElementById('new-chat-btn');
 const headerNewBtn = document.getElementById('header-new-btn');
 const chatList = document.getElementById('chat-list');
+const modelSelect = document.getElementById('modelSelect');
+
+/* =========================================================
+   1.5) MODEL SELECTOR
+   ========================================================= */
+
+const PROVIDERS = [
+  { value: 'gemini', label: 'Gemini' },
+  { value: 'cf-coder', label: 'Qwen Coder' },
+  { value: 'cf-qwen3', label: 'Qwen3' },
+  { value: 'cf-deepseek-r1', label: 'DeepSeek R1' },
+  { value: 'cf-qwq', label: 'QwQ' },
+  { value: 'cf-gpt-oss', label: 'GPT-OSS' },
+];
+
+function initModelSelect(){
+  PROVIDERS.forEach(function(p){
+    const opt = document.createElement('option');
+    opt.value = p.value;
+    opt.textContent = p.label;
+    modelSelect.appendChild(opt);
+  });
+
+  const saved = localStorage.getItem('fox-model');
+  if (saved && PROVIDERS.some(function(p){ return p.value === saved; })) {
+    modelSelect.value = saved;
+  }
+}
+
+function getSelectedProvider(){
+  return modelSelect.value;
+}
+
+modelSelect.addEventListener('change', function(){
+  localStorage.setItem('fox-model', modelSelect.value);
+});
 
 let isGenerating = false;
 let currentController = null;
 
-// auto-grow the textarea as the user types
 function autoGrow(){
   userInput.style.height = 'auto';
   userInput.style.height = Math.min(userInput.scrollHeight, 160) + 'px';
 }
 userInput.addEventListener('input', autoGrow);
 
-// Enter = newline (native textarea behavior, untouched).
-// Ctrl/Cmd+Enter = send, as a keyboard shortcut only. Nothing here
-// ever calls preventDefault on a plain Enter press.
 userInput.addEventListener('keydown', function(e){
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
@@ -590,6 +638,7 @@ function requestAIResponse(chat){
     body: JSON.stringify({
       action: 'chat',
       chatId: currentChatId,
+      provider: getSelectedProvider(),
       messages: chat.messages.map(function(m){ return { role: m.role === 'user' ? 'user' : 'model', content: m.content }; })
     }),
     signal: currentController.signal
@@ -651,6 +700,7 @@ function sendMessage(){
    6) INITIAL RENDER
    ========================================================= */
 
+initModelSelect();
 renderChatList();
 renderMessages();
 </script>
