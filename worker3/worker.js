@@ -110,7 +110,7 @@ export default {
         });
       }
 
-      // 1) قراءة الذاكرة الحالية من D1
+      // 1) قراءة الذاكرة الحالية
       let currentMemory = '';
       try {
         const memResult = await env.DB.prepare(
@@ -121,17 +121,17 @@ export default {
         console.error('D1 read memory error (non-fatal):', dbError.message);
       }
 
-      // 2) بناء السياق المختصر: الذاكرة + آخر رسالة فقط
+      // 2) بناء السياق المختصر
       const contextMessages = [];
       if (currentMemory) {
         contextMessages.push({
           role: 'system',
-          content: `أنت مساعد ذكي. هذه وثيقة مشروعك الحية (ذاكرتك الدائمة للمحادثة). استخدمها كسياق لفهم ما سبق. بعد الرد، ستُحدّثها بمعلومات جديدة.\n\n${currentMemory}`
+          content: `أنت مساعد ذكي. هذه وثيقة مشروعك الحية (ذاكرتك الدائمة للمحادثة). استخدمها كسياق لفهم ما سبق.\n\n${currentMemory}`
         });
       }
       contextMessages.push({ role: 'user', content: userText });
 
-      // 3) استدعاء النموذج المختار
+      // 3) استدعاء النموذج
       let rawResponse = '';
 
       if (selectedProvider === 'gemini') {
@@ -151,7 +151,7 @@ export default {
         });
       }
 
-      // 4) تحديث الذاكرة — باستدعاء منفصل (أبسط وأضمن)
+      // 4) تحديث الذاكرة
       let updatedMemory = '';
       try {
         updatedMemory = await updateMemory(env, chatId, userText, rawResponse);
@@ -178,13 +178,28 @@ export default {
   },
 };
 
-// خريطة مزودي Workers AI
+// ============ 15 نموذجاً ============
 const WORKERS_AI_MODELS = {
+  // --- نماذج الكود والبرمجة ---
   'cf-coder': '@cf/qwen/qwen2.5-coder-32b-instruct',
-  'cf-qwen3': '@cf/qwen/qwen3-30b-a3b-fp8',
+  'cf-qwen3-coder': '@cf/qwen/qwen3-coder-30b-a3b-instruct',
   'cf-deepseek-r1': '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
   'cf-qwq': '@cf/qwen/qwq-32b',
   'cf-gpt-oss': '@cf/openai/gpt-oss-20b',
+
+  // --- نماذج عامة قوية ---
+  'cf-qwen3': '@cf/qwen/qwen3-30b-a3b-fp8',
+  'cf-llama-3': '@cf/meta/llama-3.1-8b-instruct',
+  'cf-llama-4': '@cf/meta/llama-4-scout-17b-16e-instruct',
+  'cf-mistral': '@cf/mistral/mistral-7b-instruct-v0.2',
+  'cf-gemma': '@cf/google/gemma-2-27b-it',
+
+  // --- نماذج متخصصة ---
+  'cf-coder-small': '@cf/qwen/qwen2.5-coder-7b-instruct',
+  'cf-phi': '@cf/microsoft/phi-4-mini-instruct',
+  'cf-flux': '@cf/qwen/qwen2.5-72b-instruct',
+  'cf-nemotron': '@cf/nvidia/llama-3.1-nemotron-70b-instruct',
+  'cf-command': '@cf/cohere/command-r-plus',
 };
 
 async function callGemini(apiKey, messages) {
@@ -196,7 +211,7 @@ async function callGemini(apiKey, messages) {
     };
   });
 
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
 
   const response = await fetch(url, {
     method: 'POST',
