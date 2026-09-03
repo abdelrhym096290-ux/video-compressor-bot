@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1">
 <title>FOX AI</title>
+<link rel="manifest" href="data:application/json,{&quot;name&quot;:&quot;FOX AI&quot;,&quot;short_name&quot;:&quot;FOX AI&quot;,&quot;start_url&quot;:&quot;https://fox1-ai.abdelrhym096290.workers.dev&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%23FAF9F5&quot;,&quot;theme_color&quot;:&quot;%23CC785C&quot;}">
+<meta name="theme-color" content="#CC785C">
 <style>
   :root{
     --bg:#FAF9F5; --sidebar-bg:#F5F4EE; --border:#E5E3DA;
@@ -452,7 +454,6 @@ let sessionToken = localStorage.getItem('fox-session') || '';
 let isRecording = false;
 let recognition = null;
 
-/* ============ شاشة القفل ============ */
 lockBtn.addEventListener('click', login);
 lockInput.addEventListener('keydown', function(e){
   if (e.key === 'Enter') login();
@@ -520,7 +521,6 @@ logoutBtn.addEventListener('click', async function(){
 
 if (sessionToken) { checkSession(); } else { lockScreen.style.display = 'flex'; lockInput.focus(); }
 
-/* ============ النماذج ============ */
 const PROVIDERS = [
   { value: 'gemini-3.8-flash', label: '✦ Gemini 3.8 Flash', desc: 'Google — الأحدث والأقوى Flash' },
   { value: 'gemini-3.7-flash', label: '✦ Gemini 3.7 Flash', desc: 'Google — Flash حديث' },
@@ -575,7 +575,6 @@ modelSelect.addEventListener('change', function(){
   updateModelDesc();
 });
 
-/* ============ سجل التجارب ============ */
 experimentsToggleBtn.addEventListener('click', function(){
   experimentsPanel.classList.toggle('open');
   experimentsToggleBtn.classList.toggle('active');
@@ -609,7 +608,6 @@ async function loadExperiments(){
   } catch (error) { experimentsContent.textContent = 'خطأ: ' + error.message; }
 }
 
-/* ============ الاستهلاك ============ */
 usageToggleBtn.addEventListener('click', function(){
   usagePanel.classList.toggle('open');
   usageToggleBtn.classList.toggle('active');
@@ -633,12 +631,14 @@ async function loadUsage(){
     if (data.error) throw new Error(data.error);
     let html = '';
     html += 'إجمالي الطلبات: ' + (data.totals?.requests || 0) + '\n';
+    html += 'توكنات داخلة: ' + (data.totals?.tokensIn || 0) + '\n';
+    html += 'توكنات خارجة: ' + (data.totals?.tokensOut || 0) + '\n';
+    html += 'الإجمالي: ' + (data.totals?.totalTokens || 0) + '\n';
     if (data.note) html += '\n' + data.note;
     usageContent.textContent = html;
   } catch (error) { usageContent.textContent = 'خطأ: ' + error.message; }
 }
 
-/* ============ الذاكرة ============ */
 memoryToggleBtn.addEventListener('click', function(){
   memoryPanel.classList.toggle('open');
   memoryToggleBtn.classList.toggle('active');
@@ -680,7 +680,6 @@ async function saveMemoryManually(){
   }
 }
 
-/* ============ الإدخال الصوتي ============ */
 micBtn.addEventListener('click', function(){
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
     alert('الإدخال الصوتي غير مدعوم في متصفحك');
@@ -706,7 +705,6 @@ micBtn.addEventListener('click', function(){
   else { recognition.start(); isRecording = true; micBtn.classList.add('recording'); }
 });
 
-/* ============ رفع ملفات ============ */
 fileBtn.addEventListener('click', function(){ fileInput.click(); });
 
 fileInput.addEventListener('change', async function(){
@@ -1053,7 +1051,6 @@ function sendMessage(){
   requestAIResponse(chat);
 }
 
-/* ============ أزرار التمرير ============ */
 scrollUpBtn.addEventListener('click', function(){ messagesEl.scrollTo({ top: 0, behavior: 'smooth' }); });
 scrollDownBtn.addEventListener('click', function(){ messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' }); });
 
@@ -1065,8 +1062,4 @@ messagesEl.addEventListener('scroll', function(){
 });
 
 initModelSelect();
-renderChatList();
-renderMessages();
-</script>
-</body>
-</html>
+renderChat
