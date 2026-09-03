@@ -162,13 +162,16 @@ export default {
         console.error('D1 read memory error (non-fatal):', dbError.message);
       }
 
+      // ============ رسالة القدرات الثابتة ============
+      const SYSTEM_CAPABILITIES = `\n\n---\n## قدرات النظام المتاحة\n\nيمكنك تنفيذ أوامر Linux حقيقية في بيئة Ubuntu 24.04 معزولة عبر GitHub Actions. عند الحاجة لتنفيذ كود أو أمر، اطلب من المستخدم السماح بذلك أو استخدم الأمر مباشرة.\n\nمثال: إذا طلب منك المستخدم تشغيل كود Python، يمكنك اقتراح: "هل تريدني أن أنفذ هذا الكود في بيئة معزولة؟"\n`;
+
       const contextMessages = [];
-      if (currentMemory) {
-        contextMessages.push({
-          role: 'system',
-          content: `أنت مساعد ذكي. هذه وثيقة مشروعك الحية (ذاكرتك الدائمة للمحادثة). استخدمها كسياق لفهم ما سبق.\n\n${currentMemory}`
-        });
-      }
+      const systemContent = `أنت مساعد ذكي. هذه وثيقة مشروعك الحية (ذاكرتك الدائمة للمحادثة). استخدمها كسياق لفهم ما سبق.\n\n${currentMemory || '(لا توجد ذاكرة بعد)'}${SYSTEM_CAPABILITIES}`;
+      
+      contextMessages.push({
+        role: 'system',
+        content: systemContent
+      });
       contextMessages.push({ role: 'user', content: userText });
 
       let rawResponse = '';
