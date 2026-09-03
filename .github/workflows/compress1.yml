@@ -1,4 +1,4 @@
-name: FOX AI Terminal
+name: compress1
 
 on:
   workflow_dispatch:
