@@ -82,8 +82,8 @@
   #header strong{ font-size:14.5px; flex:1; text-align:center; }
   .model-select{
     background:var(--input-bg); color:var(--text); border:1px solid var(--border);
-    border-radius:10px; padding:7px 10px; font-size:12.5px; cursor:pointer; outline:none;
-    font-family:inherit; max-width:180px; flex-shrink:0; transition:border .2s;
+    border-radius:10px; padding:7px 10px; font-size:12px; cursor:pointer; outline:none;
+    font-family:inherit; max-width:150px; flex-shrink:0; transition:border .2s;
   }
   .model-select:hover{ border-color:var(--accent); }
   .model-select:focus{ border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
@@ -249,6 +249,17 @@
   }
   .lock-error{ font-size:12.5px; color:#d33; margin-top:8px; display:none; }
   #file-input{ display:none; }
+  #file-preview{
+    display:none; max-width:820px; margin:0 auto 8px; padding:8px; gap:8px; flex-wrap:wrap;
+  }
+  #file-preview.open{ display:flex; }
+  .preview-item{ position:relative; }
+  .preview-item img{ max-width:80px; max-height:80px; border-radius:8px; border:1px solid var(--border); }
+  .preview-item .remove-btn{
+    position:absolute; top:-6px; left:-6px; background:#d33; color:#fff; border:none;
+    border-radius:50%; width:18px; height:18px; font-size:10px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
   .scroll-btn{
     position:fixed; left:16px; bottom:100px; background:var(--accent); border:none;
     border-radius:50%; width:38px; height:38px; cursor:pointer; z-index:35;
@@ -344,6 +355,8 @@
     <button class="memory-save-btn" id="memory-save-btn" type="button">حفظ</button>
   </div>
 
+  <div id="file-preview"></div>
+
   <div id="input-area">
     <div id="input-container">
       <button class="input-action-btn" id="mic-btn" type="button" title="إدخال صوتي">
@@ -415,6 +428,7 @@ const experimentsLoadBtn = document.getElementById('experiments-load-btn');
 const micBtn = document.getElementById('mic-btn');
 const fileBtn = document.getElementById('file-btn');
 const fileInput = document.getElementById('file-input');
+const filePreview = document.getElementById('file-preview');
 const logoutBtn = document.getElementById('logout-btn');
 const scrollUpBtn = document.getElementById('scroll-up-btn');
 const scrollDownBtn = document.getElementById('scroll-down-btn');
@@ -422,6 +436,7 @@ const scrollDownBtn = document.getElementById('scroll-down-btn');
 let sessionToken = localStorage.getItem('fox-session') || '';
 let isRecording = false;
 let recognition = null;
+let pendingFiles = [];
 
 lockBtn.addEventListener('click', function(){ login(); });
 lockInput.addEventListener('keydown', function(e){
@@ -493,30 +508,26 @@ logoutBtn.addEventListener('click', async function(){
 if (sessionToken) { checkSession(); } else { lockScreen.style.display = 'flex'; lockInput.focus(); }
 
 const PROVIDERS = [
-  { value: 'gemini-3.8-flash', label: '✦ Gemini 3.8 Flash', desc: 'Google — الأحدث والأقوى Flash' },
-  { value: 'gemini-3.7-flash', label: '✦ Gemini 3.7 Flash', desc: 'Google — Flash حديث' },
-  { value: 'gemini-3.6-flash', label: '✦ Gemini 3.6 Flash', desc: 'Google — Flash مستقر' },
-  { value: 'gemini-3.5-flash', label: '✦ Gemini 3.5 Flash', desc: 'Google — Flash متوازن' },
-  { value: 'gemini-2.5-pro', label: '✦ Gemini 2.5 Pro', desc: 'Google — Pro قوي للتفكير' },
-  { value: 'gemini-2.5-flash', label: '✦ Gemini 2.5 Flash', desc: 'Google — خفيف وسريع' },
-  { value: 'gemini-2.5-flash-lite', label: '✦ Gemini 2.5 Flash Lite', desc: 'Google — أخف نسخة' },
-  { value: 'gemini-flash-lite-latest', label: '✦ Gemini Flash Lite', desc: 'Google — أحدث Lite' },
-  { value: 'gemini', label: '✦ Gemini افتراضي', desc: 'Google — Gemini 3.6 Flash' },
-  { value: 'cf-gemma-4', label: '● Gemma 4 26B', desc: 'Google — تفكير + عملاء + رؤية' },
-  { value: 'cf-qwen3-coder', label: '■ Qwen3.8 27B', desc: 'Alibaba — برمجة + رؤية + 262K' },
-  { value: 'cf-coder', label: '■ Qwen Coder 32B', desc: 'Alibaba — كود معقد + 32K' },
-  { value: 'cf-qwen3', label: '■ Qwen3 30B', desc: 'Alibaba — برمجة + لغات' },
-  { value: 'cf-qwq', label: '■ QwQ 32B', desc: 'Alibaba — تفكير + رياضيات' },
-  { value: 'cf-glm-flash', label: '▲ GLM 4.7 Flash', desc: 'Z.ai — برمجة + Agents' },
-  { value: 'cf-deepseek-r1', label: '◆ DeepSeek R1', desc: 'DeepSeek — منطق + كود' },
-  { value: 'cf-gpt-oss-120b', label: '● GPT-OSS 120B', desc: 'OpenAI — تفكير + إنتاج' },
-  { value: 'cf-gpt-oss-20b', label: '● GPT-OSS 20B', desc: 'OpenAI — كود + سرعة' },
-  { value: 'cf-nemotron', label: '◆ Nemotron 3 120B', desc: 'NVIDIA — تفكير عميق' },
-  { value: 'cf-llama-70b', label: '▲ Llama 3.3 70B', desc: 'Meta — محادثة + كود' },
-  { value: 'cf-llama-4', label: '▲ Llama 4 Scout', desc: 'Meta — عام + رؤية' },
-  { value: 'cf-llama-vision', label: '▲ Llama Vision 11B', desc: 'Meta — تحليل صور' },
-  { value: 'cf-mistral', label: '● Mistral 24B', desc: 'Mistral — كتابة + رؤية' },
-  { value: 'cf-granite', label: '■ Granite 4.0', desc: 'IBM — Agents + RAG' },
+  { value: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', desc: 'Google — الأحدث والأقوى' },
+  { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', desc: 'Google — Flash حديث' },
+  { value: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', desc: 'Google — Flash مستقر' },
+  { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', desc: 'Google — Flash متوازن' },
+  { value: 'gemini', label: 'Gemini افتراضي', desc: 'Google — Gemini 3.6 Flash' },
+  { value: 'cf-gemma-4', label: 'Gemma 4 26B', desc: 'Google — تفكير + رؤية' },
+  { value: 'cf-qwen3-coder', label: 'Qwen3.8 27B', desc: 'Alibaba — برمجة + 262K' },
+  { value: 'cf-coder', label: 'Qwen Coder 32B', desc: 'Alibaba — كود معقد' },
+  { value: 'cf-qwen3', label: 'Qwen3 30B', desc: 'Alibaba — برمجة + لغات' },
+  { value: 'cf-qwq', label: 'QwQ 32B', desc: 'Alibaba — تفكير + رياضيات' },
+  { value: 'cf-glm-flash', label: 'GLM 4.7 Flash', desc: 'Z.ai — برمجة + Agents' },
+  { value: 'cf-deepseek-r1', label: 'DeepSeek R1', desc: 'DeepSeek — منطق + كود' },
+  { value: 'cf-gpt-oss-120b', label: 'GPT-OSS 120B', desc: 'OpenAI — تفكير + إنتاج' },
+  { value: 'cf-gpt-oss-20b', label: 'GPT-OSS 20B', desc: 'OpenAI — كود + سرعة' },
+  { value: 'cf-nemotron', label: 'Nemotron 3 120B', desc: 'NVIDIA — تفكير عميق' },
+  { value: 'cf-llama-70b', label: 'Llama 3.3 70B', desc: 'Meta — محادثة + كود' },
+  { value: 'cf-llama-4', label: 'Llama 4 Scout', desc: 'Meta — عام + رؤية' },
+  { value: 'cf-llama-vision', label: 'Llama Vision 11B', desc: 'Meta — تحليل صور' },
+  { value: 'cf-mistral', label: 'Mistral 24B', desc: 'Mistral — كتابة + رؤية' },
+  { value: 'cf-granite', label: 'Granite 4.0', desc: 'IBM — Agents + RAG' },
 ];
 
 function initModelSelect(){
@@ -600,12 +611,24 @@ async function loadUsage(){
     });
     const data = await response.json();
     if (data.error) throw new Error(data.error);
+
+    const totalTokens = data.totals?.totalTokens || 0;
+    const DAILY_NEURONS = 10000;
+    const usedNeurons = Math.round(totalTokens * 0.2);
+    const remaining = Math.max(0, DAILY_NEURONS - usedNeurons);
+    const pct = Math.min(100, (usedNeurons / DAILY_NEURONS) * 100);
+
     let html = '';
+    html += 'الحصة اليومية: ' + DAILY_NEURONS.toLocaleString('ar') + ' Neurons\n';
+    html += 'المستهلك: ' + usedNeurons.toLocaleString('ar') + ' Neurons\n';
+    html += 'المتبقي: ' + remaining.toLocaleString('ar') + ' Neurons\n';
+    html += 'النسبة: ' + pct.toFixed(1) + '%\n\n';
     html += 'إجمالي الطلبات: ' + (data.totals?.requests || 0) + '\n';
     html += 'توكنات داخلة: ' + (data.totals?.tokensIn || 0) + '\n';
     html += 'توكنات خارجة: ' + (data.totals?.tokensOut || 0) + '\n';
-    html += 'الإجمالي: ' + (data.totals?.totalTokens || 0) + '\n';
+    html += 'الإجمالي: ' + totalTokens + '\n';
     if (data.note) html += '\n' + data.note;
+
     usageContent.textContent = html;
   } catch (error) { usageContent.textContent = 'خطأ: ' + error.message; }
 }
@@ -673,20 +696,43 @@ micBtn.addEventListener('click', function(){
 });
 
 fileBtn.addEventListener('click', function(){ fileInput.click(); });
+
 fileInput.addEventListener('change', function(){
   const files = fileInput.files;
   if (!files.length) return;
+  filePreview.innerHTML = '';
+  filePreview.classList.add('open');
+  pendingFiles = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
+    pendingFiles.push(file);
     const reader = new FileReader();
     reader.onload = function(e){
       const content = e.target.result;
       const isImage = file.type.startsWith('image/');
-      const msgText = isImage
-        ? `[صورة: ${file.name}] (${file.type}) — Base64: ${content.split(',')[1]?.substring(0, 300)}...`
-        : `[ملف: ${file.name}]\n${content}`;
-      userInput.value += (userInput.value ? '\n\n' : '') + msgText;
-      autoGrow();
+      const item = document.createElement('div');
+      item.className = 'preview-item';
+      if (isImage) {
+        const img = document.createElement('img');
+        img.src = content;
+        img.alt = file.name;
+        item.appendChild(img);
+      } else {
+        const badge = document.createElement('div');
+        badge.style.cssText = 'max-width:80px;padding:6px;font-size:10px;border:1px solid var(--border);border-radius:6px;word-break:break-all;';
+        badge.textContent = file.name.substring(0, 15);
+        item.appendChild(badge);
+      }
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'remove-btn';
+      removeBtn.textContent = '×';
+      removeBtn.addEventListener('click', function(){
+        item.remove();
+        pendingFiles = pendingFiles.filter(function(f){ return f !== file; });
+        if (!pendingFiles.length) { filePreview.classList.remove('open'); }
+      });
+      item.appendChild(removeBtn);
+      filePreview.appendChild(item);
     };
     if (file.type.startsWith('image/')) { reader.readAsDataURL(file); } else { reader.readAsText(file); }
   }
@@ -984,14 +1030,21 @@ function sendMessage(){
   const text = userInput.value.trim();
   if (!text || isGenerating) return;
   const chat = getCurrentChat();
-  chat.messages.push({ role: 'user', content: text });
+  let finalText = text;
+  if (pendingFiles.length) {
+    finalText += '\n\n[ملفات مرفوعة: ' + pendingFiles.map(function(f){ return f.name; }).join(', ') + ']';
+  }
+  chat.messages.push({ role: 'user', content: finalText });
   if (chat.messages.length === 1) chat.title = text.slice(0, 40);
   saveChats();
   renderChatList();
   if (messagesEl.classList.contains('empty')) { messagesEl.innerHTML = ''; messagesEl.classList.remove('empty'); }
-  appendBubble(text, 'user', chat.messages.length - 1, chat);
+  appendBubble(finalText, 'user', chat.messages.length - 1, chat);
   userInput.value = '';
   autoGrow();
+  pendingFiles = [];
+  filePreview.innerHTML = '';
+  filePreview.classList.remove('open');
   requestAIResponse(chat);
 }
 scrollUpBtn.addEventListener('click', function(){ messagesEl.scrollTo({ top: 0, behavior: 'smooth' }); });
