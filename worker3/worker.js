@@ -284,6 +284,8 @@ export class ExperimentState {
       return await this.checkStatus();
     } else if (path === '/retry') {
       return await this.retryExperiment();
+    } else if (path === '/alarm') {
+      return await this.handleAlarm();
     }
 
     return new Response(JSON.stringify({ error: 'Invalid DO path' }), {
@@ -307,9 +309,13 @@ export class ExperimentState {
       attempts: 0,
       startedAt: now,
       lastUpdate: now,
+      githubToken: githubToken,
     };
 
     await this.state.storage.put('experiment', experimentData);
+
+    // ضبط alarm للتحقق بعد دقيقة
+    await this.state.storage.setAlarm(Date.now() + 60000);
 
     return await this.dispatchToGitHub(command, githubToken, hmacSecret);
   }
@@ -349,6 +355,74 @@ export class ExperimentState {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  async handleAlarm() {
+    const experiment = await this.state.storage.get('experiment');
+    if (!experiment) return new Response('No experiment');
+
+    const elapsed = Date.now() - experiment.startedAt;
+    const MAX_TIME = 20 * 60 * 1000; // 20 دقيقة
+    const MAX_ATTEMPTS = 5;
+
+    // التحقق من GitHub REST API
+    try {
+      const status = await this.checkGitHubRuns(experiment.githubToken);
+      
+      if (status.status === 'completed') {
+        // نجحت التجربة
+        experiment.status = 'completed';
+        experiment.lastUpdate = Date.now();
+        await this.state.storage.put('experiment', experiment);
+        await this.state.storage.deleteAlarm();
+        return new Response('Experiment completed');
+      }
+    } catch (e) {
+      console.error('GitHub check error:', e.message);
+    }
+
+    // التحقق من الحدود
+    if (elapsed >= MAX_TIME || experiment.attempts >= MAX_ATTEMPTS) {
+      experiment.status = 'failed';
+      experiment.lastUpdate = Date.now();
+      await this.state.storage.put('experiment', experiment);
+      await this.state.storage.deleteAlarm();
+      return new Response('Experiment failed - max attempts/time reached');
+    }
+
+    // إعادة المحاولة
+    experiment.attempts += 1;
+    experiment.status = 'retrying';
+    experiment.lastUpdate = Date.now();
+    await this.state.storage.put('experiment', experiment);
+    await this.state.storage.setAlarm(Date.now() + 60000);
+
+    return new Response('Retrying - attempt ' + experiment.attempts);
+  }
+
+  async checkGitHubRuns(githubToken) {
+    const response = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/actions/runs?per_page=1`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': 'Bearer ' + githubToken,
+          'Accept': 'application/vnd.github.v3+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      }
+    );
+
+    const data = await response.json();
+    const latestRun = data.workflow_runs?.[0];
+
+    if (!latestRun) return { status: 'no_runs' };
+
+    return {
+      id: latestRun.id,
+      status: latestRun.status,
+      conclusion: latestRun.conclusion,
+    };
   }
 
   async checkStatus() {
