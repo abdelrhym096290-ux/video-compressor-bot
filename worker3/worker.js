@@ -39,7 +39,6 @@ export default {
         const experimentId = webhookBody.experimentId || 'unknown';
         const exitCode = webhookBody.exit_code || 0;
 
-        // حفظ في D1
         const now = Date.now();
         await env.DB.prepare(
           `INSERT INTO experiments (chat_id, command, status, output, exit_code, created_at, updated_at)
@@ -301,7 +300,6 @@ export class ExperimentState {
     const githubToken = data.githubToken;
     const hmacSecret = data.hmacSecret;
 
-    // حفظ الحالة
     const now = Date.now();
     const experimentData = {
       command: command,
@@ -314,7 +312,6 @@ export class ExperimentState {
 
     await this.state.storage.put('experiment', experimentData);
 
-    // بدء التشغيل
     return await this.dispatchToGitHub(command, githubToken, hmacSecret);
   }
 
@@ -402,7 +399,7 @@ async function hmacSign(data, secret) {
   const signature = await crypto.subtle.sign(
     'HMAC',
     key,
-    encoder.encode(JSON.stringify(data))
+    encoder.encode(JSON.stringify(data, Object.keys(data).sort()))
   );
   return Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
