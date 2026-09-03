@@ -48,21 +48,16 @@ export default {
         const experimentId = webhookBody.experimentId || 'unknown';
         const exitCode = webhookBody.exit_code ?? 0;
 
-        // استدعاء DO للتعامل مع النتيجة (نجاح/فشل + إعادة محاولة)
         const id = env.EXPERIMENT_STATE.idFromName(experimentId);
         const experimentObj = env.EXPERIMENT_STATE.get(id);
 
         const result = await experimentObj.fetch('https://internal/result', {
           method: 'POST',
-          body: JSON.stringify({
-            output: output,
-            exitCode: exitCode,
-          }),
+          body: JSON.stringify({ output: output, exitCode: exitCode }),
         });
 
         const resultData = await result.json();
 
-        // حفظ النتيجة في D1
         const now = Date.now();
         await env.DB.prepare(
           `INSERT INTO experiments (chat_id, command, status, output, exit_code, created_at, updated_at)
@@ -155,11 +150,7 @@ export default {
           .bind(token, now, expiresAt)
           .run();
 
-          return new Response(JSON.stringify({
-            success: true,
-            token,
-            expiresAt,
-          }), {
+          return new Response(JSON.stringify({ success: true, token, expiresAt }), {
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         } catch (loginError) {
@@ -171,7 +162,25 @@ export default {
         }
       }
 
-      // ============ التحقق من الجلسة لكل الطلبات غير login ============
+      // ============ فحص الجلسة ============
+      if (action === 'check_session') {
+        const valid = await isSessionValid(env, sessionToken);
+        return new Response(JSON.stringify({ valid }), {
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
+
+      // ============ خروج ============
+      if (action === 'logout') {
+        if (sessionToken) {
+          await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(sessionToken).run().catch(() => {});
+        }
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
+
+      // ============ التحقق من الجلسة لكل الطلبات ============
       const sessionValid = await isSessionValid(env, sessionToken);
       if (!sessionValid) {
         return new Response(JSON.stringify({ error: 'الجلسة غير صالحة أو منتهية، سجّل الدخول من جديد', authRequired: true }), {
@@ -193,9 +202,7 @@ export default {
             'SELECT content FROM project_memory WHERE chat_id = ?'
           ).bind(chatId).first();
 
-          return new Response(JSON.stringify({
-            content: result?.content || ''
-          }), {
+          return new Response(JSON.stringify({ content: result?.content || '' }), {
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         } catch (dbError) {
@@ -231,6 +238,24 @@ export default {
         } catch (dbError) {
           console.error('D1 memory_update error:', dbError.message);
           return new Response(JSON.stringify({ error: 'خطأ في حفظ الذاكرة: ' + dbError.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+      }
+
+      // ============ سجل التجارب ============
+      if (action === 'get_experiments') {
+        try {
+          const results = await env.DB.prepare(
+            'SELECT id, command, status, output, exit_code, created_at FROM experiments ORDER BY created_at DESC LIMIT 10'
+          ).all();
+
+          return new Response(JSON.stringify({ experiments: results.results || [] }), {
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        } catch (expError) {
+          return new Response(JSON.stringify({ error: 'خطأ في جلب التجارب: ' + expError.message }), {
             status: 500,
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
@@ -417,17 +442,11 @@ export class ExperimentState {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    if (path === '/start') {
-      return await this.startExperiment(request);
-    } else if (path === '/result') {
-      return await this.handleResult(request);
-    } else if (path === '/check') {
-      return await this.checkStatus();
-    } else if (path === '/retry') {
-      return await this.retryExperiment();
-    } else if (path === '/alarm') {
-      return await this.handleAlarm();
-    }
+    if (path === '/start') return await this.startExperiment(request);
+    if (path === '/result') return await this.handleResult(request);
+    if (path === '/check') return await this.checkStatus();
+    if (path === '/retry') return await this.retryExperiment();
+    if (path === '/alarm') return await this.handleAlarm();
 
     return new Response(JSON.stringify({ error: 'Invalid DO path' }), {
       status: 400,
@@ -499,7 +518,6 @@ export class ExperimentState {
     experiment.status = 'retrying';
     await this.state.storage.put('experiment', experiment);
 
-    // إعادة الإرسال
     await this.dispatchToGitHub(experiment.command, experiment.githubToken, null);
 
     return new Response(JSON.stringify({ status: 'retrying', attempt: experiment.attempts, experiment }), {
@@ -518,10 +536,7 @@ export class ExperimentState {
           'Accept': 'application/vnd.github.v3+json',
           'X-GitHub-Api-Version': '2022-11-28',
         },
-        body: JSON.stringify({
-          ref: 'main',
-          inputs: { command: command },
-        }),
+        body: JSON.stringify({ ref: 'main', inputs: { command: command } }),
       }
     );
 
@@ -536,9 +551,7 @@ export class ExperimentState {
     }
 
     const errorData = await response.json().catch(() => ({}));
-    return new Response(JSON.stringify({
-      error: errorData.message || 'GitHub API error',
-    }), {
+    return new Response(JSON.stringify({ error: errorData.message || 'GitHub API error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
