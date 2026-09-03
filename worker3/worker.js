@@ -24,14 +24,14 @@ export default {
     if (request.url.includes('/result')) {
       try {
         const webhookBody = await request.json();
-        
+
         if (webhookBody.secret !== env.HMAC_SECRET) {
           return new Response(JSON.stringify({ error: 'توقيع غير صالح' }), {
             status: 403,
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         }
-        
+
         delete webhookBody.secret;
 
         const output = webhookBody.output || 'لا توجد نتائج';
@@ -60,11 +60,97 @@ export default {
 
     try {
       const body = await request.json();
-      const { action, messages, provider, chatId, content, accessPassword, command } = body;
+      const { action, messages, provider, chatId, content, accessPassword, sessionToken, command } = body;
       console.log('FOX AI request:', action, 'messages:', messages?.length, 'provider:', provider, 'chatId:', chatId);
 
-      if (accessPassword !== env.ACCESS_PASSWORD) {
-        return new Response(JSON.stringify({ error: 'كلمة المرور غير صحيحة', authRequired: true }), {
+      const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+
+      // ============ [جديد] تسجيل الدخول: كلمة المرور + حد المحاولات + إصدار Session Token ============
+      if (action === 'login') {
+        try {
+          const lockCheck = await env.DB.prepare(
+            'SELECT attempts, locked_until FROM login_attempts WHERE ip = ?'
+          ).bind(clientIP).first();
+
+          const now = Date.now();
+
+          if (lockCheck?.locked_until && lockCheck.locked_until > now) {
+            const remainingMs = lockCheck.locked_until - now;
+            const remainingMin = Math.ceil(remainingMs / 60000);
+            return new Response(JSON.stringify({
+              error: `تم حظرك مؤقتاً بسبب محاولات خاطئة متكررة. حاول بعد ${remainingMin} دقيقة.`,
+              locked: true,
+            }), {
+              status: 429,
+              headers: { 'Content-Type': 'application/json', ...CORS },
+            });
+          }
+
+          if (accessPassword !== env.ACCESS_PASSWORD) {
+            const currentAttempts = (lockCheck?.attempts || 0) + 1;
+            const shouldLock = currentAttempts >= 5;
+            const lockedUntil = shouldLock ? now + 10 * 60 * 1000 : null;
+
+            await env.DB.prepare(
+              `INSERT INTO login_attempts (ip, attempts, locked_until, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(ip) DO UPDATE
+               SET attempts = ?, locked_until = ?, updated_at = ?`
+            )
+            .bind(clientIP, currentAttempts, lockedUntil, now, currentAttempts, lockedUntil, now)
+            .run();
+
+            return new Response(JSON.stringify({
+              error: shouldLock
+                ? 'كلمة مرور خاطئة. تم حظرك 10 دقائق بسبب تجاوز عدد المحاولات المسموح.'
+                : `كلمة مرور خاطئة. المحاولات المتبقية: ${5 - currentAttempts}`,
+              authRequired: true,
+            }), {
+              status: 401,
+              headers: { 'Content-Type': 'application/json', ...CORS },
+            });
+          }
+
+          // كلمة مرور صحيحة: تصفير المحاولات + إصدار توكن جلسة
+          await env.DB.prepare(
+            `INSERT INTO login_attempts (ip, attempts, locked_until, updated_at)
+             VALUES (?, 0, NULL, ?)
+             ON CONFLICT(ip) DO UPDATE
+             SET attempts = 0, locked_until = NULL, updated_at = ?`
+          )
+          .bind(clientIP, now, now)
+          .run();
+
+          const token = crypto.randomUUID();
+          const expiresAt = now + 24 * 60 * 60 * 1000; // صلاحية 24 ساعة
+
+          await env.DB.prepare(
+            `INSERT INTO sessions (token, created_at, expires_at)
+             VALUES (?, ?, ?)`
+          )
+          .bind(token, now, expiresAt)
+          .run();
+
+          return new Response(JSON.stringify({
+            success: true,
+            token,
+            expiresAt,
+          }), {
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        } catch (loginError) {
+          console.error('Login error:', loginError.message);
+          return new Response(JSON.stringify({ error: 'خطأ في تسجيل الدخول: ' + loginError.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+      }
+
+      // ============ [معدَّل] كل الطلبات غير login تتحقق بتوكن الجلسة بدل كلمة المرور مباشرة ============
+      const sessionValid = await isSessionValid(env, sessionToken);
+      if (!sessionValid) {
+        return new Response(JSON.stringify({ error: 'الجلسة غير صالحة أو منتهية، سجّل الدخول من جديد', authRequired: true }), {
           status: 401,
           headers: { 'Content-Type': 'application/json', ...CORS },
         });
@@ -140,7 +226,7 @@ export default {
           const experimentId = chatId || 'default-' + Date.now();
           const id = env.EXPERIMENT_STATE.idFromName(experimentId);
           const experimentObj = env.EXPERIMENT_STATE.get(id);
-          
+
           const result = await experimentObj.fetch('https://internal/start', {
             method: 'POST',
             body: JSON.stringify({
@@ -218,8 +304,8 @@ export default {
       const SYSTEM_CAPABILITIES = `\n\n---\n## قدرات النظام المتاحة\n\nيمكنك تنفيذ أوامر Linux حقيقية في بيئة Ubuntu 24.04 معزولة عبر GitHub Actions. عند الحاجة لتنفيذ كود أو أمر، اطلب من المستخدم السماح بذلك أو استخدم الأمر مباشرة.\n\nمثال: إذا طلب منك المستخدم تشغيل كود Python، يمكنك اقتراح: "هل تريدني أن أنفذ هذا الكود في بيئة معزولة؟"\n`;
 
       const contextMessages = [];
-      const systemContent = `أنت مساعد ذكي. هذه وثيقة مشروعك الحية (ذاكرتك الدائمة للمحادثة). استخدمها كسياق لفهم ما سبق.\n\n${currentMemory || '(لا توجد ذاكرة بعد)'}${SYSTEM_CAPABILITIES}`;
-      
+      const systemContent = `أنت مساعد ذكي قد يتغيّر النموذج المستخدم بين رسالة وأخرى ضمن نفس المحادثة. هذه وثيقة توثيق حية (Documentation Memory) هي مصدر الحقيقة الوحيد لحالة هذه المحادثة والمشروع - لا تفترض أي سياق من رسائل سابقة غير مذكور هنا. اعتمد عليها بالكامل لفهم ما تم إنجازه، وما هو جارٍ حالياً، والقرارات المتخذة.\n\n${currentMemory || '(لا توجد ذاكرة بعد - هذه أول رسالة في المحادثة)'}${SYSTEM_CAPABILITIES}`;
+
       contextMessages.push({ role: 'system', content: systemContent });
       contextMessages.push({ role: 'user', content: userText });
 
@@ -266,6 +352,27 @@ export default {
     }
   },
 };
+
+// ============ [جديد] التحقق من صلاحية توكن الجلسة ============
+async function isSessionValid(env, token) {
+  if (!token) return false;
+  try {
+    const now = Date.now();
+    const session = await env.DB.prepare(
+      'SELECT expires_at FROM sessions WHERE token = ?'
+    ).bind(token).first();
+
+    if (!session) return false;
+    if (session.expires_at <= now) {
+      env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run().catch(() => {});
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('isSessionValid error:', e.message);
+    return false;
+  }
+}
 
 // ============ Durable Object ============
 export class ExperimentState {
@@ -368,7 +475,7 @@ export class ExperimentState {
     // التحقق من GitHub REST API
     try {
       const status = await this.checkGitHubRuns(experiment.githubToken);
-      
+
       if (status.status === 'completed') {
         // نجحت التجربة
         experiment.status = 'completed';
@@ -582,7 +689,24 @@ async function updateMemory(env, chatId, userMessage, aiResponse) {
 
     const currentMemory = existing?.content || '';
 
-    const memoryPrompt = `أنت مدير وثيقة مشروع حية. دمج المعلومات الجديدة في الوثيقة الحالية.\n\nالوثيقة الحالية:\n${currentMemory || '(فارغة - هذه أول رسالة)'}\n\nآخر رسالة من المستخدم:\n${userMessage}\n\nرد المساعد:\n${aiResponse}\n\nأعد كتابة الوثيقة الكاملة كنص Markdown محدث. أعد الوثيقة فقط بدون أي مقدمات.`;
+    const memoryPrompt = `أنت مسؤول صيانة وثيقة توثيق حية (Documentation Memory) لمحادثة قد يخدمها أكثر من نموذج ذكاء اصطناعي بالتناوب. هذه الوثيقة هي السياق الوحيد الذي سيراه أي نموذج تالٍ - لا يوجد سجل محادثة خام يُرسل معها.
+
+مهمتك: حدّث الوثيقة بحيث تبقى قصيرة ومركّزة قدر الإمكان مع الحفاظ على كل معلومة مهمة لاستمرارية السياق:
+- ادمج المعلومة الجديدة في مكانها المناسب بدل إضافتها كسطر منفصل بآخر الوثيقة.
+- أي نقطة أصبحت منجزة أو محسومة بهذه الرسالة: لخّصها بسطر واحد مختصر (أو احذفها إن لم تعد مفيدة لفهم القرارات اللاحقة) بدل الاحتفاظ بتفاصيل النقاش الذي أدى إليها.
+- احتفظ بالتفاصيل الكاملة فقط لما هو مفتوح أو جارٍ أو قد يحتاجه نموذج آخر لاحقاً.
+- لا تكرر معلومة مذكورة سابقاً بصياغة مختلفة.
+
+الوثيقة الحالية:
+${currentMemory || '(فارغة - هذه أول رسالة في المحادثة)'}
+
+آخر رسالة من المستخدم:
+${userMessage}
+
+رد المساعد:
+${aiResponse}
+
+أعد كتابة الوثيقة الكاملة المحدثة بصيغة Markdown فقط، بدون أي مقدمات أو شرح لعملك.`;
 
     const response = await env.AI.run(
       '@cf/qwen/qwen2.5-coder-32b-instruct',
