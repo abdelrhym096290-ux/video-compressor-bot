@@ -53,17 +53,18 @@ export default {
 
         const result = await experimentObj.fetch('https://internal/result', {
           method: 'POST',
-          body: JSON.stringify({ output: output, exitCode: exitCode }),
+          body: JSON.stringify({ output, exitCode }),
         });
 
         const resultData = await result.json();
+        const actualCommand = resultData.experiment?.command || 'from-github';
 
         const now = Date.now();
         await env.DB.prepare(
           `INSERT INTO experiments (chat_id, command, status, output, exit_code, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
-        .bind(experimentId, 'from-github', resultData.status, output, exitCode, now, now)
+        .bind(experimentId, actualCommand, resultData.status, output, exitCode, now, now)
         .run();
 
         return new Response(JSON.stringify(resultData), {
@@ -202,7 +203,6 @@ export default {
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         } catch (dbError) {
-          console.error('D1 get_memory error:', dbError.message);
           return new Response(JSON.stringify({ error: 'خطأ في قراءة الذاكرة: ' + dbError.message }), {
             status: 500,
             headers: { 'Content-Type': 'application/json', ...CORS },
@@ -222,8 +222,7 @@ export default {
           await env.DB.prepare(
             `INSERT INTO project_memory (chat_id, content, updated_at)
              VALUES (?, ?, ?)
-             ON CONFLICT(chat_id) DO UPDATE
-             SET content = ?, updated_at = ?`
+             ON CONFLICT(chat_id) DO UPDATE SET content = ?, updated_at = ?`
           )
           .bind(chatId, content || '', Date.now(), content || '', Date.now())
           .run();
@@ -232,7 +231,6 @@ export default {
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         } catch (dbError) {
-          console.error('D1 memory_update error:', dbError.message);
           return new Response(JSON.stringify({ error: 'خطأ في حفظ الذاكرة: ' + dbError.message }), {
             status: 500,
             headers: { 'Content-Type': 'application/json', ...CORS },
@@ -273,11 +271,10 @@ export default {
           const result = await experimentObj.fetch('https://internal/start', {
             method: 'POST',
             body: JSON.stringify({
-              command: command,
-              chatId: chatId,
+              command,
+              chatId,
               githubToken: env.GITHUB_TOKEN,
               hmacSecret: env.HMAC_SECRET,
-              db: true
             })
           });
 
@@ -286,7 +283,6 @@ export default {
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         } catch (cmdError) {
-          console.error('run_command error:', cmdError.message);
           return new Response(JSON.stringify({ error: 'خطأ في تشغيل الأمر: ' + cmdError.message }), {
             status: 500,
             headers: { 'Content-Type': 'application/json', ...CORS },
@@ -301,7 +297,6 @@ export default {
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         } catch (usageError) {
-          console.error('Usage error:', usageError.message);
           return new Response(JSON.stringify({ error: 'خطأ في جلب الاستهلاك: ' + usageError.message }), {
             status: 500,
             headers: { 'Content-Type': 'application/json', ...CORS },
@@ -423,7 +418,6 @@ async function isSessionValid(env, token) {
   }
 }
 
-// ============ Durable Object ============
 export class ExperimentState {
   constructor(state, env) {
     this.state = state;
@@ -608,10 +602,6 @@ const GEMINI_MODEL_MAP = {
   'gemini-3.7-flash': 'gemini-3.7-flash',
   'gemini-3.6-flash': 'gemini-3.6-flash',
   'gemini-3.5-flash': 'gemini-3.5-flash',
-  'gemini-2.5-pro': 'gemini-2.5-pro',
-  'gemini-2.5-flash': 'gemini-2.5-flash',
-  'gemini-2.5-flash-lite': 'gemini-2.5-flash-lite',
-  'gemini-flash-lite-latest': 'gemini-flash-lite-latest',
 };
 
 const WORKERS_AI_MODELS = {
@@ -651,12 +641,7 @@ async function callGemini(apiKey, messages, provider) {
   if (!response.ok) {
     console.error('Gemini API error:', JSON.stringify(data));
     if (response.status === 429) {
-      const retryDetail = data.error?.details?.find(d => d['@type']?.includes('RetryInfo'));
-      const retrySeconds = retryDetail?.retryDelay ? parseInt(retryDetail.retryDelay) : null;
-      throw new Error(
-        'تم تجاوز الحد المجاني المسموح به من Google للنموذج حاليًا. ' +
-        (retrySeconds ? ('حاول مرة أخرى خلال ' + retrySeconds + ' ثانية.') : 'حاول مرة أخرى بعد قليل.')
-      );
+      throw new Error('تم تجاوز الحد المجاني المسموح به من Google للنموذج حاليًا. حاول مرة أخرى بعد قليل.');
     }
     throw new Error(data.error?.message || ('Gemini API error (status ' + response.status + ')'));
   }
@@ -732,25 +717,12 @@ async function getUsageFromGateway(env) {
       viewer {
         accounts(filter: { accountTag: "${ACCOUNT_ID}" }) {
           aiGatewayRequestsAdaptiveGroups(
-            filter: {
-              datetimeHour_geq: "${startISO}"
-              datetimeHour_leq: "${endISO}"
-            }
+            filter: { datetimeHour_geq: "${startISO}", datetimeHour_leq: "${endISO}" }
             limit: 1000
           ) {
             count
-            dimensions {
-              model
-              provider
-              gateway
-              datetimeHour
-            }
-            sum {
-              tokensIn
-              tokensOut
-              totalTokens
-              cost
-            }
+            dimensions { model provider gateway datetimeHour }
+            sum { tokensIn tokensOut totalTokens cost }
           }
         }
       }
@@ -768,17 +740,11 @@ async function getUsageFromGateway(env) {
 
   const data = await response.json();
 
-  if (data.errors) {
-    throw new Error(data.errors[0]?.message || 'GraphQL error');
-  }
+  if (data.errors) throw new Error(data.errors[0]?.message || 'GraphQL error');
 
   const groups = data.data?.viewer?.accounts?.[0]?.aiGatewayRequestsAdaptiveGroups || [];
 
-  let totalRequests = 0;
-  let totalTokensIn = 0;
-  let totalTokensOut = 0;
-  let totalTokens = 0;
-  let totalCost = 0;
+  let totalRequests = 0, totalTokensIn = 0, totalTokensOut = 0, totalTokens = 0, totalCost = 0;
   const modelStats = {};
 
   groups.forEach(function(g) {
@@ -787,7 +753,6 @@ async function getUsageFromGateway(env) {
     totalTokensOut += g.sum?.tokensOut || 0;
     totalTokens += g.sum?.totalTokens || 0;
     totalCost += g.sum?.cost || 0;
-
     const model = g.dimensions?.model || 'unknown';
     if (!modelStats[model]) modelStats[model] = { requests: 0, tokensIn: 0, tokensOut: 0 };
     modelStats[model].requests += g.count || 0;
