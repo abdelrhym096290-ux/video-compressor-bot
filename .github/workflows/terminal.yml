@@ -1,0 +1,63 @@
+name: FOX AI Terminal
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'الأمر الذي سيُنفذ'
+        required: true
+        default: 'echo مرحبا'
+
+concurrency:
+  group: fox-ai-terminal
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  execute:
+    name: تنفيذ الأمر
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: تجهيز البيئة
+        run: |
+          sudo apt update
+          sudo apt install -y python3 python3-pip git curl
+
+      - name: تنفيذ الأمر
+        id: execute
+        env:
+          USER_COMMAND: ${{ github.event.inputs.command }}
+        run: |
+          set +e
+          OUTPUT=$(eval "$USER_COMMAND" 2>&1)
+          EXIT_CODE=$?
+          set -e
+          
+          echo "=== OUTPUT ==="
+          echo "$OUTPUT"
+          echo "=== END ==="
+          
+          echo "$OUTPUT" > output.txt
+          echo "$EXIT_CODE" > exit_code.txt
+
+      - name: إرسال النتيجة إلى العامل
+        env:
+          HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+        run: |
+          OUTPUT=$(cat output.txt)
+          EXIT_CODE=$(cat exit_code.txt)
+          
+          # بناء JSON
+          PAYLOAD="{\"output\":\"$OUTPUT\",\"exit_code\":$EXIT_CODE}"
+          
+          # حساب HMAC SHA-256
+          SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$HMAC_SECRET" | awk '{print $2}')
+          
+          # إرسال النتيجة
+          curl -X POST "https://fox1-ai.abdelrhym096290.workers.dev/result" \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
+            -d "$PAYLOAD"
