@@ -511,14 +511,18 @@ async function loadUsage(){
     if (data.error) throw new Error(data.error);
 
     let html = '';
-    html += 'إجمالي الطلبات: ' + data.totals.requests + '\n';
-    html += 'إجمالي التوكنات: ' + data.totals.tokens + '\n\n';
-    html += 'حسب النموذج:\n';
-    Object.keys(data.byModel).forEach(function(model){
-      html += '• ' + model + ': ' + data.byModel[model].requests + ' طلب\n';
-    });
-    if (data.note) html += '\n' + data.note;
-    usageContent.textContent = html;
+html += 'إجمالي الطلبات: ' + (data.totals?.requests || 0) + '\n';
+if (data.totals?.tokens) {
+  html += 'إجمالي التوكنات: ' + data.totals.tokens + '\n';
+}
+if (data.byModel && Object.keys(data.byModel).length > 0) {
+  html += '\nحسب النموذج:\n';
+  Object.keys(data.byModel).forEach(function(model){
+    html += '• ' + model + ': ' + data.byModel[model].requests + ' طلب\n';
+  });
+}
+if (data.note) html += '\n' + data.note;
+usageContent.textContent = html;
   } catch (error) {
     usageContent.textContent = 'خطأ: ' + error.message;
   }
