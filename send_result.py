@@ -10,7 +10,7 @@ with open('output.txt', 'r') as f:
 with open('exit_code.txt', 'r') as f:
     exit_code = int(f.read().strip())
 
-payload = json.dumps({'output': output, 'exit_code': exit_code})
+payload = json.dumps({'output': output, 'exit_code': exit_code}, sort_keys=True, separators=(',', ':'))
 secret = os.environ['HMAC_SECRET'].encode()
 signature = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
 
