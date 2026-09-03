@@ -23,24 +23,16 @@ export default {
     // ============ مسار استقبال نتائج GitHub ============
     if (request.url.includes('/result')) {
       try {
-        const signature = request.headers.get('X-Hub-Signature-256') || '';
-        const receivedSig = signature.replace(/^sha256=/, '');
+        const webhookBody = await request.json();
         
-        // قراءة النص الخام قبل أي parsing
-        const rawBody = await request.text();
-        
-        // حساب HMAC على النص الخام
-        const calculatedSig = await hmacSha256(rawBody, env.HMAC_SECRET);
-        
-        if (!receivedSig || calculatedSig !== receivedSig) {
+        if (webhookBody.secret !== env.HMAC_SECRET) {
           return new Response(JSON.stringify({ error: 'توقيع غير صالح' }), {
             status: 403,
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         }
-
-        // بعد التحقق — parse
-        const webhookBody = JSON.parse(rawBody);
+        
+        delete webhookBody.secret;
 
         const output = webhookBody.output || 'لا توجد نتائج';
         const experimentId = webhookBody.experimentId || 'unknown';
@@ -391,22 +383,6 @@ export class ExperimentState {
       headers: { 'Content-Type': 'application/json' },
     });
   }
-}
-
-// ============ HMAC (النص الخام) ============
-async function hmacSha256(message, secret) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const signature = await crypto.subtle.sign('HMAC', key, enc.encode(message));
-  return Array.from(new Uint8Array(signature))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 // ============ نماذج Gemini ============
