@@ -59,6 +59,10 @@
     width:100%; padding:9px; background:none; border:1px solid var(--border);
     border-radius:10px; color:var(--text); cursor:pointer; font-size:13px;
   }
+  .logout-btn{
+    width:100%; margin-top:8px; padding:9px; background:none; border:1px solid #d33;
+    border-radius:10px; color:#d33; cursor:pointer; font-size:13px;
+  }
 
   @media (min-width:860px){
     #backdrop{ display:none; }
@@ -69,6 +73,7 @@
   #header{
     display:flex; align-items:center; padding:calc(12px + env(safe-area-inset-top)) 14px 12px; gap:6px;
     border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap;
+    position:sticky; top:0; z-index:30; background:var(--bg); backdrop-filter:blur(10px);
   }
   .icon-square-btn{
     background:none; border:none; color:var(--text); cursor:pointer;
@@ -81,17 +86,18 @@
     background:var(--input-bg);
     color:var(--text);
     border:1px solid var(--border);
-    border-radius:8px;
-    padding:5px 8px;
-    font-size:12px;
+    border-radius:10px;
+    padding:7px 10px;
+    font-size:12.5px;
     cursor:pointer;
     outline:none;
     font-family:inherit;
-    max-width:160px;
+    max-width:180px;
     flex-shrink:0;
+    transition:border .2s;
   }
-  .model-select:hover{ border-color:var(--text-soft); }
-  .model-select:focus{ border-color:var(--accent); }
+  .model-select:hover{ border-color:var(--accent); }
+  .model-select:focus{ border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
 
   .model-desc{
     font-size:10.5px; color:var(--text-soft); text-align:center;
@@ -101,18 +107,20 @@
   .memory-toggle-btn{
     background:none; border:none; color:var(--text-soft); cursor:pointer;
     padding:7px; border-radius:8px; display:flex; align-items:center; justify-content:center;
-    flex-shrink:0;
+    flex-shrink:0; transition:color .2s;
   }
+  .memory-toggle-btn:hover{ color:var(--accent); }
   .memory-toggle-btn:active{ background:var(--accent-soft); }
   .memory-toggle-btn.active{ color:var(--accent); }
 
-  #usage-panel{
+  #usage-panel, #experiments-panel{
     display:none; flex-shrink:0; border-top:1px solid var(--border);
     padding:12px 14px; background:var(--sidebar-bg); max-height:35vh;
     overflow-y:auto; -webkit-overflow-scrolling:touch;
   }
-  #usage-panel.open{ display:block; }
+  #usage-panel.open, #experiments-panel.open{ display:block; }
   .usage-content{ font-size:13px; color:var(--text); white-space:pre-wrap; line-height:1.7; }
+  .experiments-list{ font-size:13px; color:var(--text); line-height:1.7; }
 
   #memory-panel{
     display:none; flex-shrink:0; border-top:1px solid var(--border);
@@ -239,6 +247,14 @@
   #send-btn:disabled{ opacity:.4; cursor:not-allowed; }
   #send-btn.generating{ background:var(--text-soft); }
 
+  .input-action-btn{
+    background:none; border:none; color:var(--text-soft); cursor:pointer;
+    padding:6px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .input-action-btn:active{ background:var(--accent-soft); color:var(--text); }
+  .input-action-btn.recording{ color:#d33; animation:pulse 1s infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:.5;} }
+
   #lock-screen{
     position:fixed; inset:0; background:var(--bg); z-index:100;
     display:flex; align-items:center; justify-content:center; flex-direction:column; gap:16px;
@@ -259,6 +275,17 @@
     border-radius:10px; color:#fff; cursor:pointer; font-size:14px; font-weight:500;
   }
   .lock-error{ font-size:12.5px; color:#d33; margin-top:8px; display:none; }
+
+  #file-input{ display:none; }
+
+  .scroll-btn{
+    position:fixed; left:16px; bottom:100px; background:var(--accent); border:none;
+    border-radius:50%; width:38px; height:38px; cursor:pointer; z-index:35;
+    display:flex; align-items:center; justify-content:center; color:#fff;
+    box-shadow:0 2px 10px rgba(0,0,0,.2); transition:opacity .2s;
+  }
+  .scroll-btn.down{ bottom:52px; }
+  .scroll-btn.hidden{ opacity:0; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -285,6 +312,7 @@
   <div id="chat-list"></div>
   <div class="sidebar-footer">
     <button class="theme-btn" id="theme-btn" type="button">تغيير المظهر</button>
+    <button class="logout-btn" id="logout-btn" type="button">تسجيل خروج</button>
   </div>
 </div>
 
@@ -295,6 +323,9 @@
     </button>
     <strong>FOX AI</strong>
     <select id="modelSelect" class="model-select" title="اختيار النموذج"></select>
+    <button class="memory-toggle-btn" id="experiments-toggle-btn" type="button" title="سجل التجارب">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    </button>
     <button class="memory-toggle-btn" id="usage-toggle-btn" type="button" title="الاستهلاك">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
     </button>
@@ -308,6 +339,17 @@
   </div>
 
   <div id="messages"></div>
+
+  <div id="experiments-panel">
+    <div class="memory-header">
+      <span>سجل التجارب</span>
+      <button class="icon-square-btn" id="experiments-close-btn" type="button" aria-label="إغلاق">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="experiments-content" class="experiments-list">اضغط تحديث...</div>
+    <button class="memory-save-btn" id="experiments-load-btn" type="button">تحديث</button>
+  </div>
 
   <div id="usage-panel">
     <div class="memory-header">
@@ -333,11 +375,25 @@
 
   <div id="input-area">
     <div id="input-container">
+      <button class="input-action-btn" id="mic-btn" type="button" title="إدخال صوتي">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+      </button>
+      <button class="input-action-btn" id="file-btn" type="button" title="رفع ملف">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      </button>
       <textarea id="user-input" rows="1" placeholder="اكتب رسالتك هنا..." enterkeyhint="enter" autocomplete="off" autocorrect="on"></textarea>
       <button id="send-btn" type="button" title="إرسال"></button>
     </div>
   </div>
+  <input type="file" id="file-input" multiple accept="image/*,.txt,.js,.py,.md,.json,.html,.css">
 </div>
+
+<button class="scroll-btn hidden" id="scroll-up-btn" type="button" title="أعلى">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"><polyline points="18 15 12 9 6 15"/></svg>
+</button>
+<button class="scroll-btn down hidden" id="scroll-down-btn" type="button" title="أسفل">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+</button>
 
 <script>
 'use strict';
@@ -349,6 +405,7 @@ const ICONS = {
   check: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
   thumbUp: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v11"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h2.76a2 2 0 0 0 1.79-1.11L12 2h.5A2.5 2.5 0 0 1 15 4.5z"/></svg>',
   retry: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>',
+  speaker: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>',
 };
 const TERMINAL_LANGS = ['bash','sh','shell','zsh','console','terminal','powershell','cmd','bat'];
 const WORKER_URL = 'https://fox1-ai.abdelrhym096290.workers.dev';
@@ -379,110 +436,125 @@ const usageCloseBtn = document.getElementById('usage-close-btn');
 const usagePanel = document.getElementById('usage-panel');
 const usageContent = document.getElementById('usage-content');
 const usageLoadBtn = document.getElementById('usage-load-btn');
+const experimentsToggleBtn = document.getElementById('experiments-toggle-btn');
+const experimentsCloseBtn = document.getElementById('experiments-close-btn');
+const experimentsPanel = document.getElementById('experiments-panel');
+const experimentsContent = document.getElementById('experiments-content');
+const experimentsLoadBtn = document.getElementById('experiments-load-btn');
+const micBtn = document.getElementById('mic-btn');
+const fileBtn = document.getElementById('file-btn');
+const fileInput = document.getElementById('file-input');
+const logoutBtn = document.getElementById('logout-btn');
+const scrollUpBtn = document.getElementById('scroll-up-btn');
+const scrollDownBtn = document.getElementById('scroll-down-btn');
 
-let accessPassword = localStorage.getItem('fox-pass') || '';
+let sessionToken = localStorage.getItem('fox-session') || '';
+let isRecording = false;
+let recognition = null;
 
-lockBtn.addEventListener('click', verifyPassword);
+/* ============ شاشة القفل ============ */
+lockBtn.addEventListener('click', login);
 lockInput.addEventListener('keydown', function(e){
-  if (e.key === 'Enter') verifyPassword();
+  if (e.key === 'Enter') login();
 });
 
-function verifyPassword(){
-  const entered = lockInput.value.trim();
-  if (!entered) return;
-  accessPassword = entered;
-  localStorage.setItem('fox-pass', entered);
-  checkPassword();
-}
-
-async function checkPassword(){
+async function login(){
+  const password = lockInput.value.trim();
+  if (!password) return;
   try {
     const response = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'get_memory',
-        chatId: 'auth-check',
-        accessPassword: accessPassword
-      })
+      body: JSON.stringify({ action: 'login', accessPassword: password })
     });
     const data = await response.json();
-    if (data.authRequired) {
-      lockError.style.display = 'block';
-      localStorage.removeItem('fox-pass');
-      accessPassword = '';
-      lockInput.value = '';
-      lockInput.focus();
-    } else {
+    if (data.success && data.token) {
+      sessionToken = data.token;
+      localStorage.setItem('fox-session', sessionToken);
       lockScreen.style.display = 'none';
+      lockInput.value = '';
+    } else {
+      lockError.textContent = data.error || 'كلمة المرور غير صحيحة';
+      lockError.style.display = 'block';
+      lockInput.focus();
     }
   } catch (error) {
+    lockError.textContent = 'خطأ في الاتصال';
     lockError.style.display = 'block';
   }
 }
 
-if (accessPassword) {
-  checkPassword();
-} else {
-  lockScreen.style.display = 'flex';
-  lockInput.focus();
+async function checkSession(){
+  if (!sessionToken) { lockScreen.style.display = 'flex'; lockInput.focus(); return; }
+  try {
+    const response = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'check_session', sessionToken: sessionToken })
+    });
+    const data = await response.json();
+    if (!data.valid) {
+      localStorage.removeItem('fox-session');
+      sessionToken = '';
+      lockScreen.style.display = 'flex';
+      lockInput.focus();
+    } else {
+      lockScreen.style.display = 'none';
+    }
+  } catch (error) { lockScreen.style.display = 'flex'; }
 }
 
-/* ============ النماذج مرتبة حسب الشركة ============ */
+logoutBtn.addEventListener('click', async function(){
+  if (sessionToken) {
+    await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'logout', sessionToken: sessionToken })
+    }).catch(() => {});
+  }
+  localStorage.removeItem('fox-session');
+  sessionToken = '';
+  lockScreen.style.display = 'flex';
+  lockInput.focus();
+});
+
+if (sessionToken) { checkSession(); } else { lockScreen.style.display = 'flex'; lockInput.focus(); }
+
+/* ============ النماذج ============ */
 const PROVIDERS = [
-  // Google Gemini (API مستقل)
-  { value: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', desc: 'Google — الأحدث والأقوى Flash' },
-  { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', desc: 'Google — Flash حديث' },
-  { value: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', desc: 'Google — Flash مستقر' },
-  { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', desc: 'Google — Flash متوازن' },
-  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', desc: 'Google — Pro قوي للتفكير' },
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Google — خفيف وسريع' },
-  { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', desc: 'Google — أخف نسخة' },
-  { value: 'gemini-flash-lite-latest', label: 'Gemini Flash Lite', desc: 'Google — أحدث Lite' },
-  { value: 'gemini', label: 'Gemini (افتراضي)', desc: 'Google — نفس Gemini 3.6 Flash' },
-
-  // Google Gemma (Workers AI)
-  { value: 'cf-gemma-4', label: 'Gemma 4 26B', desc: 'Google — تفكير + عملاء + رؤية' },
-
-  // Alibaba Qwen (Workers AI)
-  { value: 'cf-qwen3-coder', label: 'Qwen3.8 27B', desc: 'Alibaba — برمجة + رؤية + سياق 262K' },
-  { value: 'cf-coder', label: 'Qwen Coder 32B', desc: 'Alibaba — كود معقد + سياق 32K' },
-  { value: 'cf-qwen3', label: 'Qwen3 30B', desc: 'Alibaba — برمجة + متعدد اللغات' },
-  { value: 'cf-qwq', label: 'QwQ 32B', desc: 'Alibaba — تفكير عميق + رياضيات' },
-
-  // Z.ai GLM
-  { value: 'cf-glm-flash', label: 'GLM 4.7 Flash', desc: 'Z.ai — برمجة + Agents + سياق 131K' },
-
-  // DeepSeek
-  { value: 'cf-deepseek-r1', label: 'DeepSeek R1', desc: 'DeepSeek — منطق + رياضيات + كود' },
-
-  // OpenAI
-  { value: 'cf-gpt-oss-120b', label: 'GPT-OSS 120B', desc: 'OpenAI — تفكير + برمجة + إنتاج' },
-  { value: 'cf-gpt-oss-20b', label: 'GPT-OSS 20B', desc: 'OpenAI — كود + سرعة' },
-
-  // NVIDIA
-  { value: 'cf-nemotron', label: 'Nemotron 3 120B', desc: 'NVIDIA — تفكير عميق + عملاء' },
-
-  // Meta Llama
-  { value: 'cf-llama-70b', label: 'Llama 3.3 70B', desc: 'Meta — محادثة + كود قوي' },
-  { value: 'cf-llama-4', label: 'Llama 4 Scout', desc: 'Meta — عام + رؤية' },
-  { value: 'cf-llama-vision', label: 'Llama Vision 11B', desc: 'Meta — تحليل صور + محادثة' },
-
-  // Mistral AI
-  { value: 'cf-mistral', label: 'Mistral 24B', desc: 'Mistral AI — كتابة + برمجة + رؤية' },
-
-  // IBM
-  { value: 'cf-granite', label: 'Granite 4.0', desc: 'IBM — Agents + RAG + خفيف سريع' },
+  { value: 'gemini-3.8-flash', label: '✦ Gemini 3.8 Flash', desc: 'Google — الأحدث والأقوى Flash' },
+  { value: 'gemini-3.7-flash', label: '✦ Gemini 3.7 Flash', desc: 'Google — Flash حديث' },
+  { value: 'gemini-3.6-flash', label: '✦ Gemini 3.6 Flash', desc: 'Google — Flash مستقر' },
+  { value: 'gemini-3.5-flash', label: '✦ Gemini 3.5 Flash', desc: 'Google — Flash متوازن' },
+  { value: 'gemini-2.5-pro', label: '✦ Gemini 2.5 Pro', desc: 'Google — Pro قوي للتفكير' },
+  { value: 'gemini-2.5-flash', label: '✦ Gemini 2.5 Flash', desc: 'Google — خفيف وسريع' },
+  { value: 'gemini-2.5-flash-lite', label: '✦ Gemini 2.5 Flash Lite', desc: 'Google — أخف نسخة' },
+  { value: 'gemini-flash-lite-latest', label: '✦ Gemini Flash Lite', desc: 'Google — أحدث Lite' },
+  { value: 'gemini', label: '✦ Gemini افتراضي', desc: 'Google — Gemini 3.6 Flash' },
+  { value: 'cf-gemma-4', label: '● Gemma 4 26B', desc: 'Google — تفكير + عملاء + رؤية' },
+  { value: 'cf-qwen3-coder', label: '■ Qwen3.8 27B', desc: 'Alibaba — برمجة + رؤية + 262K' },
+  { value: 'cf-coder', label: '■ Qwen Coder 32B', desc: 'Alibaba — كود معقد + 32K' },
+  { value: 'cf-qwen3', label: '■ Qwen3 30B', desc: 'Alibaba — برمجة + لغات' },
+  { value: 'cf-qwq', label: '■ QwQ 32B', desc: 'Alibaba — تفكير + رياضيات' },
+  { value: 'cf-glm-flash', label: '▲ GLM 4.7 Flash', desc: 'Z.ai — برمجة + Agents' },
+  { value: 'cf-deepseek-r1', label: '◆ DeepSeek R1', desc: 'DeepSeek — منطق + كود' },
+  { value: 'cf-gpt-oss-120b', label: '● GPT-OSS 120B', desc: 'OpenAI — تفكير + إنتاج' },
+  { value: 'cf-gpt-oss-20b', label: '● GPT-OSS 20B', desc: 'OpenAI — كود + سرعة' },
+  { value: 'cf-nemotron', label: '◆ Nemotron 3 120B', desc: 'NVIDIA — تفكير عميق' },
+  { value: 'cf-llama-70b', label: '▲ Llama 3.3 70B', desc: 'Meta — محادثة + كود' },
+  { value: 'cf-llama-4', label: '▲ Llama 4 Scout', desc: 'Meta — عام + رؤية' },
+  { value: 'cf-llama-vision', label: '▲ Llama Vision 11B', desc: 'Meta — تحليل صور' },
+  { value: 'cf-mistral', label: '● Mistral 24B', desc: 'Mistral — كتابة + رؤية' },
+  { value: 'cf-granite', label: '■ Granite 4.0', desc: 'IBM — Agents + RAG' },
 ];
 
 function initModelSelect(){
   PROVIDERS.forEach(function(p){
     const opt = document.createElement('option');
     opt.value = p.value;
-    opt.textContent = p.label;
+    opt.textContent = p.label + ' — ' + p.desc;
     modelSelect.appendChild(opt);
   });
-
   const saved = localStorage.getItem('fox-model');
   if (saved && PROVIDERS.some(function(p){ return p.value === saved; })) {
     modelSelect.value = saved;
@@ -496,30 +568,57 @@ function updateModelDesc(){
   modelDesc.textContent = found ? found.desc : '';
 }
 
-function getSelectedProvider(){
-  return modelSelect.value;
-}
+function getSelectedProvider(){ return modelSelect.value; }
 
 modelSelect.addEventListener('change', function(){
   localStorage.setItem('fox-model', modelSelect.value);
   updateModelDesc();
 });
 
-/* ============ لوحة الاستهلاك ============ */
+/* ============ سجل التجارب ============ */
+experimentsToggleBtn.addEventListener('click', function(){
+  experimentsPanel.classList.toggle('open');
+  experimentsToggleBtn.classList.toggle('active');
+  if (experimentsPanel.classList.contains('open')) loadExperiments();
+});
+experimentsCloseBtn.addEventListener('click', function(){
+  experimentsPanel.classList.remove('open');
+  experimentsToggleBtn.classList.remove('active');
+});
+experimentsLoadBtn.addEventListener('click', loadExperiments);
 
+async function loadExperiments(){
+  experimentsContent.textContent = 'جاري التحميل...';
+  try {
+    const response = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get_experiments', sessionToken: sessionToken })
+    });
+    const data = await response.json();
+    if (data.error) throw new Error(data.error);
+    if (!data.experiments || data.experiments.length === 0) { experimentsContent.textContent = 'لا توجد تجارب'; return; }
+    let html = '';
+    data.experiments.forEach(function(exp){
+      const date = new Date(exp.created_at).toLocaleString('ar');
+      html += '• ' + exp.status + ' | ' + exp.command + ' | ' + date + '\n';
+      if (exp.output) html += '  ' + exp.output.substring(0, 100) + '\n';
+      html += '\n';
+    });
+    experimentsContent.textContent = html;
+  } catch (error) { experimentsContent.textContent = 'خطأ: ' + error.message; }
+}
+
+/* ============ الاستهلاك ============ */
 usageToggleBtn.addEventListener('click', function(){
   usagePanel.classList.toggle('open');
   usageToggleBtn.classList.toggle('active');
-  if (usagePanel.classList.contains('open')) {
-    loadUsage();
-  }
+  if (usagePanel.classList.contains('open')) loadUsage();
 });
-
 usageCloseBtn.addEventListener('click', function(){
   usagePanel.classList.remove('open');
   usageToggleBtn.classList.remove('active');
 });
-
 usageLoadBtn.addEventListener('click', loadUsage);
 
 async function loadUsage(){
@@ -528,38 +627,27 @@ async function loadUsage(){
     const response = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'usage',
-        accessPassword: accessPassword
-      })
+      body: JSON.stringify({ action: 'usage', sessionToken: sessionToken })
     });
     const data = await response.json();
     if (data.error) throw new Error(data.error);
-
     let html = '';
     html += 'إجمالي الطلبات: ' + (data.totals?.requests || 0) + '\n';
     if (data.note) html += '\n' + data.note;
     usageContent.textContent = html;
-  } catch (error) {
-    usageContent.textContent = 'خطأ: ' + error.message;
-  }
+  } catch (error) { usageContent.textContent = 'خطأ: ' + error.message; }
 }
 
 /* ============ الذاكرة ============ */
-
 memoryToggleBtn.addEventListener('click', function(){
   memoryPanel.classList.toggle('open');
   memoryToggleBtn.classList.toggle('active');
-  if (memoryPanel.classList.contains('open')) {
-    loadMemory();
-  }
+  if (memoryPanel.classList.contains('open')) loadMemory();
 });
-
 memoryCloseBtn.addEventListener('click', function(){
   memoryPanel.classList.remove('open');
   memoryToggleBtn.classList.remove('active');
 });
-
 memorySaveBtn.addEventListener('click', saveMemoryManually);
 
 async function loadMemory(){
@@ -567,19 +655,12 @@ async function loadMemory(){
     const response = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'get_memory',
-        chatId: currentChatId,
-        accessPassword: accessPassword
-      })
+      body: JSON.stringify({ action: 'get_memory', chatId: currentChatId, sessionToken: sessionToken })
     });
     const data = await response.json();
     if (data.error) throw new Error(data.error);
     memoryContent.value = data.content || '';
-  } catch (error) {
-    console.error('loadMemory error:', error.message);
-    memoryContent.value = '';
-  }
+  } catch (error) { console.error('loadMemory error:', error.message); memoryContent.value = ''; }
 }
 
 async function saveMemoryManually(){
@@ -587,23 +668,67 @@ async function saveMemoryManually(){
     const response = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'memory_update',
-        chatId: currentChatId,
-        content: memoryContent.value,
-        accessPassword: accessPassword
-      })
+      body: JSON.stringify({ action: 'memory_update', chatId: currentChatId, content: memoryContent.value, sessionToken: sessionToken })
     });
     const data = await response.json();
     if (data.error) throw new Error(data.error);
     memorySaveBtn.textContent = '✓ تم الحفظ';
     setTimeout(function(){ memorySaveBtn.textContent = 'حفظ'; }, 1200);
   } catch (error) {
-    console.error('saveMemory error:', error.message);
     memorySaveBtn.textContent = '⚠️ خطأ';
     setTimeout(function(){ memorySaveBtn.textContent = 'حفظ'; }, 1200);
   }
 }
+
+/* ============ الإدخال الصوتي ============ */
+micBtn.addEventListener('click', function(){
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    alert('الإدخال الصوتي غير مدعوم في متصفحك');
+    return;
+  }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!recognition) {
+    recognition = new SR();
+    recognition.lang = 'ar-SA';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = function(e){
+      const text = e.results[0][0].transcript;
+      userInput.value = text;
+      autoGrow();
+      isRecording = false;
+      micBtn.classList.remove('recording');
+    };
+    recognition.onend = function(){ isRecording = false; micBtn.classList.remove('recording'); };
+    recognition.onerror = function(){ isRecording = false; micBtn.classList.remove('recording'); };
+  }
+  if (isRecording) { recognition.stop(); isRecording = false; micBtn.classList.remove('recording'); }
+  else { recognition.start(); isRecording = true; micBtn.classList.add('recording'); }
+});
+
+/* ============ رفع ملفات ============ */
+fileBtn.addEventListener('click', function(){ fileInput.click(); });
+
+fileInput.addEventListener('change', async function(){
+  const files = fileInput.files;
+  if (!files.length) return;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const reader = new FileReader();
+    reader.onload = function(e){
+      const content = e.target.result;
+      const isImage = file.type.startsWith('image/');
+      const msgText = isImage
+        ? `[صورة: ${file.name}] (${file.type}) — Base64: ${content.split(',')[1]?.substring(0, 300)}...`
+        : `[ملف: ${file.name}]\n${content}`;
+      userInput.value += (userInput.value ? '\n\n' : '') + msgText;
+      autoGrow();
+    };
+    if (file.type.startsWith('image/')) { reader.readAsDataURL(file); }
+    else { reader.readAsText(file); }
+  }
+  fileInput.value = '';
+});
 
 let isGenerating = false;
 let currentController = null;
@@ -615,10 +740,7 @@ function autoGrow(){
 userInput.addEventListener('input', autoGrow);
 
 userInput.addEventListener('keydown', function(e){
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault();
-    sendMessage();
-  }
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); }
 });
 
 sendBtn.addEventListener('click', function(){
@@ -628,9 +750,7 @@ sendBtn.addEventListener('click', function(){
 
 function openSidebar(){ sidebar.classList.add('open'); backdrop.classList.add('show'); }
 function closeSidebar(){ sidebar.classList.remove('open'); backdrop.classList.remove('show'); }
-menuBtn.addEventListener('click', function(){
-  sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
-});
+menuBtn.addEventListener('click', function(){ sidebar.classList.contains('open') ? closeSidebar() : openSidebar(); });
 backdrop.addEventListener('click', closeSidebar);
 
 themeBtn.addEventListener('click', function(){
@@ -667,9 +787,7 @@ function createNewChat(){
   renderChatList();
   renderMessages();
   closeSidebar();
-  if (memoryPanel.classList.contains('open')) {
-    memoryContent.value = '';
-  }
+  if (memoryPanel.classList.contains('open')) memoryContent.value = '';
 }
 
 function renderChatList(){
@@ -685,9 +803,7 @@ function renderChatList(){
       renderChatList();
       renderMessages();
       closeSidebar();
-      if (memoryPanel.classList.contains('open')) {
-        loadMemory();
-      }
+      if (memoryPanel.classList.contains('open')) loadMemory();
     });
     chatList.appendChild(div);
   });
@@ -703,25 +819,17 @@ function renderMarkdown(raw){
     blocks.push({ lang: lang.trim(), code: code.replace(/\n$/, '') });
     return '\u0000CODEBLOCK' + (blocks.length - 1) + '\u0000';
   });
-
   text = escapeHtml(text);
   text = text.replace(/`([^`\n]+)`/g, '<code>$1</code>');
   text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   text = text.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
-
   const lines = text.split('\n');
   let html = '';
   let listType = null;
   let paragraph = [];
-
-  function flushParagraph(){
-    if (paragraph.length){ html += '<p>' + paragraph.join('<br>') + '</p>'; paragraph = []; }
-  }
-  function closeList(){
-    if (listType){ html += '</' + listType + '>'; listType = null; }
-  }
-
+  function flushParagraph(){ if (paragraph.length){ html += '<p>' + paragraph.join('<br>') + '</p>'; paragraph = []; } }
+  function closeList(){ if (listType){ html += '</' + listType + '>'; listType = null; } }
   lines.forEach(function(line){
     const h = line.match(/^(#{1,3})\s+(.*)$/);
     const ul = line.match(/^[-*]\s+(.*)$/);
@@ -729,42 +837,20 @@ function renderMarkdown(raw){
     const bq = line.match(/^&gt;\s?(.*)$/);
     const hr = /^-{3,}$/.test(line.trim());
     const isCodePlaceholder = /^\u0000CODEBLOCK\d+\u0000$/.test(line.trim());
-
-    if (isCodePlaceholder){
-      flushParagraph(); closeList();
-      html += line.trim();
-    } else if (h){
-      flushParagraph(); closeList();
-      const level = h[1].length;
-      html += '<h' + level + '>' + h[2] + '</h' + level + '>';
-    } else if (ul){
-      flushParagraph();
-      if (listType !== 'ul'){ closeList(); html += '<ul>'; listType = 'ul'; }
-      html += '<li>' + ul[1] + '</li>';
-    } else if (ol){
-      flushParagraph();
-      if (listType !== 'ol'){ closeList(); html += '<ol>'; listType = 'ol'; }
-      html += '<li>' + ol[1] + '</li>';
-    } else if (bq){
-      flushParagraph(); closeList();
-      html += '<blockquote>' + bq[1] + '</blockquote>';
-    } else if (hr){
-      flushParagraph(); closeList();
-      html += '<hr>';
-    } else if (line.trim() === ''){
-      flushParagraph(); closeList();
-    } else {
-      closeList();
-      paragraph.push(line);
-    }
+    if (isCodePlaceholder){ flushParagraph(); closeList(); html += line.trim(); }
+    else if (h){ flushParagraph(); closeList(); const level = h[1].length; html += '<h' + level + '>' + h[2] + '</h' + level + '>'; }
+    else if (ul){ flushParagraph(); if (listType !== 'ul'){ closeList(); html += '<ul>'; listType = 'ul'; } html += '<li>' + ul[1] + '</li>'; }
+    else if (ol){ flushParagraph(); if (listType !== 'ol'){ closeList(); html += '<ol>'; listType = 'ol'; } html += '<li>' + ol[1] + '</li>'; }
+    else if (bq){ flushParagraph(); closeList(); html += '<blockquote>' + bq[1] + '</blockquote>'; }
+    else if (hr){ flushParagraph(); closeList(); html += '<hr>'; }
+    else if (line.trim() === ''){ flushParagraph(); closeList(); }
+    else { closeList(); paragraph.push(line); }
   });
   flushParagraph(); closeList();
-
   html = html.replace(/\u0000CODEBLOCK(\d+)\u0000/g, function(m, i){
     const b = blocks[Number(i)];
     return '<pre><code class="language-' + (b.lang || 'text') + '">' + escapeHtml(b.code) + '</code></pre>';
   });
-
   return html;
 }
 
@@ -775,21 +861,14 @@ function enhanceCodeBlocks(container){
     const pre = codeEl.parentElement;
     const langMatch = Array.prototype.find.call(codeEl.classList, function(c){ return c.indexOf('language-') === 0; });
     const lang = langMatch ? langMatch.replace('language-', '') : '';
-
     const wrapper = document.createElement('div');
     wrapper.className = 'code-block' + (isTerminalLang(lang) ? ' terminal' : '');
-
     const header = document.createElement('div');
     header.className = 'code-header';
-
     const left = document.createElement('div');
     left.className = 'code-header-left';
-    if (isTerminalLang(lang)) {
-      left.innerHTML = '<span class="term-dots"><i></i><i></i><i></i></span><span class="code-lang">' + (lang || 'terminal') + '</span>';
-    } else {
-      left.innerHTML = '<span class="code-lang">' + (lang || 'text') + '</span>';
-    }
-
+    if (isTerminalLang(lang)) { left.innerHTML = '<span class="term-dots"><i></i><i></i><i></i></span><span class="code-lang">' + (lang || 'terminal') + '</span>'; }
+    else { left.innerHTML = '<span class="code-lang">' + (lang || 'text') + '</span>'; }
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'code-copy-btn';
@@ -799,7 +878,6 @@ function enhanceCodeBlocks(container){
       copyBtn.innerHTML = ICONS.check + '<span>تم النسخ</span>';
       setTimeout(function(){ copyBtn.innerHTML = ICONS.copy + '<span>نسخ</span>'; }, 1500);
     });
-
     header.appendChild(left);
     header.appendChild(copyBtn);
     pre.parentNode.insertBefore(wrapper, pre);
@@ -822,48 +900,44 @@ function appendBubble(text, role, index, chat, opts){
   opts = opts || {};
   const msgDiv = document.createElement('div');
   msgDiv.className = 'message ' + role;
-
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
-  if (role === 'ai') {
-    bubble.innerHTML = renderMarkdown(text);
-    enhanceCodeBlocks(bubble);
-  } else {
-    bubble.textContent = text;
-  }
+  if (role === 'ai') { bubble.innerHTML = renderMarkdown(text); enhanceCodeBlocks(bubble); }
+  else { bubble.textContent = text; }
   msgDiv.appendChild(bubble);
-
   if (!opts.ephemeral) {
     const actions = document.createElement('div');
     actions.className = 'msg-actions';
-
     const copyBtn = makeIconBtn(ICONS.copy, 'نسخ', function(){
       navigator.clipboard.writeText(text);
       copyBtn.innerHTML = ICONS.check;
       setTimeout(function(){ copyBtn.innerHTML = ICONS.copy; }, 1200);
     });
     actions.appendChild(copyBtn);
-
     if (role === 'ai') {
+      const speakBtn = makeIconBtn(ICONS.speaker, 'قراءة', function(){
+        const cleanText = text.replace(/<[^>]*>/g, ' ').replace(/```[\s\S]*?```/g, ' ').replace(/#+\s?/g, '');
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.lang = 'ar-SA';
+        speechSynthesis.cancel();
+        speechSynthesis.speak(utterance);
+      });
+      actions.appendChild(speakBtn);
       const upBtn = makeIconBtn(ICONS.thumbUp, 'إعجاب', function(){
-        upBtn.classList.toggle('active');
-        downBtn.classList.remove('active');
+        upBtn.classList.toggle('active'); downBtn.classList.remove('active');
       });
       const downBtn = makeIconBtn(ICONS.thumbUp, 'عدم إعجاب', function(){
-        downBtn.classList.toggle('active');
-        upBtn.classList.remove('active');
+        downBtn.classList.toggle('active'); upBtn.classList.remove('active');
       });
       downBtn.style.transform = 'scaleY(-1)';
       actions.appendChild(upBtn);
       actions.appendChild(downBtn);
-
       if (index === chat.messages.length - 1) {
         actions.appendChild(makeIconBtn(ICONS.retry, 'إعادة المحاولة', function(){ regenerate(chat); }));
       }
     }
     msgDiv.appendChild(actions);
   }
-
   messagesEl.appendChild(msgDiv);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return msgDiv;
@@ -920,7 +994,6 @@ function requestAIResponse(chat){
   setGeneratingUI(true);
   currentController = new AbortController();
   showTyping();
-
   return fetch(WORKER_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -929,13 +1002,12 @@ function requestAIResponse(chat){
       chatId: currentChatId,
       provider: getSelectedProvider(),
       messages: chat.messages.map(function(m){ return { role: m.role === 'user' ? 'user' : 'model', content: m.content }; }),
-      accessPassword: accessPassword
+      sessionToken: sessionToken
     }),
     signal: currentController.signal
   }).then(function(response){
-    return response.json().catch(function(){
-      throw new Error('رد غير صالح من الخادم (status ' + response.status + ')');
-    }).then(function(data){
+    return response.json().catch(function(){ throw new Error('رد غير صالح من الخادم (status ' + response.status + ')'); })
+    .then(function(data){
       const typingEl = document.getElementById('typing-msg');
       if (typingEl) typingEl.remove();
       if (!response.ok || data.error) throw new Error(data.error || ('خطأ HTTP ' + response.status));
@@ -944,9 +1016,7 @@ function requestAIResponse(chat){
       saveChats();
       appendBubble(reply, 'ai', chat.messages.length - 1, chat);
       renderChatList();
-      if (data.memory && memoryPanel.classList.contains('open')) {
-        memoryContent.value = data.memory;
-      }
+      if (data.memory && memoryPanel.classList.contains('open')) memoryContent.value = data.memory;
     });
   }).catch(function(error){
     const typingEl = document.getElementById('typing-msg');
@@ -955,9 +1025,7 @@ function requestAIResponse(chat){
       appendBubble('⚠️ خطأ في الاتصال بالخادم: ' + error.message, 'ai', -1, chat, { ephemeral: true });
       console.error('FOX AI request failed:', error);
     }
-  }).then(function(){
-    setGeneratingUI(false);
-  });
+  }).then(function(){ setGeneratingUI(false); });
 }
 
 function regenerate(chat){
@@ -973,26 +1041,32 @@ function regenerate(chat){
 function sendMessage(){
   const text = userInput.value.trim();
   if (!text || isGenerating) return;
-
   const chat = getCurrentChat();
   chat.messages.push({ role: 'user', content: text });
   if (chat.messages.length === 1) chat.title = text.slice(0, 40);
   saveChats();
   renderChatList();
-
   if (messagesEl.classList.contains('empty')) { messagesEl.innerHTML = ''; messagesEl.classList.remove('empty'); }
   appendBubble(text, 'user', chat.messages.length - 1, chat);
-
   userInput.value = '';
   autoGrow();
-
   requestAIResponse(chat);
 }
+
+/* ============ أزرار التمرير ============ */
+scrollUpBtn.addEventListener('click', function(){ messagesEl.scrollTo({ top: 0, behavior: 'smooth' }); });
+scrollDownBtn.addEventListener('click', function(){ messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' }); });
+
+messagesEl.addEventListener('scroll', function(){
+  const atTop = messagesEl.scrollTop < 50;
+  const atBottom = messagesEl.scrollTop + messagesEl.clientHeight >= messagesEl.scrollHeight - 50;
+  scrollUpBtn.classList.toggle('hidden', atTop);
+  scrollDownBtn.classList.toggle('hidden', atBottom);
+});
 
 initModelSelect();
 renderChatList();
 renderMessages();
 </script>
-
 </body>
 </html>
