@@ -20,6 +20,46 @@ export default {
       return new Response('Method not allowed', { status: 405, headers: CORS });
     }
 
+    // ============ مسار استقبال نتائج GitHub ============
+    if (request.url.includes('/result')) {
+      try {
+        const webhookBody = await request.json();
+        const signature = request.headers.get('X-Hub-Signature-256') || '';
+        
+        // تحقق HMAC
+        const expectedSig = 'sha256=' + await hmacSign(webhookBody, env.HMAC_SECRET);
+        if (signature !== expectedSig) {
+          return new Response(JSON.stringify({ error: 'توقيع غير صالح' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+
+        const output = webhookBody.output || 'لا توجد نتائج';
+        const experimentId = webhookBody.experimentId || 'unknown';
+        const exitCode = webhookBody.exit_code || 0;
+
+        // حفظ في D1
+        const now = Date.now();
+        await env.DB.prepare(
+          `INSERT INTO experiments (chat_id, command, status, output, exit_code, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(experimentId, 'from-github', 'completed', output, exitCode, now, now)
+        .run();
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      } catch (webhookError) {
+        console.error('Webhook error:', webhookError.message);
+        return new Response(JSON.stringify({ error: webhookError.message }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
+    }
+
     try {
       const body = await request.json();
       const { action, messages, provider, chatId, content, accessPassword, command } = body;
@@ -89,7 +129,7 @@ export default {
         }
       }
 
-      // ============ RUN COMMAND (GitHub Actions) ============
+      // ============ RUN COMMAND ============
       if (action === 'run_command') {
         if (!command) {
           return new Response(JSON.stringify({ error: 'command مطلوب' }), {
@@ -99,8 +139,23 @@ export default {
         }
 
         try {
-          const result = await triggerGitHubAction(env, command);
-          return new Response(JSON.stringify(result), {
+          const experimentId = chatId || 'default-' + Date.now();
+          const id = env.EXPERIMENT_STATE.idFromName(experimentId);
+          const experimentObj = env.EXPERIMENT_STATE.get(id);
+          
+          const result = await experimentObj.fetch('https://internal/start', {
+            method: 'POST',
+            body: JSON.stringify({
+              command: command,
+              chatId: chatId,
+              githubToken: env.GITHUB_TOKEN,
+              hmacSecret: env.HMAC_SECRET,
+              db: true
+            })
+          });
+
+          const resultData = await result.json();
+          return new Response(JSON.stringify(resultData), {
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         } catch (cmdError) {
@@ -162,16 +217,12 @@ export default {
         console.error('D1 read memory error (non-fatal):', dbError.message);
       }
 
-      // ============ رسالة القدرات الثابتة ============
       const SYSTEM_CAPABILITIES = `\n\n---\n## قدرات النظام المتاحة\n\nيمكنك تنفيذ أوامر Linux حقيقية في بيئة Ubuntu 24.04 معزولة عبر GitHub Actions. عند الحاجة لتنفيذ كود أو أمر، اطلب من المستخدم السماح بذلك أو استخدم الأمر مباشرة.\n\nمثال: إذا طلب منك المستخدم تشغيل كود Python، يمكنك اقتراح: "هل تريدني أن أنفذ هذا الكود في بيئة معزولة؟"\n`;
 
       const contextMessages = [];
       const systemContent = `أنت مساعد ذكي. هذه وثيقة مشروعك الحية (ذاكرتك الدائمة للمحادثة). استخدمها كسياق لفهم ما سبق.\n\n${currentMemory || '(لا توجد ذاكرة بعد)'}${SYSTEM_CAPABILITIES}`;
       
-      contextMessages.push({
-        role: 'system',
-        content: systemContent
-      });
+      contextMessages.push({ role: 'system', content: systemContent });
       contextMessages.push({ role: 'user', content: userText });
 
       let rawResponse = '';
@@ -218,7 +269,145 @@ export default {
   },
 };
 
-// ============ نماذج Gemini (Google API) ============
+// ============ Durable Object ============
+export class ExperimentState {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    if (path === '/start') {
+      return await this.startExperiment(request);
+    } else if (path === '/check') {
+      return await this.checkStatus();
+    } else if (path === '/retry') {
+      return await this.retryExperiment();
+    }
+
+    return new Response(JSON.stringify({ error: 'Invalid DO path' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  async startExperiment(request) {
+    const data = await request.json();
+    const command = data.command;
+    const chatId = data.chatId || 'unknown';
+    const githubToken = data.githubToken;
+    const hmacSecret = data.hmacSecret;
+
+    // حفظ الحالة
+    const now = Date.now();
+    const experimentData = {
+      command: command,
+      chatId: chatId,
+      status: 'pending',
+      attempts: 0,
+      startedAt: now,
+      lastUpdate: now,
+    };
+
+    await this.state.storage.put('experiment', experimentData);
+
+    // بدء التشغيل
+    return await this.dispatchToGitHub(command, githubToken, hmacSecret);
+  }
+
+  async dispatchToGitHub(command, githubToken, hmacSecret) {
+    const response = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + githubToken,
+          'Accept': 'application/vnd.github.v3+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        body: JSON.stringify({
+          ref: 'main',
+          inputs: { command: command },
+        }),
+      }
+    );
+
+    if (response.status === 204) {
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'تم إرسال الأمر للتنفيذ في GitHub Actions',
+        experimentId: this.state.id.toString(),
+      }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const errorData = await response.json().catch(() => ({}));
+    return new Response(JSON.stringify({
+      error: errorData.message || 'GitHub API error',
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  async checkStatus() {
+    const experiment = await this.state.storage.get('experiment');
+    if (!experiment) {
+      return new Response(JSON.stringify({ error: 'لا توجد تجربة نشطة' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify(experiment), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  async retryExperiment() {
+    const experiment = await this.state.storage.get('experiment');
+    if (!experiment || experiment.attempts >= 5) {
+      return new Response(JSON.stringify({ error: 'تم الوصول للحد الأقصى من المحاولات' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    experiment.attempts += 1;
+    experiment.status = 'retrying';
+    experiment.lastUpdate = Date.now();
+    await this.state.storage.put('experiment', experiment);
+
+    return new Response(JSON.stringify({ retry: experiment.attempts }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// ============ HMAC ============
+async function hmacSign(data, secret) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    encoder.encode(JSON.stringify(data))
+  );
+  return Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ============ نماذج Gemini ============
 const GEMINI_MODEL_MAP = {
   'gemini': 'gemini-3.6-flash',
   'gemini-3.8-flash': 'gemini-3.8-flash',
@@ -253,38 +442,6 @@ const WORKERS_AI_MODELS = {
 // ============ إعدادات GitHub ============
 const GITHUB_REPO = 'abdelrhym096290-ux/video-compressor-bot';
 const GITHUB_WORKFLOW = 'terminal.yml';
-
-async function triggerGitHubAction(env, command) {
-  if (!env.GITHUB_TOKEN) {
-    throw new Error('GITHUB_TOKEN غير معرّف في إعدادات الـ Worker');
-  }
-
-  const response = await fetch(
-    `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + env.GITHUB_TOKEN,
-        'Accept': 'application/vnd.github.v3+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-      body: JSON.stringify({
-        ref: 'main',
-        inputs: {
-          command: command,
-        },
-      }),
-    }
-  );
-
-  if (response.status === 204) {
-    return { success: true, message: 'تم إرسال الأمر للتنفيذ في GitHub Actions' };
-  }
-
-  const errorData = await response.json().catch(() => ({}));
-  throw new Error(errorData.message || 'GitHub API error (status ' + response.status + ')');
-}
 
 async function callGemini(apiKey, messages, provider) {
   const modelName = GEMINI_MODEL_MAP[provider] || 'gemini-3.6-flash';
@@ -451,9 +608,7 @@ async function getUsageFromGateway(env) {
 
   return {
     period: { from: startISO, to: endISO },
-    totals: {
-      requests: totalRequests,
-    },
+    totals: { requests: totalRequests },
     note: 'عدد الطلبات المسجلة عبر AI Gateway اليوم'
   };
 }
