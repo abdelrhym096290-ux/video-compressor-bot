@@ -1,1079 +1,397 @@
 export default {
   async fetch(request, env) {
-    if (request.method !== "POST") {
-      return new Response("OK", { status: 200 });
+    const CORS = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    };
+
+    if (request.method === 'GET') {
+      return new Response('FOX AI Worker is running', {
+        headers: { 'Content-Type': 'text/plain', ...CORS },
+      });
     }
 
-    const BOT_TOKEN = env.BOT_TOKEN;
-    const GITHUB_TOKEN = env.GITHUB_TOKEN;
-    const BOT_PASSWORD = env.BOT_PASSWORD;
-    const GITHUB_REPO = "abdelrhym096290-ux/video-compressor-bot";
-    const GITHUB_WORKFLOW = "compress.yml";
-    const RESOLUTIONS = ["240", "360", "480", "720", "1080"];
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: CORS });
+    }
+
+    if (request.method !== 'POST') {
+      return new Response('Method not allowed', { status: 405, headers: CORS });
+    }
 
     try {
-      const update = await request.json();
+      const body = await request.json();
+      const { action, messages, provider, chatId, content, accessPassword } = body;
+      console.log('FOX AI request:', action, 'messages:', messages?.length, 'provider:', provider, 'chatId:', chatId);
 
-      // استقبال فيديو أو ملف فيديو مباشرة.
-      if (
-        update.message &&
-        (update.message.video ||
-          (update.message.document &&
-            (update.message.document.mime_type || "").startsWith("video/")))
-      ) {
-        const chatId = update.message.chat.id;
-        const isAuthorized = await env.SESSIONS.get(`authorized:${chatId}`);
-
-        if (!isAuthorized) {
-          await sendMessage(BOT_TOKEN, chatId, "🔒 هذا البوت خاص. أرسل كلمة المرور للمتابعة:");
-          return ok();
-        }
-
-        const defaultName = extractDefaultName(update.message);
-        const preset = await getPreset(env, chatId);
-
-        // وضع الإعداد التلقائي: يستعمل الإعداد المحفوظ مباشرة.
-        if (preset && preset.active) {
-          const finalName = buildAutomaticName(preset, defaultName);
-
-          const autoSession = {
-            message_id: update.message.message_id,
-            url: "",
-            codec: preset.codec || "av1",
-            encode_mode: preset.encode_mode || "nofilters",
-            filter_profile:
-              preset.filter_profile ||
-              (preset.encode_mode === "filters" ? "realistic" : "none"),
-            preset: preset.preset || preset.av1_preset || "8",
-            encode_method: preset.encode_method || "crf",
-            target_value: preset.target_value || "28",
-            resolution: preset.resolution || "480",
-            filename: finalName,
-            auto_advance_episode: preset.auto_naming === "series",
-            pending_confirmation: false,
-          };
-
-          await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ إرسال المهمة تلقائياً: ${finalName}`);
-          await finalizeAndTrigger(
-            env,
-            BOT_TOKEN,
-            GITHUB_TOKEN,
-            GITHUB_REPO,
-            GITHUB_WORKFLOW,
-            chatId,
-            autoSession,
-          );
-          return ok();
-        }
-
-        // جلسة يدوية جديدة.
-        await setSession(env, chatId, {
-          message_id: update.message.message_id,
-          url: "",
-          default_name: defaultName,
-          pending_confirmation: false,
+      if (accessPassword !== env.ACCESS_PASSWORD) {
+        return new Response(JSON.stringify({ error: 'كلمة المرور غير صحيحة', authRequired: true }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...CORS },
         });
-        await sendCodecKeyboard(BOT_TOKEN, chatId);
-        return ok();
       }
 
-      // الرسائل النصية والأوامر والمدخلات الرقمية.
-      if (update.message && update.message.text !== undefined) {
-        const chatId = update.message.chat.id;
-        const text = update.message.text.trim();
-        const isAuthorized = await env.SESSIONS.get(`authorized:${chatId}`);
-
-        if (!isAuthorized) {
-          if (text === BOT_PASSWORD) {
-            await env.SESSIONS.put(`authorized:${chatId}`, "true");
-            await sendMessage(BOT_TOKEN, chatId, "✅ تم التحقق بنجاح. أرسل /start للبدء.");
-          } else {
-            await sendMessage(BOT_TOKEN, chatId, "🔒 هذا البوت خاص. أرسل كلمة المرور للمتابعة:");
-          }
-          return ok();
+      if (action === 'get_memory') {
+        if (!chatId) {
+          return new Response(JSON.stringify({ error: 'chatId مطلوب' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
         }
 
-        const session = (await getSession(env, chatId)) || {};
+        try {
+          const result = await env.DB.prepare(
+            'SELECT content FROM project_memory WHERE chat_id = ?'
+          ).bind(chatId).first();
 
-        // ★★★ قبول أي رابط ★★★
-        if (isAnyLink(text)) {
-          if (session.awaiting_preset || session.awaiting_target_value || 
-              session.awaiting_res || session.awaiting_filename || 
-              session.awaiting_series_title || session.awaiting_episode_start ||
-              session.pending_confirmation) {
-            await sendMessage(BOT_TOKEN, chatId, "⚠️ أنت في منتصف عملية إعداد. أكمل الإعداد أولاً أو ألغِ العملية.");
-            return ok();
-          }
-
-          const preset = await getPreset(env, chatId);
-          const linkInfo = extractLinkInfo(text);
-          const linkSession = {
-            message_id: "",
-            url: text,
-            default_name: linkInfo.name,
-            pending_confirmation: false,
-          };
-
-          if (preset && preset.active) {
-            const finalName = buildAutomaticName(preset, linkSession.default_name || "video");
-            const autoSession = {
-              message_id: "",
-              url: text,
-              codec: preset.codec || "av1",
-              encode_mode: preset.encode_mode || "nofilters",
-              filter_profile:
-                preset.filter_profile ||
-                (preset.encode_mode === "filters" ? "realistic" : "none"),
-              preset: preset.preset || preset.av1_preset || "8",
-              encode_method: preset.encode_method || "crf",
-              target_value: preset.target_value || "28",
-              resolution: preset.resolution || "480",
-              filename: finalName,
-              auto_advance_episode: preset.auto_naming === "series",
-              pending_confirmation: false,
-            };
-            await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ معالجة الرابط تلقائياً: ${finalName}`);
-            await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, autoSession);
-          } else {
-            await setSession(env, chatId, linkSession);
-            await sendCodecKeyboard(BOT_TOKEN, chatId);
-          }
-          return ok();
-        }
-        // ★★★ نهاية قبول الروابط ★★★
-
-        // التعامل مع رسائل التأكيد
-        if (session.pending_confirmation) {
-          if (text === "/confirm" || text === "✅ تأكيد") {
-            session.pending_confirmation = false;
-            await setSession(env, chatId, session);
-            await sendMessage(BOT_TOKEN, chatId, "✅ تم تأكيد العملية. جارٍ الإرسال...");
-            await finalizeAndTrigger(
-              env,
-              BOT_TOKEN,
-              GITHUB_TOKEN,
-              GITHUB_REPO,
-              GITHUB_WORKFLOW,
-              chatId,
-              session,
-            );
-            return ok();
-          } else if (text === "/cancel" || text === "🚫 إلغاء") {
-            await deleteSession(env, chatId);
-            await sendMessage(BOT_TOKEN, chatId, "🚫 تم إلغاء العملية.");
-            return ok();
-          } else {
-            await sendMessage(BOT_TOKEN, chatId, "⚠️ الرجاء اختيار تأكيد أو إلغاء العملية:");
-            return ok();
-          }
-        }
-
-        // الأوامر
-        if (text === "/start") {
-          await sendMessage(BOT_TOKEN, chatId, startMessage(await getPreset(env, chatId)));
-          return ok();
-        }
-
-        if (text === "/setup" || text === "/settings") {
-          await setSession(env, chatId, { configuring_preset: true, pending_confirmation: false });
-          await sendCodecKeyboard(BOT_TOKEN, chatId);
-          return ok();
-        }
-
-        if (text === "/preset") {
-          await sendMessage(BOT_TOKEN, chatId, presetStatusText(await getPreset(env, chatId)));
-          return ok();
-        }
-
-        if (text === "/auto_off") {
-          const preset = await getPreset(env, chatId);
-          if (!preset) {
-            await sendMessage(BOT_TOKEN, chatId, "لا يوجد إعداد محفوظ أصلاً.");
-          } else {
-            preset.active = false;
-            await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, "⏸️ تم إيقاف الوضع التلقائي. أرسل فيديو وستُسأل عن الإعدادات.");
-          }
-          return ok();
-        }
-
-        if (text === "/auto_on") {
-          const preset = await getPreset(env, chatId);
-          if (!preset) {
-            await sendMessage(BOT_TOKEN, chatId, "لا يوجد إعداد محفوظ. استخدم /setup أولاً.");
-          } else {
-            preset.active = true;
-            await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, `▶️ تم تفعيل الوضع التلقائي.\n${presetStatusText(preset)}`);
-          }
-          return ok();
-        }
-
-        if (text === "/cancel") {
-          await deleteSession(env, chatId);
-          await sendMessage(BOT_TOKEN, chatId, "🚫 تم إلغاء العملية.");
-          return ok();
-        }
-
-        // بقية المعالجات...
-        if (session.awaiting_series_title) {
-          const seriesTitle = cleanFileName(text);
-          if (!seriesTitle) {
-            await sendMessage(BOT_TOKEN, chatId, "📝 أرسل اسماً صحيحاً للمسلسل، مثل: Solo Leveling S02\n\nللإلغاء أرسل /cancel");
-            return ok();
-          }
-          session.series_title = seriesTitle;
-          session.awaiting_series_title = false;
-          session.awaiting_episode_start = true;
-          await setSession(env, chatId, session);
-          await sendMessage(BOT_TOKEN, chatId, `✅ اسم السلسلة: ${seriesTitle}\n🔢 أرسل رقم الحلقة الأولى، مثل: 1\n\nللإلغاء أرسل /cancel`);
-          return ok();
-        }
-
-        if (session.awaiting_episode_start) {
-          if (!/^[1-9]\d{0,5}$/.test(text)) {
-            await sendMessage(BOT_TOKEN, chatId, "🔢 أرسل رقم حلقة موجباً فقط، مثل: 1 أو 12.\n\nللإلغاء أرسل /cancel");
-            return ok();
-          }
-          session.next_episode = Number.parseInt(text, 10);
-          session.awaiting_episode_start = false;
-          await setSession(env, chatId, session);
-          await savePresetAndConfirm(env, BOT_TOKEN, chatId, session);
-          return ok();
-        }
-
-        if (session.awaiting_preset) {
-          const codec = session.codec || "av1";
-          if (!isValidPreset(codec, text)) {
-            const hint =
-              codec === "vvc"
-                ? "أرسل رقم سرعة VVC من 1 إلى 4 فقط:"
-                : "أرسل رقم سرعة AV1 من 0 إلى 13 فقط:";
-            await sendMessage(BOT_TOKEN, chatId, hint + "\n\nللإلغاء أرسل /cancel");
-            return ok();
-          }
-
-          session.preset = text;
-          session.awaiting_preset = false;
-          await setSession(env, chatId, session);
-          await sendMessage(
-            BOT_TOKEN,
-            chatId,
-            codec === "vvc" ? `✅ تم تسجيل سرعة VVC: ${text}` : `✅ تم تسجيل AV1 preset: ${text}`,
-          );
-          await sendEncodeMethodKeyboard(BOT_TOKEN, chatId, codec);
-          return ok();
-        }
-
-        if (session.awaiting_target_value) {
-          if (!isValidTargetValue(session.codec, session.encode_method, text)) {
-            await sendMessage(BOT_TOKEN, chatId, targetValueHint(session.codec, session.encode_method) + "\n\nللإلغاء أرسل /cancel");
-            return ok();
-          }
-
-          session.target_value = text;
-          session.awaiting_target_value = false;
-          await setSession(env, chatId, session);
-
-          if (session.codec === "audio") {
-            if (session.configuring_preset) {
-              await sendAutoNamingKeyboard(BOT_TOKEN, chatId);
-            } else {
-              session.awaiting_filename = true;
-              await setSession(env, chatId, session);
-              await promptFilename(BOT_TOKEN, chatId, null, session.default_name, false);
-            }
-          } else {
-            await sendMessage(BOT_TOKEN, chatId, `✅ تم تسجيل القيمة: ${text}`);
-            await sendQualityKeyboard(BOT_TOKEN, chatId, RESOLUTIONS);
-          }
-          return ok();
-        }
-
-        if (session.awaiting_res) {
-          if (!isValidResolution(text)) {
-            await sendMessage(BOT_TOKEN, chatId, "أرسل ارتفاعاً صحيحاً بين 144 و2160، مثل 550:\n\nللإلغاء أرسل /cancel");
-            return ok();
-          }
-          session.resolution = text;
-          session.awaiting_res = false;
-          await setSession(env, chatId, session);
-          await continueAfterResolution(env, BOT_TOKEN, chatId, session);
-          return ok();
-        }
-
-        if (session.awaiting_filename) {
-          session.filename = await applyCounterToName(env, chatId, text || session.default_name || "video");
-          session.awaiting_filename = false;
-          session.pending_confirmation = true;
-          session.confirmation_message_id = null;
-          await setSession(env, chatId, session);
-          
-          const confirmKeyboard = {
-            inline_keyboard: [
-              [
-                { text: "✅ تأكيد", callback_data: "confirm_action" },
-                { text: "🚫 إلغاء", callback_data: "cancel_action" }
-              ]
-            ]
-          };
-          
-          const summary = buildSummaryMessage(session);
-          const sentMsg = await sendMessageWithReturn(BOT_TOKEN, chatId, `📋 ملخص العملية:\n${summary}\n\nهل تريد تأكيد الإرسال؟`, confirmKeyboard);
-          session.confirmation_message_id = sentMsg?.result?.message_id;
-          await setSession(env, chatId, session);
-          return ok();
-        }
-
-        await sendMessage(BOT_TOKEN, chatId, "📤 أرسل فيديو مباشرة أو أي رابط للبدء، أو استخدم /setup لحفظ إعداد تلقائي.");
-        return ok();
-      }
-
-      // ضغطات الأزرار.
-      if (update.callback_query) {
-        const query = update.callback_query;
-        const chatId = query.message.chat.id;
-        const data = query.data;
-        await answerCallback(BOT_TOKEN, query.id);
-
-        const isAuthorized = await env.SESSIONS.get(`authorized:${chatId}`);
-        if (!isAuthorized) return ok();
-
-        const session = (await getSession(env, chatId)) || {};
-
-        if (data === "confirm_action") {
-          if (!session.pending_confirmation) {
-            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "⚠️ لا توجد عملية معلقة للتأكيد.");
-            return ok();
-          }
-          
-          session.pending_confirmation = false;
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "✅ تم تأكيد العملية. جارٍ الإرسال...");
-          await finalizeAndTrigger(
-            env,
-            BOT_TOKEN,
-            GITHUB_TOKEN,
-            GITHUB_REPO,
-            GITHUB_WORKFLOW,
-            chatId,
-            session,
-          );
-          return ok();
-        }
-
-        if (data === "cancel_action") {
-          if (!session.pending_confirmation) {
-            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "⚠️ لا توجد عملية معلقة للإلغاء.");
-            return ok();
-          }
-          
-          await deleteSession(env, chatId);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "🚫 تم إلغاء العملية.");
-          return ok();
-        }
-
-        if (data === "cancel") {
-          await deleteSession(env, chatId);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "🚫 تم إلغاء العملية.");
-          return ok();
-        }
-
-        if (data.startsWith("codec_")) {
-          const codec = data.split("_")[1];
-          if (!["av1", "vvc", "audio"].includes(codec)) return ok();
-
-          session.codec = codec;
-          if (codec === "audio") {
-            session.encode_mode = "audio";
-            session.filter_profile = "none";
-            session.preset = "none";
-            session.encode_method = "audio";
-            session.awaiting_target_value = true;
-            await setSession(env, chatId, session);
-            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "أرسل معدل بت الصوت، مثال: 32k أو 48k:");
-          } else {
-            await setSession(env, chatId, session);
-            await editMessage(
-              BOT_TOKEN,
-              chatId,
-              query.message.message_id,
-              `🎞️ المرمّز المختار: ${codec === "vvc" ? "H.266 / VVC" : "AV1"}`,
-            );
-            await sendEncodeModeKeyboard(BOT_TOKEN, chatId);
-          }
-          return ok();
-        }
-
-        if (data.startsWith("mode_")) {
-          const mode = data.split("_")[1];
-          if (!["filters", "nofilters"].includes(mode)) return ok();
-
-          session.encode_mode = mode;
-          session.filter_profile = mode === "nofilters" ? "none" : undefined;
-          await setSession(env, chatId, session);
-
-          if (mode === "filters") {
-            await editMessage(
-              BOT_TOKEN,
-              chatId,
-              query.message.message_id,
-              "🧩 اختر نوع الفلاتر: الأنمي للرسوم والمساحات اللونية، والواقعي للتصوير الحقيقي:",
-              filterProfileKeyboardMarkup(),
-            );
-          } else {
-            session.awaiting_preset = true;
-            await setSession(env, chatId, session);
-            await editMessage(BOT_TOKEN, chatId, query.message.message_id, presetPrompt(session.codec));
-          }
-          return ok();
-        }
-
-        if (data.startsWith("filter_")) {
-          const profile = data.split("_")[1];
-          if (!["anime", "realistic"].includes(profile)) return ok();
-
-          session.filter_profile = profile;
-          session.awaiting_preset = true;
-          await setSession(env, chatId, session);
-          await editMessage(
-            BOT_TOKEN,
-            chatId,
-            query.message.message_id,
-            `${profile === "anime" ? "🌸 تم اختيار فلاتر الأنمي." : "🎬 تم اختيار فلاتر المحتوى الواقعي."}\n${presetPrompt(session.codec)}`,
-          );
-          return ok();
-        }
-
-        if (data.startsWith("preset_")) {
-          const presetValue = data.split("_")[1];
-          if (!isValidPreset(session.codec || "av1", presetValue)) return ok();
-          session.preset = presetValue;
-          await setSession(env, chatId, session);
-          await editMessage(
-            BOT_TOKEN,
-            chatId,
-            query.message.message_id,
-            `🏎️ تم تسجيل السرعة: ${presetValue}\n🎛️ اختر طريقة الضغط:`,
-            encodeMethodKeyboardMarkup(session.codec || "av1"),
-          );
-          return ok();
-        }
-
-        if (data.startsWith("encmethod_")) {
-          const method = data.split("_")[1];
-          if (!isValidEncodeMethod(session.codec, method)) return ok();
-
-          session.encode_method = method;
-          session.awaiting_target_value = true;
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, encodeMethodPrompt(session.codec, method));
-          return ok();
-        }
-
-        if (data === "autoname_keep") {
-          session.auto_naming = "source";
-          delete session.series_title;
-          delete session.next_episode;
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "📄 سيحتفظ كل ملف باسمه المرفق تلقائياً.");
-          await savePresetAndConfirm(env, BOT_TOKEN, chatId, session);
-          return ok();
-        }
-
-        if (data === "autoname_series") {
-          session.auto_naming = "series";
-          session.awaiting_series_title = true;
-          await setSession(env, chatId, session);
-          await editMessage(
-            BOT_TOKEN,
-            chatId,
-            query.message.message_id,
-            "📝 أرسل اسم السلسلة كما تريد ظهوره.\nمثال: Solo Leveling S02\n\nسيكون الناتج: Solo Leveling S02 - E01\n\nللإلغاء أرسل /cancel",
-          );
-          return ok();
-        }
-
-        if (data === "custom_res") {
-          session.awaiting_res = true;
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "📐 أرسل الارتفاع المطلوب رقماً فقط، مثال: 550:\n\nللإلغاء أرسل /cancel");
-          return ok();
-        }
-
-        if (data === "auto_res") {
-          session.resolution = "auto";
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "🎯 تم اختيار: نفس جودة الفيديو الأصلية");
-          await continueAfterResolution(env, BOT_TOKEN, chatId, session);
-          return ok();
-        }
-
-        if (data.startsWith("res_")) {
-          const resolution = data.split("_")[1];
-          if (!isValidResolution(resolution)) return ok();
-          session.resolution = resolution;
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `🎯 تم اختيار الدقة: ${resolution}p`);
-          await continueAfterResolution(env, BOT_TOKEN, chatId, session);
-          return ok();
-        }
-
-        if (data === "name_skip") {
-          session.filename = await applyCounterToName(env, chatId, session.default_name || "video");
-          session.awaiting_filename = false;
-          session.pending_confirmation = true;
-          session.confirmation_message_id = null;
-          await setSession(env, chatId, session);
-          
-          const confirmKeyboard = {
-            inline_keyboard: [
-              [
-                { text: "✅ تأكيد", callback_data: "confirm_action" },
-                { text: "🚫 إلغاء", callback_data: "cancel_action" }
-              ]
-            ]
-          };
-          
-          const summary = buildSummaryMessage(session);
-          const sentMsg = await sendMessageWithReturn(BOT_TOKEN, chatId, `📋 ملخص العملية:\n${summary}\n\nهل تريد تأكيد الإرسال؟`, confirmKeyboard);
-          session.confirmation_message_id = sentMsg?.result?.message_id;
-          await setSession(env, chatId, session);
-          return ok();
+          return new Response(JSON.stringify({
+            content: result?.content || ''
+          }), {
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        } catch (dbError) {
+          console.error('D1 get_memory error:', dbError.message);
+          return new Response(JSON.stringify({ error: 'خطأ في قراءة الذاكرة: ' + dbError.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
         }
       }
+
+      if (action === 'memory_update') {
+        if (!chatId) {
+          return new Response(JSON.stringify({ error: 'chatId مطلوب' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+
+        try {
+          await env.DB.prepare(
+            `INSERT INTO project_memory (chat_id, content, updated_at)
+             VALUES (?, ?, ?)
+             ON CONFLICT(chat_id) DO UPDATE
+             SET content = ?, updated_at = ?`
+          )
+          .bind(chatId, content || '', Date.now(), content || '', Date.now())
+          .run();
+
+          return new Response(JSON.stringify({ success: true }), {
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        } catch (dbError) {
+          console.error('D1 memory_update error:', dbError.message);
+          return new Response(JSON.stringify({ error: 'خطأ في حفظ الذاكرة: ' + dbError.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+      }
+
+      if (action === 'usage') {
+        try {
+          const usageData = await getUsageFromGateway(env);
+          return new Response(JSON.stringify(usageData), {
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        } catch (usageError) {
+          console.error('Usage error:', usageError.message);
+          return new Response(JSON.stringify({ error: 'خطأ في جلب الاستهلاك: ' + usageError.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+      }
+
+      if (action !== 'chat') {
+        return new Response(JSON.stringify({ error: 'Invalid action' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
+
+      if (!Array.isArray(messages) || messages.length === 0) {
+        return new Response(JSON.stringify({ error: 'لا توجد رسائل لإرسالها' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
+
+      const selectedProvider = provider || 'gemini';
+      const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+      const userText = lastUserMessage?.content || '';
+
+      if (!userText) {
+        return new Response(JSON.stringify({ error: 'لا توجد رسالة مستخدم' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
+
+      let currentMemory = '';
+      try {
+        const memResult = await env.DB.prepare(
+          'SELECT content FROM project_memory WHERE chat_id = ?'
+        ).bind(chatId).first();
+        currentMemory = memResult?.content || '';
+      } catch (dbError) {
+        console.error('D1 read memory error (non-fatal):', dbError.message);
+      }
+
+      const contextMessages = [];
+      if (currentMemory) {
+        contextMessages.push({
+          role: 'system',
+          content: `أنت مساعد ذكي. هذه وثيقة مشروعك الحية (ذاكرتك الدائمة للمحادثة). استخدمها كسياق لفهم ما سبق.\n\n${currentMemory}`
+        });
+      }
+      contextMessages.push({ role: 'user', content: userText });
+
+      let rawResponse = '';
+
+      if (GEMINI_MODEL_MAP[selectedProvider]) {
+        if (!env.GEMINI_API_KEY) {
+          return new Response(JSON.stringify({ error: 'GEMINI_API_KEY غير معرّف في إعدادات الـ Worker.' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+        rawResponse = await callGemini(env.GEMINI_API_KEY, contextMessages, selectedProvider);
+      } else if (WORKERS_AI_MODELS[selectedProvider]) {
+        rawResponse = await callWorkersAI(env, selectedProvider, contextMessages);
+      } else {
+        return new Response(JSON.stringify({ error: `مزود غير مدعوم: ${selectedProvider}` }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...CORS },
+        });
+      }
+
+      let updatedMemory = '';
+      try {
+        updatedMemory = await updateMemory(env, chatId, userText, rawResponse);
+        if (!updatedMemory) updatedMemory = currentMemory;
+      } catch (memoryError) {
+        console.error('Memory update failed (non-fatal):', memoryError.message);
+        updatedMemory = currentMemory;
+      }
+
+      return new Response(JSON.stringify({
+        response: rawResponse,
+        memory: updatedMemory
+      }), {
+        headers: { 'Content-Type': 'application/json', ...CORS },
+      });
     } catch (error) {
-      console.error("Worker handler error:", error?.message, error?.stack);
+      console.error('FOX AI worker error:', error.message);
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...CORS },
+      });
     }
-
-    return ok();
   },
 };
 
-// دالة للتحقق من أي رابط
-function isAnyLink(text) {
-  // يقبل أي نص يبدأ بـ http:// أو https://
-  return /^https?:\/\/\S+$/i.test(text);
+// ============ نماذج Gemini (Google API) ============
+const GEMINI_MODEL_MAP = {
+  'gemini': 'gemini-3.6-flash',
+  'gemini-3.8-flash': 'gemini-3.8-flash',
+  'gemini-3.7-flash': 'gemini-3.7-flash',
+  'gemini-3.6-flash': 'gemini-3.6-flash',
+  'gemini-3.5-flash': 'gemini-3.5-flash',
+  'gemini-2.5-pro': 'gemini-2.5-pro',
+  'gemini-2.5-flash': 'gemini-2.5-flash',
+  'gemini-2.5-flash-lite': 'gemini-2.5-flash-lite',
+  'gemini-flash-lite-latest': 'gemini-flash-lite-latest',
+};
+
+// ============ نماذج Workers AI ============
+const WORKERS_AI_MODELS = {
+  'cf-glm-flash': '@cf/zai-org/glm-4.7-flash',
+  'cf-qwen3-coder': '@cf/qwen/qwen3.8-27b',
+  'cf-coder': '@cf/qwen/qwen2.5-coder-32b-instruct',
+  'cf-qwen3': '@cf/qwen/qwen3-30b-a3b-fp8',
+  'cf-gpt-oss-20b': '@cf/openai/gpt-oss-20b',
+  'cf-gemma-4': '@cf/google/gemma-4-26b-a4b-it',
+  'cf-nemotron': '@cf/nvidia/nemotron-3-120b-a12b',
+  'cf-gpt-oss-120b': '@cf/openai/gpt-oss-120b',
+  'cf-deepseek-r1': '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
+  'cf-qwq': '@cf/qwen/qwq-32b',
+  'cf-llama-4': '@cf/meta/llama-4-scout-17b-16e-instruct',
+  'cf-mistral': '@cf/mistralai/mistral-small-3.1-24b-instruct',
+  'cf-llama-70b': '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+  'cf-llama-vision': '@cf/meta/llama-3.2-11b-vision-instruct',
+  'cf-granite': '@cf/ibm-granite/granite-4.0-h-micro',
+};
+
+async function callGemini(apiKey, messages, provider) {
+  const modelName = GEMINI_MODEL_MAP[provider] || 'gemini-3.6-flash';
+
+  const contents = messages.map(m => {
+    const role = m.role === 'user' ? 'user' : 'model';
+    return { role: role, parts: [{ text: m.content }] };
+  });
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':generateContent';
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+    body: JSON.stringify({ contents }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('Gemini API error:', JSON.stringify(data));
+    if (response.status === 429) {
+      const retryDetail = data.error?.details?.find(d => d['@type']?.includes('RetryInfo'));
+      const retrySeconds = retryDetail?.retryDelay ? parseInt(retryDetail.retryDelay) : null;
+      throw new Error(
+        'تم تجاوز الحد المجاني المسموح به من Google للنموذج حاليًا. ' +
+        (retrySeconds ? ('حاول مرة أخرى خلال ' + retrySeconds + ' ثانية.') : 'حاول مرة أخرى بعد قليل، أو فعّل الفوترة في مشروع Google Cloud لرفع الحد المسموح.')
+      );
+    }
+    throw new Error(data.error?.message || ('Gemini API error (status ' + response.status + ')'));
+  }
+
+  const candidate = data.candidates?.[0];
+  if (!candidate) {
+    console.error('Gemini returned no candidates:', JSON.stringify(data));
+    const blockReason = data.promptFeedback?.blockReason;
+    if (blockReason) throw new Error('تم حظر الرد بواسطة فلاتر السلامة: ' + blockReason);
+    return 'لا يوجد رد';
+  }
+
+  return candidate.content?.parts?.[0]?.text || 'لا يوجد رد';
 }
 
-// دالة لاستخراج معلومات الرابط
-function extractLinkInfo(url) {
+async function callWorkersAI(env, provider, messages) {
+  const model = WORKERS_AI_MODELS[provider];
+
   try {
-    const parsed = new URL(url);
-    const hostname = parsed.hostname.replace(/^www\./, '');
-    
-    // استخراج اسم الملف من الرابط
-    const pathParts = parsed.pathname.split('/').filter(Boolean);
-    const lastPart = pathParts[pathParts.length - 1] || '';
-    
-    // التحقق من امتداد الفيديو
-    const videoExtensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts', '.m2ts', '.mts', '.vob', '.3gp', '.3g2', '.ogv', '.mpeg', '.mpg', '.m3u8'];
-    let filename = lastPart;
-    
-    if (videoExtensions.some(ext => lastPart.toLowerCase().includes(ext))) {
-      // إزالة الامتداد
-      filename = lastPart.replace(/\.[^/.]+$/, '');
-    } else {
-      // توليد اسم من الرابط
-      filename = generateNameFromLink(hostname, parsed, pathParts);
-    }
-    
-    return {
-      name: cleanFileName(filename) || `video_${Date.now()}`,
-      hostname: hostname,
-      fullUrl: url
-    };
-  } catch {
-    return {
-      name: `video_${Date.now()}`,
-      hostname: "unknown",
-      fullUrl: url
-    };
-  }
-}
-
-// دالة لتوليد اسم من الرابط
-function generateNameFromLink(hostname, parsed, pathParts) {
-  const timestamp = Date.now();
-  
-  // استخراج أي معرف من الرابط
-  const lastPath = pathParts[pathParts.length - 1] || '';
-  const queryParams = parsed.searchParams.toString();
-  
-  // محاولة استخراج اسم ذو معنى
-  if (lastPath && lastPath.length > 0 && lastPath.length < 100) {
-    // تنظيف الاسم
-    const cleanedName = cleanFileName(lastPath);
-    if (cleanedName && cleanedName.length > 0) {
-      return `${hostname}_${cleanedName}`;
-    }
-  }
-  
-  // إذا لم نجد اسم مناسب، نستخدم اسم المضيف والوقت
-  return `${hostname}_${timestamp}`;
-}
-
-// دالة لبناء ملخص العملية
-function buildSummaryMessage(session) {
-  const codecLabel = session.codec === "vvc" ? "H.266 / VVC" : session.codec === "audio" ? "صوت فقط" : "AV1";
-  const modeLabel = session.encode_mode === "filters" 
-    ? (session.filter_profile === "anime" ? "مع فلاتر الأنمي" : "مع فلاتر الواقعي")
-    : session.encode_mode === "audio" ? "صوت فقط" : "بدون فلاتر";
-  const methodLabel = session.encode_method === "crf" ? "CRF" 
-    : session.encode_method === "qp" ? "QP"
-    : session.encode_method === "vbr" ? "VBR"
-    : session.encode_method === "twopass" ? "Two-Pass"
-    : "استخراج صوت";
-  const resolutionLabel = session.resolution === "auto" ? "نفس جودة الفيديو الأصلية" : `${session.resolution}p`;
-  
-  const lines = [
-    `📁 اسم الملف: ${session.filename || "غير محدد"}`,
-    `🎞️ المرمّز: ${codecLabel}`,
-    `🖼️ الوضع: ${modeLabel}`,
-    `🏎️ السرعة: ${session.preset || "-"}`,
-    `🎛️ الطريقة: ${methodLabel}`,
-    `📊 القيمة: ${session.target_value || "-"}`,
-  ];
-  
-  if (session.codec !== "audio") {
-    lines.push(`🎯 الدقة: ${resolutionLabel}`);
-  }
-  
-  return lines.join("\n");
-}
-
-function ok() {
-  return new Response("OK", { status: 200 });
-}
-
-async function getSession(env, chatId) {
-  const raw = await env.SESSIONS.get(`session:${chatId}`);
-  return raw ? JSON.parse(raw) : null;
-}
-
-async function setSession(env, chatId, session) {
-  await env.SESSIONS.put(`session:${chatId}`, JSON.stringify(session), { expirationTtl: 3600 });
-}
-
-async function deleteSession(env, chatId) {
-  await env.SESSIONS.delete(`session:${chatId}`);
-}
-
-async function getPreset(env, chatId) {
-  const raw = await env.SESSIONS.get(`preset:${chatId}`);
-  return raw ? JSON.parse(raw) : null;
-}
-
-async function setPreset(env, chatId, preset) {
-  await env.SESSIONS.put(`preset:${chatId}`, JSON.stringify(preset));
-}
-
-async function applyCounterToName(_env, _chatId, baseName) {
-  return cleanFileName(baseName) || "video";
-}
-
-function cleanFileName(value) {
-  return String(value || "")
-    .replace(/\.[^/.]+$/, "")
-    .replace(/[\\/:*?"<>|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function formatEpisode(value) {
-  return String(Number.parseInt(value, 10)).padStart(2, "0");
-}
-
-function buildAutomaticName(preset, sourceName) {
-  if (
-    preset?.auto_naming === "series" &&
-    preset.series_title &&
-    Number.isInteger(preset.next_episode) &&
-    preset.next_episode > 0
-  ) {
-    return `${cleanFileName(preset.series_title)} - E${formatEpisode(preset.next_episode)}`;
-  }
-  return cleanFileName(sourceName) || "video";
-}
-
-async function continueAfterResolution(env, botToken, chatId, session) {
-  if (session.configuring_preset) {
-    await sendAutoNamingKeyboard(botToken, chatId);
-    return;
-  }
-
-  session.awaiting_filename = true;
-  await setSession(env, chatId, session);
-  await promptFilename(botToken, chatId, null, session.default_name, false);
-}
-
-async function savePresetAndConfirm(env, botToken, chatId, session) {
-  const oldPreset = await getPreset(env, chatId);
-  const preset = {
-    codec: session.codec || "av1",
-    encode_mode: session.encode_mode || "nofilters",
-    filter_profile:
-      session.filter_profile || (session.encode_mode === "filters" ? "realistic" : "none"),
-    preset: session.preset || "8",
-    encode_method: session.encode_method || "crf",
-    target_value: session.target_value || "28",
-    resolution: session.resolution || "480",
-    auto_naming: session.auto_naming || "source",
-    active: true,
-  };
-
-  if (session.auto_naming === "series") {
-    preset.series_title = cleanFileName(session.series_title);
-    preset.next_episode = Number.parseInt(session.next_episode, 10);
-  }
-
-  await setPreset(env, chatId, preset);
-  await deleteSession(env, chatId);
-  await sendMessage(botToken, chatId, `✅ تم حفظ الإعداد وتفعيل الوضع التلقائي.\n${presetStatusText(preset)}\n⏸️ استخدم /auto_off لإيقافه.`);
-}
-
-function presetStatusText(preset) {
-  if (!preset) return "لا يوجد إعداد محفوظ.";
-
-  const codecLabel =
-    preset.codec === "vvc" ? "H.266 / VVC" : preset.codec === "audio" ? "صوت فقط" : "AV1";
-  const modeLabel =
-    preset.encode_mode === "filters"
-      ? preset.filter_profile === "anime"
-        ? "مع فلاتر الأنمي"
-        : "مع فلاتر الواقعي"
-      : preset.encode_mode === "audio"
-        ? "صوت فقط"
-        : "بدون فلاتر";
-  const methodLabel =
-    preset.encode_method === "crf"
-      ? "CRF"
-      : preset.encode_method === "qp"
-        ? "QP"
-        : preset.encode_method === "vbr"
-          ? "VBR"
-          : preset.encode_method === "twopass"
-            ? "Two-Pass"
-            : "استخراج صوت";
-  const resolutionLabel = preset.resolution === "auto" ? "نفس جودة الفيديو الأصلية" : `${preset.resolution}p`;
-
-  const lines = [
-    `المرمّز: ${codecLabel}`,
-    `الوضع: ${modeLabel}`,
-    `السرعة: ${preset.preset || "-"}`,
-    `الطريقة: ${methodLabel}`,
-    `القيمة: ${preset.target_value}`,
-  ];
-  if (preset.codec !== "audio") lines.push(`الدقة: ${resolutionLabel}`);
-  if (preset.auto_naming === "series" && preset.series_title && preset.next_episode) {
-    lines.push(`التسمية: ${preset.series_title} - E${formatEpisode(preset.next_episode)}`);
-  } else {
-    lines.push("التسمية: الاحتفاظ باسم الفيديو المرفق");
-  }
-  return lines.join("\n");
-}
-
-function startMessage(preset) {
-  return [
-    "🚀 أرسل فيديو مباشرة أو أي رابط للبدء.",
-    "",
-    "📎 يمكنك إرسال:",
-    "- فيديو مباشر من جهازك",
-    "- أي رابط فيديو (يوتيوب، تيليجرام، Google Drive، وغيرها)",
-    "- أي رابط مباشر",
-    "",
-    "الأوامر:",
-    "/setup لحفظ إعداد تلقائي",
-    "/preset لعرض الإعداد المحفوظ",
-    "/auto_on و /auto_off لتشغيل أو إيقاف الوضع التلقائي",
-    "/cancel لإلغاء أي عملية جارية",
-    "",
-    "🎯 خيارات الدقة تشمل:",
-    "- دقة ثابتة (240p إلى 1080p)",
-    "- دقة مخصصة",
-    "- نفس جودة الفيديو الأصلية (auto)",
-    preset?.active ? "" : null,
-    preset?.active ? "▶️ الوضع التلقائي مفعّل حالياً." : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function isValidPreset(codec, value) {
-  if (codec === "av1") return /^(?:[0-9]|1[0-3])$/.test(value);
-  if (codec === "vvc") return /^[1-4]$/.test(value);
-  return codec === "audio";
-}
-
-function isValidEncodeMethod(codec, method) {
-  if (codec === "av1") return ["crf", "twopass"].includes(method);
-  if (codec === "vvc") return ["qp", "vbr"].includes(method);
-  if (codec === "audio") return method === "audio";
-  return false;
-}
-
-function isValidTargetValue(codec, method, value) {
-  if (codec === "audio" || method === "twopass" || method === "vbr") {
-    return /^[1-9]\d{0,5}(?:[kKmM])?$/.test(value);
-  }
-  if ((codec === "av1" && method === "crf") || (codec === "vvc" && method === "qp")) {
-    return /^(?:[0-9]|[1-5][0-9]|6[0-3])$/.test(value);
-  }
-  return false;
-}
-
-function isValidResolution(value) {
-  if (!/^\d{3,4}$/.test(value)) return false;
-  const height = Number.parseInt(value, 10);
-  return height >= 144 && height <= 2160;
-}
-
-function presetPrompt(codec) {
-  return codec === "vvc"
-    ? "أرسل رقم سرعة VVC: 1 أبطأ، 2 بطيء، 3 سريع، 4 الأسرع."
-    : "أرسل رقم سرعة AV1 من 0 إلى 13، مثل 4 أو 8.";
-}
-
-function targetValueHint(codec, method) {
-  if (codec === "audio") return "أرسل معدل بت صحيحاً، مثل 32k أو 48k.";
-  if (codec === "av1" && method === "crf") return "أرسل قيمة CRF من 0 إلى 63، مثل 28 أو 35.";
-  if (codec === "vvc" && method === "qp") return "أرسل قيمة QP من 0 إلى 63، مثل 32 أو 38.";
-  return "أرسل معدل بت صحيحاً، مثل 250k أو 1000k.";
-}
-
-function encodeMethodPrompt(codec, method) {
-  if (codec === "av1" && method === "crf") {
-    return "تم اختيار CRF. أرسل قيمة CRF من 0 إلى 63، مثل 28 أو 35:";
-  }
-  if (codec === "av1" && method === "twopass") {
-    return "تم اختيار Two-Pass. أرسل معدل البت المستهدف، مثل 250k أو 1000k:";
-  }
-  if (codec === "vvc" && method === "qp") {
-    return "تم اختيار QP. أرسل قيمة QP من 0 إلى 63، مثل 32 أو 38:";
-  }
-  return "تم اختيار VBR. أرسل معدل البت المستهدف، مثل 250k أو 1000k:";
-}
-
-async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId) {
-  const body = {
-    ref: "main",
-    inputs: {
-      message_id: session.message_id ? String(session.message_id) : "",
-      url: session.url || "",
-      chat_id: String(chatId),
-      filename: session.filename || "video",
-      codec: session.codec || "av1",
-      preset: session.preset || "8",
-      encode_mode: session.encode_mode || "nofilters",
-      filter_profile:
-        session.filter_profile || (session.encode_mode === "filters" ? "realistic" : "none"),
-      encode_method: session.encode_method || "crf",
-      target_value: String(session.target_value || "28"),
-      resolution: session.resolution || "480",
-      frame_rate: "24",
-    },
-  };
-
-  const response = await fetch(
-    `https://api.github.com/repos/${githubRepo}/actions/workflows/${githubWorkflow}/dispatches`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `token ${githubToken}`,
-        Accept: "application/vnd.github.v3+json",
-        "User-Agent": "Cloudflare-Worker",
+    const response = await env.AI.run(
+      model,
+      {
+        messages: messages.map(m => ({
+          role: m.role === 'system' ? 'system' : m.role,
+          content: m.content,
+        })),
+        max_tokens: 4096,
       },
-      body: JSON.stringify(body),
-    },
-  );
+      { gateway: { id: 'fox-gateway' } }
+    );
 
-  const responseText = await response.text();
-  if (!response.ok) {
-    console.error("GitHub workflow dispatch failed:", {
-      status: response.status,
-      repository: githubRepo,
-      workflow: githubWorkflow,
-      detail: responseText.slice(0, 1500),
-    });
-    return false;
+    const content =
+      response.response ||
+      response.choices?.[0]?.message?.content ||
+      (typeof response === 'string' ? response : '');
+
+    if (!content) throw new Error('استجابة فارغة من النموذج');
+
+    return content;
+  } catch (error) {
+    console.error(`Workers AI error (${provider}):`, error);
+
+    if (error.message?.includes('quota') || error.message?.includes('429')) {
+      throw new Error('تم استنفاد حصة Workers AI اليومية. يمكنك التبديل إلى Gemini أو المحاولة غداً.');
+    }
+
+    throw new Error(`خطأ من Workers AI (${provider}): ${error.message || 'خطأ غير معروف'}`);
   }
-
-  console.log("GitHub workflow dispatched:", {
-    status: response.status,
-    repository: githubRepo,
-    workflow: githubWorkflow,
-  });
-  return true;
 }
 
-async function finalizeAndTrigger(env, botToken, githubToken, githubRepo, githubWorkflow, chatId, session) {
-  const success = await triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId);
-  if (success) {
-    if (session.auto_advance_episode) {
-      const preset = await getPreset(env, chatId);
-      if (preset?.auto_naming === "series" && Number.isInteger(preset.next_episode)) {
-        preset.next_episode += 1;
-        await setPreset(env, chatId, preset);
+async function updateMemory(env, chatId, userMessage, aiResponse) {
+  if (!chatId || !userMessage || !aiResponse) return '';
+
+  try {
+    const existing = await env.DB.prepare(
+      'SELECT content FROM project_memory WHERE chat_id = ?'
+    ).bind(chatId).first();
+
+    const currentMemory = existing?.content || '';
+
+    const memoryPrompt = `أنت مدير وثيقة مشروع حية. دمج المعلومات الجديدة في الوثيقة الحالية.\n\nالوثيقة الحالية:\n${currentMemory || '(فارغة - هذه أول رسالة)'}\n\nآخر رسالة من المستخدم:\n${userMessage}\n\nرد المساعد:\n${aiResponse}\n\nأعد كتابة الوثيقة الكاملة كنص Markdown محدث. أعد الوثيقة فقط بدون أي مقدمات.`;
+
+    const response = await env.AI.run(
+      '@cf/qwen/qwen2.5-coder-32b-instruct',
+      { messages: [{ role: 'user', content: memoryPrompt }], max_tokens: 2000 },
+      { gateway: { id: 'fox-gateway' } }
+    );
+
+    const updatedContent = response.response || '';
+    if (!updatedContent) return currentMemory;
+
+    await env.DB.prepare(
+      `INSERT INTO project_memory (chat_id, content, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(chat_id) DO UPDATE
+       SET content = ?, updated_at = ?`
+    )
+    .bind(chatId, updatedContent, Date.now(), updatedContent, Date.now())
+    .run();
+
+    return updatedContent;
+  } catch (error) {
+    console.error('updateMemory error:', error.message);
+    return '';
+  }
+}
+
+async function getUsageFromGateway(env) {
+  const ACCOUNT_ID = '83880c2ae9ec32b24fc954ea8dd57d6d';
+
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const startISO = startOfDay.toISOString();
+  const endISO = now.toISOString();
+
+  const query = `
+    query {
+      viewer {
+        accounts(filter: { accountTag: "${ACCOUNT_ID}" }) {
+          aiGatewayRequestsAdaptiveGroups(
+            filter: {
+              datetimeHour_geq: "${startISO}"
+              datetimeHour_leq: "${endISO}"
+            }
+            limit: 1000
+          ) {
+            count
+          }
+        }
       }
     }
-    await sendMessage(botToken, chatId, "✅ تم إرسال المهمة إلى مصنع الضغط السحابي.");
-  } else {
-    await sendMessage(botToken, chatId, "❌ فشل إرسال المهمة إلى GitHub. تحقق من سجل العامل ورمز GitHub." );
-  }
-  await deleteSession(env, chatId);
-}
+  `;
 
-function extractDefaultName(message) {
-  const name = message.caption || message.document?.file_name || message.video?.file_name || null;
-  if (!name) return null;
-  return name.replace(/\.[^/.]+$/, "").replace(/[\\/:*?"<>|]/g, " ").trim();
-}
-
-async function promptFilename(botToken, chatId, editMessageId, defaultName, useEdit) {
-  const text = defaultName
-    ? `الاسم المرفق: ${defaultName}\n\nأرسل اسماً جديداً، أو اضغط «✅ استخدام الاسم المرفق».`
-    : "أرسل الاسم النهائي للملف:";
-  const keyboard = defaultName
-    ? { 
-        inline_keyboard: [
-          [{ text: "✅ استخدام الاسم المرفق", callback_data: "name_skip" }],
-          [{ text: "🚫 إلغاء", callback_data: "cancel" }]
-        ] 
-      }
-    : { 
-        inline_keyboard: [
-          [{ text: "🚫 إلغاء", callback_data: "cancel" }]
-        ] 
-      };
-
-  if (useEdit && editMessageId) {
-    await editMessage(botToken, chatId, editMessageId, text, keyboard);
-  } else {
-    await sendMessage(botToken, chatId, text, keyboard);
-  }
-}
-
-async function sendCodecKeyboard(botToken, chatId) {
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: "⚡ AV1", callback_data: "codec_av1" },
-        { text: "🧪 H.266 / VVC", callback_data: "codec_vvc" },
-      ],
-      [{ text: "🎵 صوت فقط", callback_data: "codec_audio" }],
-      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-    ],
-  };
-  await sendMessage(botToken, chatId, "⚙️ اختر المرمّز أو استخراج الصوت:", keyboard);
-}
-
-async function sendEncodeModeKeyboard(botToken, chatId) {
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "🛠️ مع فلاتر", callback_data: "mode_filters" }],
-      [{ text: "✨ بدون فلاتر", callback_data: "mode_nofilters" }],
-      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-    ],
-  };
-  await sendMessage(botToken, chatId, "🖼️ اختر وضع الصورة:", keyboard);
-}
-
-function filterProfileKeyboardMarkup() {
-  return {
-    inline_keyboard: [
-      [{ text: "🌸 أنمي", callback_data: "filter_anime" }],
-      [{ text: "🎬 محتوى واقعي", callback_data: "filter_realistic" }],
-      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-    ],
-  };
-}
-
-async function sendEncodeMethodKeyboard(botToken, chatId, codec) {
-  const text = codec === "vvc" ? "🎛️ اختر طريقة ترميز H.266 / VVC:" : "🎛️ اختر طريقة ترميز AV1:";
-  await sendMessage(botToken, chatId, text, encodeMethodKeyboardMarkup(codec));
-}
-
-function encodeMethodKeyboardMarkup(codec) {
-  if (codec === "vvc") {
-    return {
-      inline_keyboard: [
-        [{ text: "🎚️ جودة ثابتة (QP)", callback_data: "encmethod_qp" }],
-        [{ text: "📊 معدل بت (VBR)", callback_data: "encmethod_vbr" }],
-        [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-      ],
-    };
-  }
-  return {
-    inline_keyboard: [
-      [{ text: "🎚️ ضغط ذكي (CRF)", callback_data: "encmethod_crf" }],
-      [{ text: "⚖️ حجم مضبوط (Two-Pass)", callback_data: "encmethod_twopass" }],
-      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-    ],
-  };
-}
-
-async function sendAutoNamingKeyboard(botToken, chatId) {
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "📄 الاحتفاظ باسم كل فيديو", callback_data: "autoname_keep" }],
-      [{ text: "📺 اسم مسلسل + عداد حلقات", callback_data: "autoname_series" }],
-      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-    ],
-  };
-  await sendMessage(
-    botToken,
-    chatId,
-    "🏷️ اختر التسمية التلقائية للوضع التلقائي:\n\n📄 الاحتفاظ بالاسم: يستعمل اسم الفيديو المرفق.\n📺 مسلسل: تسمي كل نتيجة مثل: اسم السلسلة - E01 ثم E02.",
-    keyboard,
-  );
-}
-
-async function sendQualityKeyboard(botToken, chatId, resolutions) {
-  const rows = [];
-  for (let index = 0; index < resolutions.length; index += 2) {
-    rows.push(
-      resolutions.slice(index, index + 2).map((resolution) => ({
-        text: `${resolution}p`,
-        callback_data: `res_${resolution}`,
-      })),
-    );
-  }
-  rows.push([{ text: "✏️ دقة مخصصة", callback_data: "custom_res" }]);
-  rows.push([{ text: "🔄 نفس جودة الفيديو الأصلية", callback_data: "auto_res" }]);
-  rows.push([{ text: "🚫 إلغاء", callback_data: "cancel" }]);
-  await sendMessage(botToken, chatId, "🎯 اختر الدقة النهائية:", { inline_keyboard: rows });
-}
-
-async function sendTelegram(botToken, method, body) {
-  const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + env.CF_API_TOKEN,
+    },
+    body: JSON.stringify({ query }),
   });
-  if (!response.ok) {
-    console.error(`Telegram ${method} failed:`, response.status, await response.text());
+
+  const data = await response.json();
+
+  if (data.errors) {
+    throw new Error(data.errors[0]?.message || 'GraphQL error');
   }
-  return response.json();
-}
 
-async function sendMessage(botToken, chatId, text, keyboard = null) {
-  const body = { chat_id: chatId, text };
-  if (keyboard) body.reply_markup = keyboard;
-  await sendTelegram(botToken, "sendMessage", body);
-}
+  const groups = data.data?.viewer?.accounts?.[0]?.aiGatewayRequestsAdaptiveGroups || [];
 
-async function sendMessageWithReturn(botToken, chatId, text, keyboard = null) {
-  const body = { chat_id: chatId, text };
-  if (keyboard) body.reply_markup = keyboard;
-  return await sendTelegram(botToken, "sendMessage", body);
-}
+  let totalRequests = 0;
 
-async function editMessage(botToken, chatId, messageId, text, keyboard = null) {
-  const body = { chat_id: chatId, message_id: messageId, text };
-  if (keyboard) body.reply_markup = keyboard;
-  await sendTelegram(botToken, "editMessageText", body);
-}
+  groups.forEach(function(g) {
+    totalRequests += g.count || 0;
+  });
 
-async function answerCallback(botToken, callbackQueryId) {
-  await sendTelegram(botToken, "answerCallbackQuery", { callback_query_id: callbackQueryId });
+  return {
+    period: { from: startISO, to: endISO },
+    totals: {
+      requests: totalRequests,
+    },
+    note: 'عدد الطلبات المسجلة عبر AI Gateway اليوم'
+  };
 }
