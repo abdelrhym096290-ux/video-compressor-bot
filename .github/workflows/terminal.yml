@@ -21,6 +21,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: تجهيز البيئة
         run: |
           sudo apt update
@@ -47,26 +50,4 @@ jobs:
         env:
           HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
         run: |
-          python3 -c "
-import json, hmac, hashlib, os, urllib.request
-
-with open('output.txt', 'r') as f:
-    output = f.read()
-with open('exit_code.txt', 'r') as f:
-    exit_code = int(f.read().strip())
-
-payload = json.dumps({'output': output, 'exit_code': exit_code})
-secret = os.environ['HMAC_SECRET'].encode()
-signature = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
-
-req = urllib.request.Request(
-    'https://fox1-ai.abdelrhym096290.workers.dev/result',
-    data=payload.encode(),
-    headers={
-        'Content-Type': 'application/json',
-        'X-Hub-Signature-256': 'sha256=' + signature
-    }
-)
-resp = urllib.request.urlopen(req)
-print(resp.read().decode())
-"
+          python3 send_result.py
