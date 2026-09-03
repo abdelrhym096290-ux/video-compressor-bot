@@ -87,7 +87,7 @@
     cursor:pointer;
     outline:none;
     font-family:inherit;
-    max-width:150px;
+    max-width:160px;
     flex-shrink:0;
   }
   .model-select:hover{ border-color:var(--text-soft); }
@@ -380,7 +380,6 @@ const usagePanel = document.getElementById('usage-panel');
 const usageContent = document.getElementById('usage-content');
 const usageLoadBtn = document.getElementById('usage-load-btn');
 
-/* ============ كلمة المرور ============ */
 let accessPassword = localStorage.getItem('fox-pass') || '';
 
 lockBtn.addEventListener('click', verifyPassword);
@@ -429,23 +428,50 @@ if (accessPassword) {
   lockInput.focus();
 }
 
-/* ============ النماذج ============ */
+/* ============ النماذج مرتبة حسب الشركة ============ */
 const PROVIDERS = [
-  { value: 'gemini', label: 'Gemini', desc: 'Google — عام سريع، حصة منفصلة 20/يوم' },
-  { value: 'cf-glm-flash', label: 'GLM 4.7 Flash', desc: 'Z.ai — برمجة + Agents + سياق 131K' },
+  // Google Gemini (API مستقل)
+  { value: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', desc: 'Google — الأحدث والأقوى Flash' },
+  { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', desc: 'Google — Flash حديث' },
+  { value: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', desc: 'Google — Flash مستقر' },
+  { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', desc: 'Google — Flash متوازن' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', desc: 'Google — Pro قوي للتفكير' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Google — خفيف وسريع' },
+  { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', desc: 'Google — أخف نسخة' },
+  { value: 'gemini-flash-lite-latest', label: 'Gemini Flash Lite', desc: 'Google — أحدث Lite' },
+  { value: 'gemini', label: 'Gemini (افتراضي)', desc: 'Google — نفس Gemini 3.6 Flash' },
+
+  // Google Gemma (Workers AI)
+  { value: 'cf-gemma-4', label: 'Gemma 4 26B', desc: 'Google — تفكير + عملاء + رؤية' },
+
+  // Alibaba Qwen (Workers AI)
   { value: 'cf-qwen3-coder', label: 'Qwen3.8 27B', desc: 'Alibaba — برمجة + رؤية + سياق 262K' },
   { value: 'cf-coder', label: 'Qwen Coder 32B', desc: 'Alibaba — كود معقد + سياق 32K' },
   { value: 'cf-qwen3', label: 'Qwen3 30B', desc: 'Alibaba — برمجة + متعدد اللغات' },
-  { value: 'cf-gpt-oss-20b', label: 'GPT-OSS 20B', desc: 'OpenAI — كود + سرعة' },
-  { value: 'cf-gemma-4', label: 'Gemma 4 26B', desc: 'Google — تفكير + عملاء + رؤية' },
-  { value: 'cf-nemotron', label: 'Nemotron 3 120B', desc: 'NVIDIA — تفكير عميق + عملاء' },
-  { value: 'cf-gpt-oss-120b', label: 'GPT-OSS 120B', desc: 'OpenAI — تفكير + برمجة + إنتاج' },
-  { value: 'cf-deepseek-r1', label: 'DeepSeek R1', desc: 'DeepSeek — منطق + رياضيات + كود' },
   { value: 'cf-qwq', label: 'QwQ 32B', desc: 'Alibaba — تفكير عميق + رياضيات' },
-  { value: 'cf-llama-4', label: 'Llama 4 Scout', desc: 'Meta — عام + رؤية' },
-  { value: 'cf-mistral', label: 'Mistral 24B', desc: 'Mistral AI — كتابة + برمجة + رؤية' },
+
+  // Z.ai GLM
+  { value: 'cf-glm-flash', label: 'GLM 4.7 Flash', desc: 'Z.ai — برمجة + Agents + سياق 131K' },
+
+  // DeepSeek
+  { value: 'cf-deepseek-r1', label: 'DeepSeek R1', desc: 'DeepSeek — منطق + رياضيات + كود' },
+
+  // OpenAI
+  { value: 'cf-gpt-oss-120b', label: 'GPT-OSS 120B', desc: 'OpenAI — تفكير + برمجة + إنتاج' },
+  { value: 'cf-gpt-oss-20b', label: 'GPT-OSS 20B', desc: 'OpenAI — كود + سرعة' },
+
+  // NVIDIA
+  { value: 'cf-nemotron', label: 'Nemotron 3 120B', desc: 'NVIDIA — تفكير عميق + عملاء' },
+
+  // Meta Llama
   { value: 'cf-llama-70b', label: 'Llama 3.3 70B', desc: 'Meta — محادثة + كود قوي' },
+  { value: 'cf-llama-4', label: 'Llama 4 Scout', desc: 'Meta — عام + رؤية' },
   { value: 'cf-llama-vision', label: 'Llama Vision 11B', desc: 'Meta — تحليل صور + محادثة' },
+
+  // Mistral AI
+  { value: 'cf-mistral', label: 'Mistral 24B', desc: 'Mistral AI — كتابة + برمجة + رؤية' },
+
+  // IBM
   { value: 'cf-granite', label: 'Granite 4.0', desc: 'IBM — Agents + RAG + خفيف سريع' },
 ];
 
@@ -511,18 +537,9 @@ async function loadUsage(){
     if (data.error) throw new Error(data.error);
 
     let html = '';
-html += 'إجمالي الطلبات: ' + (data.totals?.requests || 0) + '\n';
-if (data.totals?.tokens) {
-  html += 'إجمالي التوكنات: ' + data.totals.tokens + '\n';
-}
-if (data.byModel && Object.keys(data.byModel).length > 0) {
-  html += '\nحسب النموذج:\n';
-  Object.keys(data.byModel).forEach(function(model){
-    html += '• ' + model + ': ' + data.byModel[model].requests + ' طلب\n';
-  });
-}
-if (data.note) html += '\n' + data.note;
-usageContent.textContent = html;
+    html += 'إجمالي الطلبات: ' + (data.totals?.requests || 0) + '\n';
+    if (data.note) html += '\n' + data.note;
+    usageContent.textContent = html;
   } catch (error) {
     usageContent.textContent = 'خطأ: ' + error.message;
   }
@@ -625,8 +642,6 @@ if (localStorage.getItem('fox-theme') === 'dark') document.body.classList.add('d
 newChatBtn.addEventListener('click', createNewChat);
 headerNewBtn.addEventListener('click', createNewChat);
 
-/* ============ الحالة والتخزين ============ */
-
 let chats = JSON.parse(localStorage.getItem('fox-chats') || '[]');
 let currentChatId = localStorage.getItem('fox-current-chat');
 
@@ -677,8 +692,6 @@ function renderChatList(){
     chatList.appendChild(div);
   });
 }
-
-/* ============ MARKDOWN ============ */
 
 function escapeHtml(s){
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -795,8 +808,6 @@ function enhanceCodeBlocks(container){
   });
 }
 
-/* ============ عرض الرسائل ============ */
-
 function makeIconBtn(icon, title, onClick){
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -897,8 +908,6 @@ function showTyping(){
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-/* ============ الإرسال ============ */
-
 function setGeneratingUI(active){
   isGenerating = active;
   sendBtn.classList.toggle('generating', active);
@@ -979,8 +988,6 @@ function sendMessage(){
 
   requestAIResponse(chat);
 }
-
-/* ============ البداية ============ */
 
 initModelSelect();
 renderChatList();
