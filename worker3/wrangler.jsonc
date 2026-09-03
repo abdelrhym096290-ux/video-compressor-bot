@@ -1,0 +1,19 @@
+{
+  "name": "fox1-ai",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-03",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "EXPERIMENT_STATE",
+        "class_name": "ExperimentState"
+      }
+    ]
+  },
+  "exports": {
+    "ExperimentState": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}
