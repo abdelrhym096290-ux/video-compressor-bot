@@ -50,15 +50,8 @@ jobs:
           OUTPUT=$(cat output.txt)
           EXIT_CODE=$(cat exit_code.txt)
           
-          # إنشاء JSON صحيح
-          jq -n --arg out "$OUTPUT" --argjson code "$EXIT_CODE" '{output: $out, exit_code: $code}' > payload.json
+          jq -n --arg out "$OUTPUT" --argjson code "$EXIT_CODE" --arg secret "$HMAC_SECRET" '{output: $out, exit_code: $code, secret: $secret}' > payload.json
           
-          # حساب HMAC
-          PAYLOAD=$(cat payload.json)
-          SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$HMAC_SECRET" | awk '{print $2}')
-          
-          # إرسال
           curl -X POST "https://fox1-ai.abdelrhym096290.workers.dev/result" \
             -H "Content-Type: application/json" \
-            -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
             -d @payload.json
