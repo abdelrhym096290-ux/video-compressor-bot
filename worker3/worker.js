@@ -85,7 +85,6 @@ export default {
 
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 
-      // ============ تسجيل الدخول ============
       if (action === 'login') {
         try {
           const lockCheck = await env.DB.prepare(
@@ -162,7 +161,6 @@ export default {
         }
       }
 
-      // ============ فحص الجلسة ============
       if (action === 'check_session') {
         const valid = await isSessionValid(env, sessionToken);
         return new Response(JSON.stringify({ valid }), {
@@ -170,7 +168,6 @@ export default {
         });
       }
 
-      // ============ خروج ============
       if (action === 'logout') {
         if (sessionToken) {
           await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(sessionToken).run().catch(() => {});
@@ -180,7 +177,6 @@ export default {
         });
       }
 
-      // ============ التحقق من الجلسة لكل الطلبات ============
       const sessionValid = await isSessionValid(env, sessionToken);
       if (!sessionValid) {
         return new Response(JSON.stringify({ error: 'الجلسة غير صالحة أو منتهية، سجّل الدخول من جديد', authRequired: true }), {
@@ -244,7 +240,6 @@ export default {
         }
       }
 
-      // ============ سجل التجارب ============
       if (action === 'get_experiments') {
         try {
           const results = await env.DB.prepare(
@@ -262,7 +257,6 @@ export default {
         }
       }
 
-      // ============ RUN COMMAND ============
       if (action === 'run_command') {
         if (!command) {
           return new Response(JSON.stringify({ error: 'command مطلوب' }), {
@@ -402,7 +396,6 @@ export default {
   },
 };
 
-// ============ دالة المقارنة الآمنة ============
 function constantTimeEqual(a, b) {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -410,7 +403,6 @@ function constantTimeEqual(a, b) {
   return diff === 0;
 }
 
-// ============ التحقق من صلاحية توكن الجلسة ============
 async function isSessionValid(env, token) {
   if (!token) return false;
   try {
@@ -463,18 +455,11 @@ export class ExperimentState {
 
     const now = Date.now();
     const experimentData = {
-      command: command,
-      chatId: chatId,
-      status: 'pending',
-      attempts: 0,
-      startedAt: now,
-      lastUpdate: now,
-      githubToken: githubToken,
+      command, chatId, status: 'pending', attempts: 0,
+      startedAt: now, lastUpdate: now, githubToken,
     };
-
     await this.state.storage.put('experiment', experimentData);
     await this.state.storage.setAlarm(Date.now() + 60000);
-
     return await this.dispatchToGitHub(command, githubToken, hmacSecret);
   }
 
@@ -482,20 +467,14 @@ export class ExperimentState {
     const data = await request.json();
     const output = data.output || '';
     const exitCode = data.exitCode ?? 0;
-
     const experiment = await this.state.storage.get('experiment');
     if (!experiment) {
       return new Response(JSON.stringify({ error: 'لا توجد تجربة نشطة' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json' },
+        status: 404, headers: { 'Content-Type': 'application/json' },
       });
     }
-
     const now = Date.now();
-    experiment.output = output;
-    experiment.exitCode = exitCode;
-    experiment.lastUpdate = now;
-
+    experiment.output = output; experiment.exitCode = exitCode; experiment.lastUpdate = now;
     if (exitCode === 0) {
       experiment.status = 'completed';
       await this.state.storage.put('experiment', experiment);
@@ -504,7 +483,6 @@ export class ExperimentState {
         headers: { 'Content-Type': 'application/json' },
       });
     }
-
     if (experiment.attempts >= 5 || (now - experiment.startedAt) >= 20 * 60 * 1000) {
       experiment.status = 'failed';
       await this.state.storage.put('experiment', experiment);
@@ -513,13 +491,10 @@ export class ExperimentState {
         headers: { 'Content-Type': 'application/json' },
       });
     }
-
     experiment.attempts += 1;
     experiment.status = 'retrying';
     await this.state.storage.put('experiment', experiment);
-
     await this.dispatchToGitHub(experiment.command, experiment.githubToken, null);
-
     return new Response(JSON.stringify({ status: 'retrying', attempt: experiment.attempts, experiment }), {
       headers: { 'Content-Type': 'application/json' },
     });
@@ -536,35 +511,27 @@ export class ExperimentState {
           'Accept': 'application/vnd.github.v3+json',
           'X-GitHub-Api-Version': '2022-11-28',
         },
-        body: JSON.stringify({ ref: 'main', inputs: { command: command } }),
+        body: JSON.stringify({ ref: 'main', inputs: { command } }),
       }
     );
-
     if (response.status === 204) {
       return new Response(JSON.stringify({
-        success: true,
-        message: 'تم إرسال الأمر للتنفيذ في GitHub Actions',
+        success: true, message: 'تم إرسال الأمر للتنفيذ في GitHub Actions',
         experimentId: this.state.id.toString(),
-      }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
+      }), { headers: { 'Content-Type': 'application/json' } });
     }
-
     const errorData = await response.json().catch(() => ({}));
     return new Response(JSON.stringify({ error: errorData.message || 'GitHub API error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
+      status: 500, headers: { 'Content-Type': 'application/json' },
     });
   }
 
   async handleAlarm() {
     const experiment = await this.state.storage.get('experiment');
     if (!experiment) return new Response('No experiment');
-
     const elapsed = Date.now() - experiment.startedAt;
     const MAX_TIME = 20 * 60 * 1000;
     const MAX_ATTEMPTS = 5;
-
     try {
       const status = await this.checkGitHubRuns(experiment.githubToken);
       if (status.status === 'completed') {
@@ -574,10 +541,7 @@ export class ExperimentState {
         await this.state.storage.deleteAlarm();
         return new Response('Experiment completed');
       }
-    } catch (e) {
-      console.error('GitHub check error:', e.message);
-    }
-
+    } catch (e) { console.error('GitHub check error:', e.message); }
     if (elapsed >= MAX_TIME || experiment.attempts >= MAX_ATTEMPTS) {
       experiment.status = 'failed';
       experiment.lastUpdate = Date.now();
@@ -585,13 +549,11 @@ export class ExperimentState {
       await this.state.storage.deleteAlarm();
       return new Response('Experiment failed - max attempts/time reached');
     }
-
     experiment.attempts += 1;
     experiment.status = 'retrying';
     experiment.lastUpdate = Date.now();
     await this.state.storage.put('experiment', experiment);
     await this.state.storage.setAlarm(Date.now() + 60000);
-
     return new Response('Retrying - attempt ' + experiment.attempts);
   }
 
@@ -607,54 +569,39 @@ export class ExperimentState {
         },
       }
     );
-
     const data = await response.json();
     const latestRun = data.workflow_runs?.[0];
-
     if (!latestRun) return { status: 'no_runs' };
-
-    return {
-      id: latestRun.id,
-      status: latestRun.status,
-      conclusion: latestRun.conclusion,
-    };
+    return { id: latestRun.id, status: latestRun.status, conclusion: latestRun.conclusion };
   }
 
   async checkStatus() {
     const experiment = await this.state.storage.get('experiment');
     if (!experiment) {
       return new Response(JSON.stringify({ error: 'لا توجد تجربة نشطة' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json' },
+        status: 404, headers: { 'Content-Type': 'application/json' },
       });
     }
-
-    return new Response(JSON.stringify(experiment), {
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return new Response(JSON.stringify(experiment), { headers: { 'Content-Type': 'application/json' } });
   }
 
   async retryExperiment() {
     const experiment = await this.state.storage.get('experiment');
     if (!experiment || experiment.attempts >= 5) {
       return new Response(JSON.stringify({ error: 'تم الوصول للحد الأقصى من المحاولات' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
+        status: 400, headers: { 'Content-Type': 'application/json' },
       });
     }
-
     experiment.attempts += 1;
     experiment.status = 'retrying';
     experiment.lastUpdate = Date.now();
     await this.state.storage.put('experiment', experiment);
-
     return new Response(JSON.stringify({ retry: experiment.attempts }), {
       headers: { 'Content-Type': 'application/json' },
     });
   }
 }
 
-// ============ نماذج Gemini ============
 const GEMINI_MODEL_MAP = {
   'gemini': 'gemini-3.6-flash',
   'gemini-3.8-flash': 'gemini-3.8-flash',
@@ -667,7 +614,6 @@ const GEMINI_MODEL_MAP = {
   'gemini-flash-lite-latest': 'gemini-flash-lite-latest',
 };
 
-// ============ نماذج Workers AI ============
 const WORKERS_AI_MODELS = {
   'cf-glm-flash': '@cf/zai-org/glm-4.7-flash',
   'cf-qwen3-coder': '@cf/qwen/qwen3.8-27b',
@@ -686,28 +632,22 @@ const WORKERS_AI_MODELS = {
   'cf-granite': '@cf/ibm-granite/granite-4.0-h-micro',
 };
 
-// ============ إعدادات GitHub ============
 const GITHUB_REPO = 'abdelrhym096290-ux/video-compressor-bot';
 const GITHUB_WORKFLOW = 'terminal.yml';
 
 async function callGemini(apiKey, messages, provider) {
   const modelName = GEMINI_MODEL_MAP[provider] || 'gemini-3.6-flash';
-
-  const contents = messages.map(m => {
-    const role = m.role === 'user' ? 'user' : 'model';
-    return { role: role, parts: [{ text: m.content }] };
-  });
-
+  const contents = messages.map(m => ({
+    role: m.role === 'user' ? 'user' : 'model',
+    parts: [{ text: m.content }],
+  }));
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':generateContent';
-
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify({ contents }),
   });
-
   const data = await response.json();
-
   if (!response.ok) {
     console.error('Gemini API error:', JSON.stringify(data));
     if (response.status === 429) {
@@ -715,26 +655,18 @@ async function callGemini(apiKey, messages, provider) {
       const retrySeconds = retryDetail?.retryDelay ? parseInt(retryDetail.retryDelay) : null;
       throw new Error(
         'تم تجاوز الحد المجاني المسموح به من Google للنموذج حاليًا. ' +
-        (retrySeconds ? ('حاول مرة أخرى خلال ' + retrySeconds + ' ثانية.') : 'حاول مرة أخرى بعد قليل، أو فعّل الفوترة في مشروع Google Cloud لرفع الحد المسموح.')
+        (retrySeconds ? ('حاول مرة أخرى خلال ' + retrySeconds + ' ثانية.') : 'حاول مرة أخرى بعد قليل.')
       );
     }
     throw new Error(data.error?.message || ('Gemini API error (status ' + response.status + ')'));
   }
-
   const candidate = data.candidates?.[0];
-  if (!candidate) {
-    console.error('Gemini returned no candidates:', JSON.stringify(data));
-    const blockReason = data.promptFeedback?.blockReason;
-    if (blockReason) throw new Error('تم حظر الرد بواسطة فلاتر السلامة: ' + blockReason);
-    return 'لا يوجد رد';
-  }
-
+  if (!candidate) return 'لا يوجد رد';
   return candidate.content?.parts?.[0]?.text || 'لا يوجد رد';
 }
 
 async function callWorkersAI(env, provider, messages) {
   const model = WORKERS_AI_MODELS[provider];
-
   try {
     const response = await env.AI.run(
       model,
@@ -747,73 +679,40 @@ async function callWorkersAI(env, provider, messages) {
       },
       { gateway: { id: 'fox-gateway' } }
     );
-
-    const content =
-      response.response ||
-      response.choices?.[0]?.message?.content ||
-      (typeof response === 'string' ? response : '');
-
+    const content = response.response || response.choices?.[0]?.message?.content || (typeof response === 'string' ? response : '');
     if (!content) throw new Error('استجابة فارغة من النموذج');
-
     return content;
   } catch (error) {
     console.error(`Workers AI error (${provider}):`, error);
-
     if (error.message?.includes('quota') || error.message?.includes('429')) {
       throw new Error('تم استنفاد حصة Workers AI اليومية. يمكنك التبديل إلى Gemini أو المحاولة غداً.');
     }
-
     throw new Error(`خطأ من Workers AI (${provider}): ${error.message || 'خطأ غير معروف'}`);
   }
 }
 
 async function updateMemory(env, chatId, userMessage, aiResponse) {
   if (!chatId || !userMessage || !aiResponse) return '';
-
   try {
     const existing = await env.DB.prepare(
       'SELECT content FROM project_memory WHERE chat_id = ?'
     ).bind(chatId).first();
-
     const currentMemory = existing?.content || '';
-
-    const memoryPrompt = `أنت مسؤول صيانة وثيقة توثيق حية (Documentation Memory) لمحادثة قد يخدمها أكثر من نموذج ذكاء اصطناعي بالتناوب. هذه الوثيقة هي السياق الوحيد الذي سيراه أي نموذج تالٍ - لا يوجد سجل محادثة خام يُرسل معها.
-
-مهمتك: حدّث الوثيقة بحيث تبقى قصيرة ومركّزة قدر الإمكان مع الحفاظ على كل معلومة مهمة لاستمرارية السياق:
-- ادمج المعلومة الجديدة في مكانها المناسب بدل إضافتها كسطر منفصل بآخر الوثيقة.
-- أي نقطة أصبحت منجزة أو محسومة بهذه الرسالة: لخّصها بسطر واحد مختصر (أو احذفها إن لم تعد مفيدة لفهم القرارات اللاحقة) بدل الاحتفاظ بتفاصيل النقاش الذي أدى إليها.
-- احتفظ بالتفاصيل الكاملة فقط لما هو مفتوح أو جارٍ أو قد يحتاجه نموذج آخر لاحقاً.
-- لا تكرر معلومة مذكورة سابقاً بصياغة مختلفة.
-
-الوثيقة الحالية:
-${currentMemory || '(فارغة - هذه أول رسالة في المحادثة)'}
-
-آخر رسالة من المستخدم:
-${userMessage}
-
-رد المساعد:
-${aiResponse}
-
-أعد كتابة الوثيقة الكاملة المحدثة بصيغة Markdown فقط، بدون أي مقدمات أو شرح لعملك.`;
-
+    const memoryPrompt = `أنت مسؤول صيانة وثيقة توثيق حية (Documentation Memory) لمحادثة قد يخدمها أكثر من نموذج ذكاء اصطناعي بالتناوب. هذه الوثيقة هي السياق الوحيد الذي سيراه أي نموذج تالٍ - لا يوجد سجل محادثة خام يُرسل معها.\n\nمهمتك: حدّث الوثيقة بحيث تبقى قصيرة ومركّزة قدر الإمكان مع الحفاظ على كل معلومة مهمة لاستمرارية السياق.\n\nالوثيقة الحالية:\n${currentMemory || '(فارغة)'}\n\nآخر رسالة من المستخدم:\n${userMessage}\n\nرد المساعد:\n${aiResponse}\n\nأعد كتابة الوثيقة الكاملة المحدثة بصيغة Markdown فقط.`;
     const response = await env.AI.run(
       '@cf/qwen/qwen2.5-coder-32b-instruct',
       { messages: [{ role: 'user', content: memoryPrompt }], max_tokens: 2000 },
       { gateway: { id: 'fox-gateway' } }
     );
-
     const updatedContent = response.response || '';
     if (!updatedContent) return currentMemory;
-
     await env.DB.prepare(
       `INSERT INTO project_memory (chat_id, content, updated_at)
        VALUES (?, ?, ?)
-       ON CONFLICT(chat_id) DO UPDATE
-       SET content = ?, updated_at = ?`
+       ON CONFLICT(chat_id) DO UPDATE SET content = ?, updated_at = ?`
     )
     .bind(chatId, updatedContent, Date.now(), updatedContent, Date.now())
     .run();
-
     return updatedContent;
   } catch (error) {
     console.error('updateMemory error:', error.message);
@@ -823,7 +722,6 @@ ${aiResponse}
 
 async function getUsageFromGateway(env) {
   const ACCOUNT_ID = '83880c2ae9ec32b24fc954ea8dd57d6d';
-
   const now = new Date();
   const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const startISO = startOfDay.toISOString();
@@ -841,6 +739,18 @@ async function getUsageFromGateway(env) {
             limit: 1000
           ) {
             count
+            dimensions {
+              model
+              provider
+              gateway
+              datetimeHour
+            }
+            sum {
+              tokensIn
+              tokensOut
+              totalTokens
+              cost
+            }
           }
         }
       }
@@ -865,14 +775,30 @@ async function getUsageFromGateway(env) {
   const groups = data.data?.viewer?.accounts?.[0]?.aiGatewayRequestsAdaptiveGroups || [];
 
   let totalRequests = 0;
+  let totalTokensIn = 0;
+  let totalTokensOut = 0;
+  let totalTokens = 0;
+  let totalCost = 0;
+  const modelStats = {};
 
   groups.forEach(function(g) {
     totalRequests += g.count || 0;
+    totalTokensIn += g.sum?.tokensIn || 0;
+    totalTokensOut += g.sum?.tokensOut || 0;
+    totalTokens += g.sum?.totalTokens || 0;
+    totalCost += g.sum?.cost || 0;
+
+    const model = g.dimensions?.model || 'unknown';
+    if (!modelStats[model]) modelStats[model] = { requests: 0, tokensIn: 0, tokensOut: 0 };
+    modelStats[model].requests += g.count || 0;
+    modelStats[model].tokensIn += g.sum?.tokensIn || 0;
+    modelStats[model].tokensOut += g.sum?.tokensOut || 0;
   });
 
   return {
     period: { from: startISO, to: endISO },
-    totals: { requests: totalRequests },
-    note: 'عدد الطلبات المسجلة عبر AI Gateway اليوم'
+    totals: { requests: totalRequests, tokensIn: totalTokensIn, tokensOut: totalTokensOut, totalTokens, cost: totalCost },
+    byModel: modelStats,
+    note: 'بيانات الاستهلاك من AI Gateway'
   };
 }
