@@ -22,7 +22,7 @@ export default {
 
     try {
       const body = await request.json();
-      const { action, messages, provider, chatId, content, accessPassword } = body;
+      const { action, messages, provider, chatId, content, accessPassword, command } = body;
       console.log('FOX AI request:', action, 'messages:', messages?.length, 'provider:', provider, 'chatId:', chatId);
 
       if (accessPassword !== env.ACCESS_PASSWORD) {
@@ -83,6 +83,29 @@ export default {
         } catch (dbError) {
           console.error('D1 memory_update error:', dbError.message);
           return new Response(JSON.stringify({ error: 'خطأ في حفظ الذاكرة: ' + dbError.message }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+      }
+
+      // ============ RUN COMMAND (GitHub Actions) ============
+      if (action === 'run_command') {
+        if (!command) {
+          return new Response(JSON.stringify({ error: 'command مطلوب' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        }
+
+        try {
+          const result = await triggerGitHubAction(env, command);
+          return new Response(JSON.stringify(result), {
+            headers: { 'Content-Type': 'application/json', ...CORS },
+          });
+        } catch (cmdError) {
+          console.error('run_command error:', cmdError.message);
+          return new Response(JSON.stringify({ error: 'خطأ في تشغيل الأمر: ' + cmdError.message }), {
             status: 500,
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
@@ -150,14 +173,14 @@ export default {
 
       let rawResponse = '';
 
-      if (selectedProvider === 'gemini') {
+      if (GEMINI_MODEL_MAP[selectedProvider]) {
         if (!env.GEMINI_API_KEY) {
           return new Response(JSON.stringify({ error: 'GEMINI_API_KEY غير معرّف في إعدادات الـ Worker.' }), {
             status: 500,
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         }
-        rawResponse = await callGemini(env.GEMINI_API_KEY, contextMessages);
+        rawResponse = await callGemini(env.GEMINI_API_KEY, contextMessages, selectedProvider);
       } else if (WORKERS_AI_MODELS[selectedProvider]) {
         rawResponse = await callWorkersAI(env, selectedProvider, contextMessages);
       } else {
@@ -192,6 +215,20 @@ export default {
   },
 };
 
+// ============ نماذج Gemini (Google API) ============
+const GEMINI_MODEL_MAP = {
+  'gemini': 'gemini-3.6-flash',
+  'gemini-3.8-flash': 'gemini-3.8-flash',
+  'gemini-3.7-flash': 'gemini-3.7-flash',
+  'gemini-3.6-flash': 'gemini-3.6-flash',
+  'gemini-3.5-flash': 'gemini-3.5-flash',
+  'gemini-2.5-pro': 'gemini-2.5-pro',
+  'gemini-2.5-flash': 'gemini-2.5-flash',
+  'gemini-2.5-flash-lite': 'gemini-2.5-flash-lite',
+  'gemini-flash-lite-latest': 'gemini-flash-lite-latest',
+};
+
+// ============ نماذج Workers AI ============
 const WORKERS_AI_MODELS = {
   'cf-glm-flash': '@cf/zai-org/glm-4.7-flash',
   'cf-qwen3-coder': '@cf/qwen/qwen3.8-27b',
@@ -210,13 +247,51 @@ const WORKERS_AI_MODELS = {
   'cf-granite': '@cf/ibm-granite/granite-4.0-h-micro',
 };
 
-async function callGemini(apiKey, messages) {
+// ============ إعدادات GitHub ============
+const GITHUB_REPO = 'abdelrhym096290-ux/video-compressor-bot';
+const GITHUB_WORKFLOW = 'terminal.yml';
+
+async function triggerGitHubAction(env, command) {
+  if (!env.GITHUB_TOKEN) {
+    throw new Error('GITHUB_TOKEN غير معرّف في إعدادات الـ Worker');
+  }
+
+  const response = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + env.GITHUB_TOKEN,
+        'Accept': 'application/vnd.github.v3+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      body: JSON.stringify({
+        ref: 'main',
+        inputs: {
+          command: command,
+        },
+      }),
+    }
+  );
+
+  if (response.status === 204) {
+    return { success: true, message: 'تم إرسال الأمر للتنفيذ في GitHub Actions' };
+  }
+
+  const errorData = await response.json().catch(() => ({}));
+  throw new Error(errorData.message || 'GitHub API error (status ' + response.status + ')');
+}
+
+async function callGemini(apiKey, messages, provider) {
+  const modelName = GEMINI_MODEL_MAP[provider] || 'gemini-3.6-flash';
+
   const contents = messages.map(m => {
     const role = m.role === 'user' ? 'user' : 'model';
     return { role: role, parts: [{ text: m.content }] };
   });
 
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent';
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':generateContent';
 
   const response = await fetch(url, {
     method: 'POST',
