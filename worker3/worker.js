@@ -23,30 +23,55 @@ export default {
     // ============ مسار استقبال نتائج GitHub ============
     if (request.url.includes('/result')) {
       try {
-        const webhookBody = await request.json();
+        const rawBody = await request.text();
+        const header = request.headers.get('X-Hub-Signature-256') || '';
+        const expectedSig = header.replace('sha256=', '');
 
-        if (webhookBody.secret !== env.HMAC_SECRET) {
+        const enc = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+          'raw', enc.encode(env.HMAC_SECRET),
+          { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+        );
+        const sigBuffer = await crypto.subtle.sign('HMAC', key, enc.encode(rawBody));
+        const computedSig = Array.from(new Uint8Array(sigBuffer))
+          .map(b => b.toString(16).padStart(2, '0')).join('');
+
+        if (!constantTimeEqual(computedSig, expectedSig)) {
           return new Response(JSON.stringify({ error: 'توقيع غير صالح' }), {
             status: 403,
             headers: { 'Content-Type': 'application/json', ...CORS },
           });
         }
 
-        delete webhookBody.secret;
-
+        const webhookBody = JSON.parse(rawBody);
         const output = webhookBody.output || 'لا توجد نتائج';
         const experimentId = webhookBody.experimentId || 'unknown';
-        const exitCode = webhookBody.exit_code || 0;
+        const exitCode = webhookBody.exit_code ?? 0;
 
+        // استدعاء DO للتعامل مع النتيجة (نجاح/فشل + إعادة محاولة)
+        const id = env.EXPERIMENT_STATE.idFromName(experimentId);
+        const experimentObj = env.EXPERIMENT_STATE.get(id);
+
+        const result = await experimentObj.fetch('https://internal/result', {
+          method: 'POST',
+          body: JSON.stringify({
+            output: output,
+            exitCode: exitCode,
+          }),
+        });
+
+        const resultData = await result.json();
+
+        // حفظ النتيجة في D1
         const now = Date.now();
         await env.DB.prepare(
           `INSERT INTO experiments (chat_id, command, status, output, exit_code, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
-        .bind(experimentId, 'from-github', 'completed', output, exitCode, now, now)
+        .bind(experimentId, 'from-github', resultData.status, output, exitCode, now, now)
         .run();
 
-        return new Response(JSON.stringify({ success: true }), {
+        return new Response(JSON.stringify(resultData), {
           headers: { 'Content-Type': 'application/json', ...CORS },
         });
       } catch (webhookError) {
@@ -65,7 +90,7 @@ export default {
 
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 
-      // ============ [جديد] تسجيل الدخول: كلمة المرور + حد المحاولات + إصدار Session Token ============
+      // ============ تسجيل الدخول ============
       if (action === 'login') {
         try {
           const lockCheck = await env.DB.prepare(
@@ -111,7 +136,6 @@ export default {
             });
           }
 
-          // كلمة مرور صحيحة: تصفير المحاولات + إصدار توكن جلسة
           await env.DB.prepare(
             `INSERT INTO login_attempts (ip, attempts, locked_until, updated_at)
              VALUES (?, 0, NULL, ?)
@@ -122,7 +146,7 @@ export default {
           .run();
 
           const token = crypto.randomUUID();
-          const expiresAt = now + 24 * 60 * 60 * 1000; // صلاحية 24 ساعة
+          const expiresAt = now + 24 * 60 * 60 * 1000;
 
           await env.DB.prepare(
             `INSERT INTO sessions (token, created_at, expires_at)
@@ -147,7 +171,7 @@ export default {
         }
       }
 
-      // ============ [معدَّل] كل الطلبات غير login تتحقق بتوكن الجلسة بدل كلمة المرور مباشرة ============
+      // ============ التحقق من الجلسة لكل الطلبات غير login ============
       const sessionValid = await isSessionValid(env, sessionToken);
       if (!sessionValid) {
         return new Response(JSON.stringify({ error: 'الجلسة غير صالحة أو منتهية، سجّل الدخول من جديد', authRequired: true }), {
@@ -353,7 +377,15 @@ export default {
   },
 };
 
-// ============ [جديد] التحقق من صلاحية توكن الجلسة ============
+// ============ دالة المقارنة الآمنة ============
+function constantTimeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// ============ التحقق من صلاحية توكن الجلسة ============
 async function isSessionValid(env, token) {
   if (!token) return false;
   try {
@@ -387,6 +419,8 @@ export class ExperimentState {
 
     if (path === '/start') {
       return await this.startExperiment(request);
+    } else if (path === '/result') {
+      return await this.handleResult(request);
     } else if (path === '/check') {
       return await this.checkStatus();
     } else if (path === '/retry') {
@@ -420,11 +454,57 @@ export class ExperimentState {
     };
 
     await this.state.storage.put('experiment', experimentData);
-
-    // ضبط alarm للتحقق بعد دقيقة
     await this.state.storage.setAlarm(Date.now() + 60000);
 
     return await this.dispatchToGitHub(command, githubToken, hmacSecret);
+  }
+
+  async handleResult(request) {
+    const data = await request.json();
+    const output = data.output || '';
+    const exitCode = data.exitCode ?? 0;
+
+    const experiment = await this.state.storage.get('experiment');
+    if (!experiment) {
+      return new Response(JSON.stringify({ error: 'لا توجد تجربة نشطة' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const now = Date.now();
+    experiment.output = output;
+    experiment.exitCode = exitCode;
+    experiment.lastUpdate = now;
+
+    if (exitCode === 0) {
+      experiment.status = 'completed';
+      await this.state.storage.put('experiment', experiment);
+      await this.state.storage.deleteAlarm();
+      return new Response(JSON.stringify({ status: 'completed', experiment }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (experiment.attempts >= 5 || (now - experiment.startedAt) >= 20 * 60 * 1000) {
+      experiment.status = 'failed';
+      await this.state.storage.put('experiment', experiment);
+      await this.state.storage.deleteAlarm();
+      return new Response(JSON.stringify({ status: 'failed', experiment }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    experiment.attempts += 1;
+    experiment.status = 'retrying';
+    await this.state.storage.put('experiment', experiment);
+
+    // إعادة الإرسال
+    await this.dispatchToGitHub(experiment.command, experiment.githubToken, null);
+
+    return new Response(JSON.stringify({ status: 'retrying', attempt: experiment.attempts, experiment }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   async dispatchToGitHub(command, githubToken, hmacSecret) {
@@ -469,15 +549,12 @@ export class ExperimentState {
     if (!experiment) return new Response('No experiment');
 
     const elapsed = Date.now() - experiment.startedAt;
-    const MAX_TIME = 20 * 60 * 1000; // 20 دقيقة
+    const MAX_TIME = 20 * 60 * 1000;
     const MAX_ATTEMPTS = 5;
 
-    // التحقق من GitHub REST API
     try {
       const status = await this.checkGitHubRuns(experiment.githubToken);
-
       if (status.status === 'completed') {
-        // نجحت التجربة
         experiment.status = 'completed';
         experiment.lastUpdate = Date.now();
         await this.state.storage.put('experiment', experiment);
@@ -488,7 +565,6 @@ export class ExperimentState {
       console.error('GitHub check error:', e.message);
     }
 
-    // التحقق من الحدود
     if (elapsed >= MAX_TIME || experiment.attempts >= MAX_ATTEMPTS) {
       experiment.status = 'failed';
       experiment.lastUpdate = Date.now();
@@ -497,7 +573,6 @@ export class ExperimentState {
       return new Response('Experiment failed - max attempts/time reached');
     }
 
-    // إعادة المحاولة
     experiment.attempts += 1;
     experiment.status = 'retrying';
     experiment.lastUpdate = Date.now();
