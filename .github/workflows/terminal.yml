@@ -7,6 +7,10 @@ on:
         description: 'الأمر الذي سيُنفذ'
         required: true
         default: 'echo مرحبا'
+      chat_id:
+        description: 'معرّف المحادثة (لإرجاع النتيجة للـ Durable Object الصحيح)'
+        required: false
+        default: 'unknown'
 
 concurrency:
   group: fox-ai-terminal
@@ -46,12 +50,25 @@ jobs:
       - name: إرسال النتيجة إلى العامل
         env:
           HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
         run: |
           OUTPUT=$(cat output.txt)
           EXIT_CODE=$(cat exit_code.txt)
-          
-          jq -n --arg out "$OUTPUT" --argjson code "$EXIT_CODE" --arg secret "$HMAC_SECRET" '{output: $out, exit_code: $code, secret: $secret}' > payload.json
-          
+
+          # إصلاح: النسخة القديمة كانت تضع HMAC_SECRET كحقل نصي عادي داخل
+          # الـ JSON نفسه ("secret": ...) بدل حساب توقيع HMAC فعلي وإرساله
+          # كهيدر — worker.js في /result يتحقق من هيدر X-Hub-Signature-256
+          # حصراً، فكان التحقق يفشل دائماً (403) ولا نتيجة تصل أبداً.
+          # الآن: نبني الـ body أولاً بدون السر، ثم نوقّعه بـ HMAC-SHA256
+          # ونرسل التوقيع كهيدر — بالضبط ما يتوقعه worker.js.
+          # experimentId يُضاف هنا أيضاً (كان غائباً تماماً) ليصل الـ webhook
+          # لصاحب المحادثة الصحيح بدل السقوط دائماً على 'unknown'.
+          BODY=$(jq -n --arg out "$OUTPUT" --argjson code "$EXIT_CODE" --arg eid "$CHAT_ID" \
+            '{output: $out, exit_code: $code, experimentId: $eid}')
+
+          SIGNATURE=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$HMAC_SECRET" | sed 's/^.* //')
+
           curl -X POST "https://fox1-ai.abdelrhym096290.workers.dev/result" \
             -H "Content-Type: application/json" \
-            -d @payload.json
+            -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
+            --data-raw "$BODY"
