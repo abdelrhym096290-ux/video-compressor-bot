@@ -81,8 +81,8 @@ export default {
 
     try {
       const body = await request.json();
-      const { action, messages, provider, chatId, content, accessPassword, sessionToken, command } = body;
-      console.log('FOX AI request:', action, 'messages:', messages?.length, 'provider:', provider, 'chatId:', chatId);
+      const { action, messages, provider, model, chatId, content, accessPassword, sessionToken, command } = body;
+      console.log('FOX AI request:', action, 'messages:', messages?.length, 'model:', model || provider, 'chatId:', chatId);
 
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 
@@ -179,6 +179,11 @@ export default {
         return new Response(JSON.stringify({ experiments: results.results || [] }), { headers: { 'Content-Type': 'application/json', ...CORS } });
       }
 
+      // ============ تنفيذ أمر — فقط بعد موافقة صريحة من المستخدم في الواجهة ============
+      // هذا المسار هو نقطة التنفيذ الوحيدة في كل الـ Worker. لا مكان آخر يدفع
+      // (dispatch) لجيت‌هَب تلقائيًا بمجرد ورود كتلة كود في رد النموذج —
+      // ذاك هو الخطر الذي أزلناه. الواجهة تستدعي هذا الـ action فقط بعد
+      // ضغط المستخدم زر "نفّذ" على اقتراح محدد، مرة لكل موافقة.
       if (action === 'run_command') {
         if (!command) return new Response(JSON.stringify({ error: 'command مطلوب' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
         const experimentId = chatId || 'default-' + Date.now();
@@ -189,7 +194,7 @@ export default {
           body: JSON.stringify({ command, chatId, githubToken: env.GITHUB_TOKEN, hmacSecret: env.HMAC_SECRET }),
         });
         const resultData = await result.json();
-        return new Response(JSON.stringify(resultData), { headers: { 'Content-Type': 'application/json', ...CORS } });
+        return new Response(JSON.stringify(resultData), { status: result.status, headers: { 'Content-Type': 'application/json', ...CORS } });
       }
 
       if (action === 'usage') {
@@ -200,11 +205,13 @@ export default {
       if (action !== 'chat') return new Response(JSON.stringify({ error: 'Invalid action' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
       if (!Array.isArray(messages) || messages.length === 0) return new Response(JSON.stringify({ error: 'لا توجد رسائل' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
 
-      const selectedProvider = provider || 'gemini';
       const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
       const userText = lastUserMessage?.content || '';
-
       if (!userText) return new Response(JSON.stringify({ error: 'لا توجد رسالة مستخدم' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
+
+      // يقبل الصيغتين: model="gemini:gemini-3.5-flash" / "cf:@cf/..." (الواجهة الحالية)
+      // أو provider="cf-coder" (المفاتيح القديمة المسطّحة، لا تزال مدعومة).
+      const resolved = resolveModel(model || provider);
 
       let currentMemory = '';
       try {
@@ -212,56 +219,34 @@ export default {
         currentMemory = memResult?.content || '';
       } catch (e) { console.error('memory read:', e.message); }
 
-      const SYSTEM_CAPABILITIES = `\n\n## قدرات النظام\nيمكنك تنفيذ أوامر Linux حقيقية في Ubuntu 24.04. عند الحاجة، ضع الأمر بين ثلاث علامات backtick مع نوع اللغة: \`\`\`bash\nأو \`\`\`python\nسيتم تنفيذه تلقائياً.`;
+      const SYSTEM_CAPABILITIES = `\n\n## قدرات النظام\nيمكنك اقتراح تنفيذ أوامر Linux حقيقية في Ubuntu 24.04. ضع الأمر بين ثلاث علامات backtick مع نوع اللغة (\`\`\`bash أو \`\`\`python أو \`\`\`sh). هذا اقتراح فقط — لن يُنفَّذ تلقائيًا، المستخدم يوافق عليه يدويًا من الواجهة قبل أي تنفيذ فعلي.`;
+      const systemContent = `أنت مساعد ذكي. وثيقة التوثيق الحية هي مصدر الحقيقة للمشروع طويل المدى، لكنها ملخّص وليست بديلاً عن سياق المحادثة الفعلي.\n\n### وثيقة المشروع:\n${currentMemory || '(فارغة)'}${SYSTEM_CAPABILITIES}`;
 
-      const systemContent = `أنت مساعد ذكي. وثيقة التوثيق الحية هي مصدر الحقيقة الوحيد.\n\n${currentMemory || '(فارغة)'}${SYSTEM_CAPABILITIES}`;
-      const contextMessages = [{ role: 'system', content: systemContent }, { role: 'user', content: userText }];
+      // نرسل آخر عدة رسائل خامًا (لا آخر رسالة فقط) — وثيقة الذاكرة تُحدَّث
+      // بعد كل رد، أي أنها عند توليد الرد الحالي لا تعكس بعد آخر تبادل
+      // (وهو الأكثر أهمية للتماسك الفوري). هذا يجمع الاثنين: الذاكرة للسياق
+      // طويل المدى + آخر رسائل خامًا للتماسك القريب.
+      const HISTORY_LIMIT = 12;
+      const recentMessages = messages.slice(-HISTORY_LIMIT).map(m => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: m.content,
+      }));
 
       let rawResponse = '';
-      if (GEMINI_MODEL_MAP[selectedProvider]) {
+      if (resolved.kind === 'gemini') {
         if (!env.GEMINI_API_KEY) return new Response(JSON.stringify({ error: 'GEMINI_API_KEY غير معرّف' }), { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } });
-        rawResponse = await callGemini(env.GEMINI_API_KEY, contextMessages, selectedProvider);
-      } else if (WORKERS_AI_MODELS[selectedProvider]) {
-        rawResponse = await callWorkersAI(env, selectedProvider, contextMessages);
+        rawResponse = await callGemini(env.GEMINI_API_KEY, systemContent, recentMessages, resolved.modelId);
+      } else if (resolved.kind === 'workers-ai') {
+        rawResponse = await callWorkersAI(env, resolved.modelId, systemContent, recentMessages);
       } else {
-        return new Response(JSON.stringify({ error: 'مزود غير مدعوم' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
+        return new Response(JSON.stringify({ error: 'مزود/نموذج غير مدعوم' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
       }
 
-      // ============ [جديد] استخراج الأمر وتنفيذه تلقائياً ============
+      // ============ استخراج أمر مُقترَح فقط — بلا أي تنفيذ تلقائي ============
       const extracted = extractCommandFromResponse(rawResponse);
-      let executionResult = null;
-      const steps = [{ id: 1, label: 'التفكير', status: 'completed' }];
-
-      if (extracted) {
-        steps.push({ id: 2, label: 'استخراج الأمر: ' + extracted.language, status: 'completed' });
-        steps.push({ id: 3, label: 'تنفيذ الأمر...', status: 'running' });
-
-        try {
-          const experimentId = chatId || 'auto-' + Date.now();
-          const id = env.EXPERIMENT_STATE.idFromName(experimentId);
-          const experimentObj = env.EXPERIMENT_STATE.get(id);
-
-          const startResult = await experimentObj.fetch('https://internal/start', {
-            method: 'POST',
-            body: JSON.stringify({ command: extracted.command, chatId, githubToken: env.GITHUB_TOKEN, hmacSecret: env.HMAC_SECRET }),
-          });
-          const startData = await startResult.json();
-
-          steps[2].status = 'completed';
-          steps.push({ id: 4, label: 'في انتظار النتيجة...', status: 'running' });
-
-          executionResult = {
-            status: startData.status || 'pending',
-            message: startData.message || 'تم الإرسال للتنفيذ',
-            experimentId: startData.experimentId || experimentId,
-            steps,
-          };
-        } catch (execError) {
-          steps[2].status = 'failed';
-          steps.push({ id: 4, label: 'فشل: ' + execError.message, status: 'failed' });
-          executionResult = { status: 'failed', error: execError.message, steps };
-        }
-      }
+      const pendingExecution = extracted
+        ? { requiresApproval: true, command: extracted.command, language: extracted.language }
+        : null;
 
       let updatedMemory = '';
       try { updatedMemory = await updateMemory(env, chatId, userText, rawResponse); } catch (e) {}
@@ -269,8 +254,7 @@ export default {
       return new Response(JSON.stringify({
         response: rawResponse,
         memory: updatedMemory,
-        execution: executionResult,
-        steps: steps,
+        pendingExecution,
       }), { headers: { 'Content-Type': 'application/json', ...CORS } });
     } catch (error) {
       console.error('FOX AI worker error:', error.message);
@@ -310,6 +294,7 @@ async function isSessionValid(env, token) {
 
 export class ExperimentState {
   constructor(state, env) { this.state = state; this.env = env; }
+
   async fetch(request) {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -320,41 +305,69 @@ export class ExperimentState {
     if (path === '/alarm') return await this.handleAlarm();
     return new Response(JSON.stringify({ error: 'Invalid DO path' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   }
+
   async startExperiment(request) {
     const data = await request.json();
     const now = Date.now();
-    const experimentData = { command: data.command, chatId: data.chatId || 'unknown', status: 'pending', attempts: 0, startedAt: now, lastUpdate: now, githubToken: data.githubToken };
+
+    // منع بدء تجربة جديدة فوق تجربة نشطة بالفعل لنفس المحادثة
+    const existing = await this.state.storage.get('experiment');
+    if (existing && (existing.status === 'pending' || existing.status === 'retrying')) {
+      return new Response(JSON.stringify({
+        error: 'توجد تجربة نشطة بالفعل لهذه المحادثة — انتظر انتهاءها أولاً',
+        activeExperiment: existing,
+      }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    const experimentData = {
+      command: data.command, chatId: data.chatId || 'unknown', status: 'pending',
+      attempts: 0, startedAt: now, dispatchedAt: now, lastUpdate: now, githubToken: data.githubToken,
+    };
     await this.state.storage.put('experiment', experimentData);
     await this.state.storage.setAlarm(now + 60000);
-    return await this.dispatchToGitHub(data.command, data.githubToken, data.hmacSecret);
+    return await this.dispatchToGitHub(data.command, data.githubToken);
   }
+
   async handleResult(request) {
     const data = await request.json();
     const output = data.output || '';
     const exitCode = data.exitCode ?? 0;
     const experiment = await this.state.storage.get('experiment');
     if (!experiment) return new Response(JSON.stringify({ error: 'لا توجد تجربة نشطة' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+
+    // حارس ثبات: لو التجربة أُنهيت بالفعل (عبر alarm سبق ووصل قبل هذا الـ webhook)، لا نعالجها مرة أخرى
+    if (experiment.status === 'completed' || experiment.status === 'failed') {
+      return new Response(JSON.stringify({ status: experiment.status, experiment, note: 'نتيجة متكررة تم تجاهلها (مُنهاة مسبقًا)' }), { headers: { 'Content-Type': 'application/json' } });
+    }
+
+    // نُلغي المؤقت فورًا قبل أي معالجة أخرى — يمنع تسابقه مع هذا الطلب
+    await this.state.storage.deleteAlarm();
+
     const now = Date.now();
     experiment.output = output; experiment.exitCode = exitCode; experiment.lastUpdate = now;
+
     if (exitCode === 0) {
       experiment.status = 'completed';
       await this.state.storage.put('experiment', experiment);
-      await this.state.storage.deleteAlarm();
       return new Response(JSON.stringify({ status: 'completed', experiment }), { headers: { 'Content-Type': 'application/json' } });
     }
+
     if (experiment.attempts >= 5 || (now - experiment.startedAt) >= 20 * 60 * 1000) {
       experiment.status = 'failed';
       await this.state.storage.put('experiment', experiment);
-      await this.state.storage.deleteAlarm();
       return new Response(JSON.stringify({ status: 'failed', experiment }), { headers: { 'Content-Type': 'application/json' } });
     }
+
     experiment.attempts += 1;
     experiment.status = 'retrying';
+    experiment.dispatchedAt = now;
     await this.state.storage.put('experiment', experiment);
-    await this.dispatchToGitHub(experiment.command, experiment.githubToken, null);
+    await this.state.storage.setAlarm(now + 60000); // شبكة أمان لهذه المحاولة الجديدة أيضًا
+    await this.dispatchToGitHub(experiment.command, experiment.githubToken);
     return new Response(JSON.stringify({ status: 'retrying', attempt: experiment.attempts, experiment }), { headers: { 'Content-Type': 'application/json' } });
   }
-  async dispatchToGitHub(command, githubToken, hmacSecret) {
+
+  async dispatchToGitHub(command, githubToken) {
     const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + githubToken, 'Accept': 'application/vnd.github.v3+json', 'X-GitHub-Api-Version': '2022-11-28' },
@@ -364,13 +377,21 @@ export class ExperimentState {
     const errorData = await response.json().catch(() => ({}));
     return new Response(JSON.stringify({ error: errorData.message || 'GitHub API error' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
   }
+
   async handleAlarm() {
     const experiment = await this.state.storage.get('experiment');
     if (!experiment) return new Response('No experiment');
+
+    // حارس ثبات مطابق لـ handleResult — يمنع إعادة معالجة تجربة مُنهاة بالفعل
+    if (experiment.status === 'completed' || experiment.status === 'failed') {
+      return new Response('Already finalized');
+    }
+
     const elapsed = Date.now() - experiment.startedAt;
     const MAX_TIME = 20 * 60 * 1000, MAX_ATTEMPTS = 5;
+
     try {
-      const status = await this.checkGitHubRuns(experiment.githubToken);
+      const status = await this.checkGitHubRuns(experiment.githubToken, experiment.dispatchedAt || experiment.startedAt);
       if (status.status === 'completed') {
         experiment.status = 'completed'; experiment.lastUpdate = Date.now();
         await this.state.storage.put('experiment', experiment);
@@ -378,32 +399,42 @@ export class ExperimentState {
         return new Response('Experiment completed');
       }
     } catch (e) {}
+
     if (elapsed >= MAX_TIME || experiment.attempts >= MAX_ATTEMPTS) {
       experiment.status = 'failed'; experiment.lastUpdate = Date.now();
       await this.state.storage.put('experiment', experiment);
       await this.state.storage.deleteAlarm();
       return new Response('Experiment failed');
     }
+
     experiment.attempts += 1; experiment.status = 'retrying'; experiment.lastUpdate = Date.now();
     await this.state.storage.put('experiment', experiment);
     await this.state.storage.setAlarm(Date.now() + 60000);
     return new Response('Retrying - attempt ' + experiment.attempts);
   }
-  async checkGitHubRuns(githubToken) {
-    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/actions/runs?per_page=1`, {
+
+  // sinceTs: لا نأخذ "آخر تشغيل في المستودع" مطلقًا، بل أول تشغيل بدأ بعد
+  // وقت الإرسال الفعلي لهذه التجربة (بهامش 5 ثوانٍ) — يقلل خطر التقاط
+  // تشغيل يخص تجربة أخرى، رغم أن GitHub API لا يُرجع run_id مباشرة عند
+  // workflow_dispatch فيبقى هذا تقريبًا لا ضمانًا مطلقًا.
+  async checkGitHubRuns(githubToken, sinceTs) {
+    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/actions/runs?per_page=5`, {
       method: 'GET',
       headers: { 'Authorization': 'Bearer ' + githubToken, 'Accept': 'application/vnd.github.v3+json', 'X-GitHub-Api-Version': '2022-11-28' },
     });
     const data = await response.json();
-    const latestRun = data.workflow_runs?.[0];
-    if (!latestRun) return { status: 'no_runs' };
-    return { id: latestRun.id, status: latestRun.status, conclusion: latestRun.conclusion };
+    const runs = data.workflow_runs || [];
+    const match = runs.find(r => new Date(r.created_at).getTime() >= (sinceTs - 5000));
+    if (!match) return { status: 'no_matching_run' };
+    return { id: match.id, status: match.status, conclusion: match.conclusion };
   }
+
   async checkStatus() {
     const experiment = await this.state.storage.get('experiment');
     if (!experiment) return new Response(JSON.stringify({ error: 'لا توجد تجربة نشطة' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
     return new Response(JSON.stringify(experiment), { headers: { 'Content-Type': 'application/json' } });
   }
+
   async retryExperiment() {
     const experiment = await this.state.storage.get('experiment');
     if (!experiment || experiment.attempts >= 5) return new Response(JSON.stringify({ error: 'الحد الأقصى' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
@@ -413,14 +444,17 @@ export class ExperimentState {
   }
 }
 
+// ============ النماذج ============
+// Gemini: نموذج واحد فقط مؤكد فعليًا (gemini-3.5-flash) — أُزيلت الإصدارات
+// الأخرى (3.6/3.7/3.8) لأنها لم تُؤكَّد كموجودة فعليًا. المفاتيح المسطّحة
+// القديمة تبقى مدعومة لتوافق أي واجهة قديمة، لكنها كلها تُرجع نفس النموذج.
+const CONFIRMED_GEMINI_MODEL = 'gemini-3.5-flash';
 const GEMINI_MODEL_MAP = {
-  'gemini': 'gemini-3.6-flash',
-  'gemini-3.8-flash': 'gemini-3.8-flash',
-  'gemini-3.7-flash': 'gemini-3.7-flash',
-  'gemini-3.6-flash': 'gemini-3.6-flash',
-  'gemini-3.5-flash': 'gemini-3.5-flash',
+  'gemini': CONFIRMED_GEMINI_MODEL,
+  'gemini-3.5-flash': CONFIRMED_GEMINI_MODEL,
 };
 
+// Workers AI: هذه القائمة أكدت أنها تعمل فعليًا — لم تُمس.
 const WORKERS_AI_MODELS = {
   'cf-glm-flash': '@cf/zai-org/glm-4.7-flash',
   'cf-qwen3-coder': '@cf/qwen/qwen3.8-27b',
@@ -442,14 +476,36 @@ const WORKERS_AI_MODELS = {
 const GITHUB_REPO = 'abdelrhym096290-ux/video-compressor-bot';
 const GITHUB_WORKFLOW = 'terminal.yml';
 
-async function callGemini(apiKey, messages, provider) {
-  const modelName = GEMINI_MODEL_MAP[provider] || 'gemini-3.6-flash';
-  const contents = messages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] }));
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':generateContent';
+// يقبل صيغتين: "gemini:gemini-3.5-flash" / "cf:@cf/qwen/..." (الواجهة
+// الحالية) أو مفتاحًا مسطحًا قديمًا مثل "cf-coder" أو "gemini" — يحل
+// تعارض العقد بين الواجهة والـ Worker بدل تركه يفشل بصمت.
+function resolveModel(raw) {
+  const fallback = { kind: 'gemini', modelId: CONFIRMED_GEMINI_MODEL };
+  if (!raw) return fallback;
+
+  if (raw.includes(':')) {
+    const idx = raw.indexOf(':');
+    const prefix = raw.slice(0, idx);
+    const rest = raw.slice(idx + 1);
+    if (prefix === 'gemini') return { kind: 'gemini', modelId: GEMINI_MODEL_MAP[rest] || fallback.modelId };
+    if (prefix === 'cf') return { kind: 'workers-ai', modelId: rest };
+  }
+
+  if (GEMINI_MODEL_MAP[raw]) return { kind: 'gemini', modelId: GEMINI_MODEL_MAP[raw] };
+  if (WORKERS_AI_MODELS[raw]) return { kind: 'workers-ai', modelId: WORKERS_AI_MODELS[raw] };
+  return fallback;
+}
+
+async function callGemini(apiKey, systemText, historyMessages, modelId) {
+  const contents = historyMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] }));
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelId + ':generateContent';
+  const requestBody = { contents };
+  if (systemText) requestBody.systemInstruction = { parts: [{ text: systemText }] };
+
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-    body: JSON.stringify({ contents }),
+    body: JSON.stringify(requestBody),
   });
   const data = await response.json();
   if (!response.ok) {
@@ -461,16 +517,16 @@ async function callGemini(apiKey, messages, provider) {
   return candidate.content?.parts?.[0]?.text || 'لا يوجد رد';
 }
 
-async function callWorkersAI(env, provider, messages) {
-  const model = WORKERS_AI_MODELS[provider];
+async function callWorkersAI(env, modelId, systemText, historyMessages) {
+  const messages = [{ role: 'system', content: systemText }, ...historyMessages];
   try {
-    const response = await env.AI.run(model, { messages: messages.map(m => ({ role: m.role === 'system' ? 'system' : m.role, content: m.content })), max_tokens: 4096 }, { gateway: { id: 'fox-gateway' } });
-    const content = response.response || response.choices?.[0]?.message?.content || (typeof response === 'string' ? response : '');
-    if (!content) throw new Error('استجابة فارغة');
-    return content;
+    const response = await env.AI.run(modelId, { messages, max_tokens: 4096 }, { gateway: { id: 'fox-gateway' } });
+    const contentOut = response.response || response.choices?.[0]?.message?.content || (typeof response === 'string' ? response : '');
+    if (!contentOut) throw new Error('استجابة فارغة');
+    return contentOut;
   } catch (error) {
     if (error.message?.includes('quota') || error.message?.includes('429')) throw new Error('تم استنفاد حصة Workers AI اليومية.');
-    throw new Error(`خطأ من Workers AI (${provider}): ${error.message || 'غير معروف'}`);
+    throw new Error(`خطأ من Workers AI (${modelId}): ${error.message || 'غير معروف'}`);
   }
 }
 
@@ -511,11 +567,11 @@ async function getUsageFromGateway(env) {
     totalTokensOut += g.sum?.tokensOut || 0;
     totalTokens += g.sum?.totalTokens || 0;
     totalCost += g.sum?.cost || 0;
-    const model = g.dimensions?.model || 'unknown';
-    if (!modelStats[model]) modelStats[model] = { requests: 0, tokensIn: 0, tokensOut: 0 };
-    modelStats[model].requests += g.count || 0;
-    modelStats[model].tokensIn += g.sum?.tokensIn || 0;
-    modelStats[model].tokensOut += g.sum?.tokensOut || 0;
+    const modelKey = g.dimensions?.model || 'unknown';
+    if (!modelStats[modelKey]) modelStats[modelKey] = { requests: 0, tokensIn: 0, tokensOut: 0 };
+    modelStats[modelKey].requests += g.count || 0;
+    modelStats[modelKey].tokensIn += g.sum?.tokensIn || 0;
+    modelStats[modelKey].tokensOut += g.sum?.tokensOut || 0;
   });
   return { period: { from: startISO, to: endISO }, totals: { requests: totalRequests, tokensIn: totalTokensIn, tokensOut: totalTokensOut, totalTokens, cost: totalCost }, byModel: modelStats, note: 'بيانات الاستهلاك من AI Gateway' };
 }
