@@ -15,6 +15,13 @@ binding = "AI"
 name = "EXPERIMENT_STATE"
 class_name = "ExperimentState"
 
-[exports.ExperimentState]
-type = "durable-object"
-storage = "sqlite"
+# إصلاح: [exports.ExperimentState] لم تكن صيغة Wrangler الحقيقية لتفعيل
+# SQLite storage — الصيغة الصحيحة الوحيدة هي عبر [[migrations]] بالأسفل.
+# مهم: إن كان هذا الـ DO منشوراً بالفعل بدون هذه الكتلة، فقد يكون يعمل
+# فعلاً بتخزين key-value القديم لا SQLite — التبديل من new_classes إلى
+# new_sqlite_classes بعد النشر غير مسموح، فتحقق أولاً عبر:
+#   wrangler deploy --dry-run
+# قبل أي نشر فعلي بهذا التعديل.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ExperimentState"]
