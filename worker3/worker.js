@@ -219,8 +219,12 @@ export default {
         currentMemory = memResult?.content || '';
       } catch (e) { console.error('memory read:', e.message); }
 
-      const SYSTEM_CAPABILITIES = `\n\n## قدرات النظام\nيمكنك اقتراح تنفيذ أوامر Linux حقيقية في Ubuntu 24.04. ضع الأمر بين ثلاث علامات backtick مع نوع اللغة (\`\`\`bash أو \`\`\`python أو \`\`\`sh). هذا اقتراح فقط — لن يُنفَّذ تلقائيًا، المستخدم يوافق عليه يدويًا من الواجهة قبل أي تنفيذ فعلي.`;
-      const systemContent = `أنت مساعد ذكي. وثيقة التوثيق الحية هي مصدر الحقيقة للمشروع طويل المدى، لكنها ملخّص وليست بديلاً عن سياق المحادثة الفعلي.\n\n### وثيقة المشروع:\n${currentMemory || '(فارغة)'}${SYSTEM_CAPABILITIES}`;
+      // هوية الوكيل: FOX AI — وكيل مهام تنفيذي (نمط Manus)، لا مساعد محادثة
+      // (نمط Claude). الفرق العملي: لا يكتفي بشرح كيف يُحل الأمر، بل يقترح
+      // الخطوة القابلة للتنفيذ مباشرة كأمر، ويتابع نتيجتها، ويخطط الخطوة
+      // التالية بناءً عليها — دون إسهاب أو حشو محادثي غير ضروري.
+      const SYSTEM_CAPABILITIES = `\n\n## هويتك ودورك\nأنت FOX AI — وكيل تنفيذ مهام (task-executing agent) يعمل داخل بيئة Ubuntu 24.04 حقيقية (عبر GitHub Actions runner)، وليس مجرد مساعد محادثة. أسلوبك: تحليل الهدف → اقتراح الخطوة التنفيذية القادمة كأمر حقيقي → قراءة نتيجتها عند وصولها → تحديد الخطوة التالية بناءً على النتيجة الفعلية، لا على افتراض. تتكلم بإيجاز عملي مباشر، لا شرح نظري إلا إذا طُلب صراحة.\n\n## قدرات التنفيذ\nضع أي أمر تقترح تنفيذه بين ثلاث علامات backtick مع نوع اللغة (\`\`\`bash أو \`\`\`python أو \`\`\`sh). هذا اقتراح فقط لخطوة تنفيذية — لن يُنفَّذ تلقائيًا؛ المستخدم يوافق عليه يدويًا من الواجهة قبل أي تنفيذ فعلي (طبقة أمان مقصودة، وليست تقليلاً من كونك وكيلاً تنفيذياً). بعد وصول نتيجة التنفيذ، اقرأها فعلياً واستخدمها في تحديد الخطوة التالية بدل تكرار الاقتراح نفسه.`;
+      const systemContent = `${SYSTEM_CAPABILITIES}\n\n## وثيقة المشروع (ذاكرة طويلة المدى — ملخّص، وليست بديلاً عن سياق المحادثة الحالي)\n${currentMemory || '(فارغة)'}`;
 
       // نرسل آخر عدة رسائل خامًا (لا آخر رسالة فقط) — وثيقة الذاكرة تُحدَّث
       // بعد كل رد، أي أنها عند توليد الرد الحالي لا تعكس بعد آخر تبادل
@@ -238,6 +242,9 @@ export default {
         rawResponse = await callGemini(env.GEMINI_API_KEY, systemContent, recentMessages, resolved.modelId);
       } else if (resolved.kind === 'workers-ai') {
         rawResponse = await callWorkersAI(env, resolved.modelId, systemContent, recentMessages);
+      } else if (resolved.kind === 'cerebras') {
+        if (!env.CEREBRAS_API_KEY) return new Response(JSON.stringify({ error: 'CEREBRAS_API_KEY غير معرّف' }), { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } });
+        rawResponse = await callCerebras(env.CEREBRAS_API_KEY, resolved.modelId, systemContent, recentMessages);
       } else {
         return new Response(JSON.stringify({ error: 'مزود/نموذج غير مدعوم' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
       }
@@ -325,7 +332,7 @@ export class ExperimentState {
     };
     await this.state.storage.put('experiment', experimentData);
     await this.state.storage.setAlarm(now + 60000);
-    return await this.dispatchToGitHub(data.command, data.githubToken);
+    return await this.dispatchToGitHub(data.command, data.githubToken, experimentData.chatId);
   }
 
   async handleResult(request) {
@@ -363,15 +370,19 @@ export class ExperimentState {
     experiment.dispatchedAt = now;
     await this.state.storage.put('experiment', experiment);
     await this.state.storage.setAlarm(now + 60000); // شبكة أمان لهذه المحاولة الجديدة أيضًا
-    await this.dispatchToGitHub(experiment.command, experiment.githubToken);
+    await this.dispatchToGitHub(experiment.command, experiment.githubToken, experiment.chatId);
     return new Response(JSON.stringify({ status: 'retrying', attempt: experiment.attempts, experiment }), { headers: { 'Content-Type': 'application/json' } });
   }
 
-  async dispatchToGitHub(command, githubToken) {
+  // ملاحظة إصلاح: كان يُرسل { command } فقط بدون chat_id — يعني نتيجة كل
+  // تشغيل ترجع بدون أي إشارة لأي محادثة تخصّها، فيسقط الـ webhook دائمًا
+  // على experimentId='unknown' في worker fetch handler. الآن يُرسل chat_id
+  // ليعود بالضبط في payload الـ /result من Terminal.yml (انظر التعديل هناك).
+  async dispatchToGitHub(command, githubToken, chatId) {
     const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + githubToken, 'Accept': 'application/vnd.github.v3+json', 'X-GitHub-Api-Version': '2022-11-28' },
-      body: JSON.stringify({ ref: 'main', inputs: { command } }),
+      body: JSON.stringify({ ref: 'main', inputs: { command, chat_id: chatId || 'unknown' } }),
     });
     if (response.status === 204) return new Response(JSON.stringify({ success: true, message: 'تم إرسال الأمر للتنفيذ', experimentId: this.state.id.toString() }), { headers: { 'Content-Type': 'application/json' } });
     const errorData = await response.json().catch(() => ({}));
@@ -473,6 +484,17 @@ const WORKERS_AI_MODELS = {
   'cf-granite': '@cf/ibm-granite/granite-4.0-h-micro',
 };
 
+// Cerebras: مضافة حديثًا عبر CEREBRAS_API_KEY. واجهتها متوافقة مع OpenAI
+// Chat Completions (https://api.cerebras.ai/v1/chat/completions)، فلا
+// تحتاج دالة استدعاء منفصلة معقّدة — راجع callCerebras بالأسفل.
+// المفاتيح اليمنى هنا هي بالضبط أسماء النماذج كما أرجعها GET /v1/models
+// من Cerebras وقت الإضافة — إن غيّرت Cerebras الأسماء لاحقًا يجب تحديثها هنا.
+const CEREBRAS_MODELS = {
+  'cerebras-gemma-4-31b': 'gemma-4-31b',
+  'cerebras-qwen-3.8-27b': 'qwen-3.8-27b',
+  'cerebras-gpt-oss-120b': 'gpt-oss-120b',
+};
+
 const GITHUB_REPO = 'abdelrhym096290-ux/video-compressor-bot';
 const GITHUB_WORKFLOW = 'terminal.yml';
 
@@ -489,10 +511,12 @@ function resolveModel(raw) {
     const rest = raw.slice(idx + 1);
     if (prefix === 'gemini') return { kind: 'gemini', modelId: GEMINI_MODEL_MAP[rest] || fallback.modelId };
     if (prefix === 'cf') return { kind: 'workers-ai', modelId: rest };
+    if (prefix === 'cerebras') return { kind: 'cerebras', modelId: CEREBRAS_MODELS[rest] || rest };
   }
 
   if (GEMINI_MODEL_MAP[raw]) return { kind: 'gemini', modelId: GEMINI_MODEL_MAP[raw] };
   if (WORKERS_AI_MODELS[raw]) return { kind: 'workers-ai', modelId: WORKERS_AI_MODELS[raw] };
+  if (CEREBRAS_MODELS[raw]) return { kind: 'cerebras', modelId: CEREBRAS_MODELS[raw] };
   return fallback;
 }
 
@@ -528,6 +552,26 @@ async function callWorkersAI(env, modelId, systemText, historyMessages) {
     if (error.message?.includes('quota') || error.message?.includes('429')) throw new Error('تم استنفاد حصة Workers AI اليومية.');
     throw new Error(`خطأ من Workers AI (${modelId}): ${error.message || 'غير معروف'}`);
   }
+}
+
+// Cerebras Cloud — واجهة متوافقة مع OpenAI (نفس شكل رسائل callWorkersAI
+// بالضبط). لا يوجد gateway/binding خاص هنا كما في AI.run — استدعاء HTTP
+// عادي بمفتاح CEREBRAS_API_KEY من الأسرار.
+async function callCerebras(apiKey, modelId, systemText, historyMessages) {
+  const messages = [{ role: 'system', content: systemText }, ...historyMessages];
+  const response = await fetch('https://api.cerebras.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+    body: JSON.stringify({ model: modelId, messages, max_tokens: 4096 }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    if (response.status === 429) throw new Error('تم تجاوز الحد المجاني لـ Cerebras. حاول لاحقاً.');
+    throw new Error(data.error?.message || `Cerebras API error (${modelId})`);
+  }
+  const contentOut = data.choices?.[0]?.message?.content;
+  if (!contentOut) throw new Error('استجابة فارغة من Cerebras');
+  return contentOut;
 }
 
 async function updateMemory(env, chatId, userMessage, aiResponse) {
