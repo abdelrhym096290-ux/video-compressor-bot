@@ -17,7 +17,7 @@ class_name = "ExperimentState"
 
 [exports.ExperimentState]
 type = "durable-object"
-storage = "legacy-kv"
+storage = "sqlite"
 
 [assets]
 directory = "."
