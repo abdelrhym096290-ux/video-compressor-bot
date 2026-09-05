@@ -1,621 +1,265 @@
-export default {
-  async fetch(request, env) {
-    const CORS = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    };
 
-    if (request.method === 'GET') {
-      return new Response('FOX AI Worker is running', {
-        headers: { 'Content-Type': 'text/plain', ...CORS },
-      });
-    }
 
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: CORS });
-    }
+// ===== Embedded FOX// AI modules =====
+const MODEL_CATALOG = [
+  { id: 'cerebras-gemma-4-31b', provider: 'cerebras', model: 'gemma-4-31b', name: 'Gemma 4 31B', company: 'Cerebras', kind: 'chat' },
+  { id: 'cerebras-qwen-3.8-27b', provider: 'cerebras', model: 'qwen-3.8-27b', name: 'Qwen 3.8 27B', company: 'Cerebras', kind: 'chat' },
+  { id: 'cerebras-gpt-oss-120b', provider: 'cerebras', model: 'gpt-oss-120b', name: 'GPT-OSS 120B', company: 'Cerebras', kind: 'chat' },
+  { id: 'gemini-5-flash-lite', provider: 'gemini', model: 'gemini-5.0-flash-lite', name: 'Flash 5 Lite', company: 'Google', kind: 'chat' },
+  { id: 'gemini-5-flash', provider: 'gemini', model: 'gemini-5.0-flash', name: 'Flash 5', company: 'Google', kind: 'chat' },
+  { id: 'gemini-6-flash', provider: 'gemini', model: 'gemini-6.0-flash', name: 'Flash 6', company: 'Google', kind: 'chat' },
+  { id: 'gemini-7-flash', provider: 'gemini', model: 'gemini-7.0-flash', name: 'Flash 7', company: 'Google', kind: 'chat' },
+  { id: 'cf-glm-flash', provider: 'workers-ai', model: '@cf/zai-org/glm-4.7-flash', name: 'GLM 4.7 Flash', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-qwen3-coder', provider: 'workers-ai', model: '@cf/qwen/qwen3.8-27b', name: 'Qwen 3.8 Coder', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-coder', provider: 'workers-ai', model: '@cf/qwen/qwen2.5-coder-32b-instruct', name: 'Qwen Coder', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-qwen3', provider: 'workers-ai', model: '@cf/qwen/qwen3-30b-a3b-fp8', name: 'Qwen 3', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-gpt-oss-20b', provider: 'workers-ai', model: '@cf/openai/gpt-oss-20b', name: 'GPT-OSS 20B', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-gemma-4', provider: 'workers-ai', model: '@cf/google/gemma-4-26b-a4b-it', name: 'Gemma 4', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-nemotron', provider: 'workers-ai', model: '@cf/nvidia/nemotron-3-120b-a12b', name: 'Nemotron', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-gpt-oss-120b', provider: 'workers-ai', model: '@cf/openai/gpt-oss-120b', name: 'GPT-OSS 120B', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-deepseek-r1', provider: 'workers-ai', model: '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b', name: 'DeepSeek R1', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-qwq', provider: 'workers-ai', model: '@cf/qwen/qwq-32b', name: 'QwQ', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-llama-4', provider: 'workers-ai', model: '@cf/meta/llama-4-scout-17b-16e-instruct', name: 'Llama 4', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-mistral', provider: 'workers-ai', model: '@cf/mistralai/mistral-small-3.1-24b-instruct', name: 'Mistral', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-llama-70b', provider: 'workers-ai', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', name: 'Llama 70B', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-llama-vision', provider: 'workers-ai', model: '@cf/meta/llama-3.2-11b-vision-instruct', name: 'Llama Vision', company: 'Cloudflare', kind: 'vision' },
+  { id: 'cf-granite', provider: 'workers-ai', model: '@cf/ibm-granite/granite-4.0-h-micro', name: 'Granite', company: 'Cloudflare', kind: 'chat' },
+];
 
-    if (request.method !== 'POST') {
-      return new Response('Method not allowed', { status: 405, headers: CORS });
-    }
+function getModel(id) { return MODEL_CATALOG.find(x => x.id === id) || MODEL_CATALOG[0]; }
+function chooseModel(text = '') { const t = String(text).toLowerCase(); if (/code|كود|برمج|terminal|طرفية|debug|تصحيح/.test(t)) return getModel('cerebras-qwen-3.8-27b'); if (/image|صورة|vision|صوّر/.test(t)) return getModel('cf-llama-vision'); if (/plan|خطة|حلل|بحث|research|تحليل/.test(t)) return getModel('cerebras-gpt-oss-120b'); return getModel('cerebras-gemma-4-31b'); }
 
-    // ============ مسار استقبال نتائج GitHub ============
-    if (request.url.includes('/result')) {
-      try {
-        const rawBody = await request.text();
-        const header = request.headers.get('X-Hub-Signature-256') || '';
-        const expectedSig = header.replace('sha256=', '');
-
-        const enc = new TextEncoder();
-        const key = await crypto.subtle.importKey(
-          'raw', enc.encode(env.HMAC_SECRET),
-          { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
-        );
-        const sigBuffer = await crypto.subtle.sign('HMAC', key, enc.encode(rawBody));
-        const computedSig = Array.from(new Uint8Array(sigBuffer))
-          .map(b => b.toString(16).padStart(2, '0')).join('');
-
-        if (!constantTimeEqual(computedSig, expectedSig)) {
-          return new Response(JSON.stringify({ error: 'توقيع غير صالح' }), {
-            status: 403,
-            headers: { 'Content-Type': 'application/json', ...CORS },
-          });
-        }
-
-        const webhookBody = JSON.parse(rawBody);
-        const output = webhookBody.output || 'لا توجد نتائج';
-        const experimentId = webhookBody.experimentId || 'unknown';
-        const exitCode = webhookBody.exit_code ?? 0;
-
-        const id = env.EXPERIMENT_STATE.idFromName(experimentId);
-        const experimentObj = env.EXPERIMENT_STATE.get(id);
-
-        const result = await experimentObj.fetch('https://internal/result', {
-          method: 'POST',
-          body: JSON.stringify({ output, exitCode }),
-        });
-
-        const resultData = await result.json();
-        const actualCommand = resultData.experiment?.command || 'from-github';
-
-        const now = Date.now();
-        await env.DB.prepare(
-          `INSERT INTO experiments (chat_id, command, status, output, exit_code, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-        )
-        .bind(experimentId, actualCommand, resultData.status, output, exitCode, now, now)
-        .run();
-
-        return new Response(JSON.stringify(resultData), {
-          headers: { 'Content-Type': 'application/json', ...CORS },
-        });
-      } catch (webhookError) {
-        console.error('Webhook error:', webhookError.message);
-        return new Response(JSON.stringify({ error: webhookError.message }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', ...CORS },
-        });
-      }
-    }
-
-    try {
-      const body = await request.json();
-      const { action, messages, provider, model, chatId, content, accessPassword, sessionToken, command } = body;
-      console.log('FOX AI request:', action, 'messages:', messages?.length, 'model:', model || provider, 'chatId:', chatId);
-
-      const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
-
-      if (action === 'login') {
-        try {
-          const lockCheck = await env.DB.prepare(
-            'SELECT attempts, locked_until FROM login_attempts WHERE ip = ?'
-          ).bind(clientIP).first();
-
-          const now = Date.now();
-
-          if (lockCheck?.locked_until && lockCheck.locked_until > now) {
-            const remainingMs = lockCheck.locked_until - now;
-            const remainingMin = Math.ceil(remainingMs / 60000);
-            return new Response(JSON.stringify({
-              error: `تم حظرك مؤقتاً بسبب محاولات خاطئة متكررة. حاول بعد ${remainingMin} دقيقة.`,
-              locked: true,
-            }), { status: 429, headers: { 'Content-Type': 'application/json', ...CORS } });
-          }
-
-          if (accessPassword !== env.ACCESS_PASSWORD) {
-            const currentAttempts = (lockCheck?.attempts || 0) + 1;
-            const shouldLock = currentAttempts >= 5;
-            const lockedUntil = shouldLock ? now + 10 * 60 * 1000 : null;
-
-            await env.DB.prepare(
-              `INSERT INTO login_attempts (ip, attempts, locked_until, updated_at)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(ip) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?`
-            )
-            .bind(clientIP, currentAttempts, lockedUntil, now, currentAttempts, lockedUntil, now)
-            .run();
-
-            return new Response(JSON.stringify({
-              error: shouldLock ? 'كلمة مرور خاطئة. تم حظرك 10 دقائق.' : `كلمة مرور خاطئة. المحاولات المتبقية: ${5 - currentAttempts}`,
-              authRequired: true,
-            }), { status: 401, headers: { 'Content-Type': 'application/json', ...CORS } });
-          }
-
-          await env.DB.prepare(
-            `INSERT INTO login_attempts (ip, attempts, locked_until, updated_at)
-             VALUES (?, 0, NULL, ?)
-             ON CONFLICT(ip) DO UPDATE SET attempts = 0, locked_until = NULL, updated_at = ?`
-          ).bind(clientIP, now, now).run();
-
-          const token = crypto.randomUUID();
-          const expiresAt = now + 24 * 60 * 60 * 1000;
-
-          await env.DB.prepare(`INSERT INTO sessions (token, created_at, expires_at) VALUES (?, ?, ?)`)
-            .bind(token, now, expiresAt).run();
-
-          return new Response(JSON.stringify({ success: true, token, expiresAt }), {
-            headers: { 'Content-Type': 'application/json', ...CORS },
-          });
-        } catch (loginError) {
-          return new Response(JSON.stringify({ error: 'خطأ في تسجيل الدخول: ' + loginError.message }), {
-            status: 500, headers: { 'Content-Type': 'application/json', ...CORS },
-          });
-        }
-      }
-
-      if (action === 'check_session') {
-        const valid = await isSessionValid(env, sessionToken);
-        return new Response(JSON.stringify({ valid }), { headers: { 'Content-Type': 'application/json', ...CORS } });
-      }
-
-      if (action === 'logout') {
-        if (sessionToken) await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(sessionToken).run().catch(() => {});
-        return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json', ...CORS } });
-      }
-
-      const sessionValid = await isSessionValid(env, sessionToken);
-      if (!sessionValid) {
-        return new Response(JSON.stringify({ error: 'الجلسة غير صالحة', authRequired: true }), {
-          status: 401, headers: { 'Content-Type': 'application/json', ...CORS },
-        });
-      }
-
-      if (action === 'get_memory') {
-        if (!chatId) return new Response(JSON.stringify({ error: 'chatId مطلوب' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
-        const result = await env.DB.prepare('SELECT content FROM project_memory WHERE chat_id = ?').bind(chatId).first();
-        return new Response(JSON.stringify({ content: result?.content || '' }), { headers: { 'Content-Type': 'application/json', ...CORS } });
-      }
-
-      if (action === 'memory_update') {
-        if (!chatId) return new Response(JSON.stringify({ error: 'chatId مطلوب' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
-        await env.DB.prepare(`INSERT INTO project_memory (chat_id, content, updated_at) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET content = ?, updated_at = ?`)
-          .bind(chatId, content || '', Date.now(), content || '', Date.now()).run();
-        return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json', ...CORS } });
-      }
-
-      if (action === 'get_experiments') {
-        const results = await env.DB.prepare('SELECT id, command, status, output, exit_code, created_at FROM experiments ORDER BY created_at DESC LIMIT 10').all();
-        return new Response(JSON.stringify({ experiments: results.results || [] }), { headers: { 'Content-Type': 'application/json', ...CORS } });
-      }
-
-      // ============ تنفيذ أمر — فقط بعد موافقة صريحة من المستخدم في الواجهة ============
-      // هذا المسار هو نقطة التنفيذ الوحيدة في كل الـ Worker. لا مكان آخر يدفع
-      // (dispatch) لجيت‌هَب تلقائيًا بمجرد ورود كتلة كود في رد النموذج —
-      // ذاك هو الخطر الذي أزلناه. الواجهة تستدعي هذا الـ action فقط بعد
-      // ضغط المستخدم زر "نفّذ" على اقتراح محدد، مرة لكل موافقة.
-      if (action === 'run_command') {
-        if (!command) return new Response(JSON.stringify({ error: 'command مطلوب' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
-        const experimentId = chatId || 'default-' + Date.now();
-        const id = env.EXPERIMENT_STATE.idFromName(experimentId);
-        const experimentObj = env.EXPERIMENT_STATE.get(id);
-        const result = await experimentObj.fetch('https://internal/start', {
-          method: 'POST',
-          body: JSON.stringify({ command, chatId, githubToken: env.GITHUB_TOKEN, hmacSecret: env.HMAC_SECRET }),
-        });
-        const resultData = await result.json();
-        return new Response(JSON.stringify(resultData), { status: result.status, headers: { 'Content-Type': 'application/json', ...CORS } });
-      }
-
-      if (action === 'usage') {
-        const usageData = await getUsageFromGateway(env);
-        return new Response(JSON.stringify(usageData), { headers: { 'Content-Type': 'application/json', ...CORS } });
-      }
-
-      if (action !== 'chat') return new Response(JSON.stringify({ error: 'Invalid action' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
-      if (!Array.isArray(messages) || messages.length === 0) return new Response(JSON.stringify({ error: 'لا توجد رسائل' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
-
-      const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
-      const userText = lastUserMessage?.content || '';
-      if (!userText) return new Response(JSON.stringify({ error: 'لا توجد رسالة مستخدم' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
-
-      // يقبل الصيغتين: model="gemini:gemini-3.5-flash" / "cf:@cf/..." (الواجهة الحالية)
-      // أو provider="cf-coder" (المفاتيح القديمة المسطّحة، لا تزال مدعومة).
-      const resolved = resolveModel(model || provider);
-
-      let currentMemory = '';
-      try {
-        const memResult = await env.DB.prepare('SELECT content FROM project_memory WHERE chat_id = ?').bind(chatId).first();
-        currentMemory = memResult?.content || '';
-      } catch (e) { console.error('memory read:', e.message); }
-
-      // هوية الوكيل: FOX AI — وكيل مهام تنفيذي (نمط Manus)، لا مساعد محادثة
-      // (نمط Claude). الفرق العملي: لا يكتفي بشرح كيف يُحل الأمر، بل يقترح
-      // الخطوة القابلة للتنفيذ مباشرة كأمر، ويتابع نتيجتها، ويخطط الخطوة
-      // التالية بناءً عليها — دون إسهاب أو حشو محادثي غير ضروري.
-      const SYSTEM_CAPABILITIES = `\n\n## هويتك ودورك\nأنت FOX AI — وكيل تنفيذ مهام (task-executing agent) يعمل داخل بيئة Ubuntu 24.04 حقيقية (عبر GitHub Actions runner)، وليس مجرد مساعد محادثة. أسلوبك: تحليل الهدف → اقتراح الخطوة التنفيذية القادمة كأمر حقيقي → قراءة نتيجتها عند وصولها → تحديد الخطوة التالية بناءً على النتيجة الفعلية، لا على افتراض. تتكلم بإيجاز عملي مباشر، لا شرح نظري إلا إذا طُلب صراحة.\n\n## قدرات التنفيذ\nضع أي أمر تقترح تنفيذه بين ثلاث علامات backtick مع نوع اللغة (\`\`\`bash أو \`\`\`python أو \`\`\`sh). هذا اقتراح فقط لخطوة تنفيذية — لن يُنفَّذ تلقائيًا؛ المستخدم يوافق عليه يدويًا من الواجهة قبل أي تنفيذ فعلي (طبقة أمان مقصودة، وليست تقليلاً من كونك وكيلاً تنفيذياً). بعد وصول نتيجة التنفيذ، اقرأها فعلياً واستخدمها في تحديد الخطوة التالية بدل تكرار الاقتراح نفسه.`;
-      const systemContent = `${SYSTEM_CAPABILITIES}\n\n## وثيقة المشروع (ذاكرة طويلة المدى — ملخّص، وليست بديلاً عن سياق المحادثة الحالي)\n${currentMemory || '(فارغة)'}`;
-
-      // نرسل آخر عدة رسائل خامًا (لا آخر رسالة فقط) — وثيقة الذاكرة تُحدَّث
-      // بعد كل رد، أي أنها عند توليد الرد الحالي لا تعكس بعد آخر تبادل
-      // (وهو الأكثر أهمية للتماسك الفوري). هذا يجمع الاثنين: الذاكرة للسياق
-      // طويل المدى + آخر رسائل خامًا للتماسك القريب.
-      const HISTORY_LIMIT = 12;
-      const recentMessages = messages.slice(-HISTORY_LIMIT).map(m => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.content,
-      }));
-
-      let rawResponse = '';
-      if (resolved.kind === 'gemini') {
-        if (!env.GEMINI_API_KEY) return new Response(JSON.stringify({ error: 'GEMINI_API_KEY غير معرّف' }), { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } });
-        rawResponse = await callGemini(env.GEMINI_API_KEY, systemContent, recentMessages, resolved.modelId);
-      } else if (resolved.kind === 'workers-ai') {
-        rawResponse = await callWorkersAI(env, resolved.modelId, systemContent, recentMessages);
-      } else if (resolved.kind === 'cerebras') {
-        if (!env.CEREBRAS_API_KEY) return new Response(JSON.stringify({ error: 'CEREBRAS_API_KEY غير معرّف' }), { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } });
-        rawResponse = await callCerebras(env.CEREBRAS_API_KEY, resolved.modelId, systemContent, recentMessages);
-      } else {
-        return new Response(JSON.stringify({ error: 'مزود/نموذج غير مدعوم' }), { status: 400, headers: { 'Content-Type': 'application/json', ...CORS } });
-      }
-
-      // ============ استخراج أمر مُقترَح فقط — بلا أي تنفيذ تلقائي ============
-      const extracted = extractCommandFromResponse(rawResponse);
-      const pendingExecution = extracted
-        ? { requiresApproval: true, command: extracted.command, language: extracted.language }
-        : null;
-
-      let updatedMemory = '';
-      try { updatedMemory = await updateMemory(env, chatId, userText, rawResponse); } catch (e) {}
-
-      return new Response(JSON.stringify({
-        response: rawResponse,
-        memory: updatedMemory,
-        pendingExecution,
-      }), { headers: { 'Content-Type': 'application/json', ...CORS } });
-    } catch (error) {
-      console.error('FOX AI worker error:', error.message);
-      return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json', ...CORS } });
-    }
-  },
-};
-
-function extractCommandFromResponse(response) {
-  if (!response) return null;
-  const bashMatch = response.match(/```bash\n([\s\S]*?)```/);
-  if (bashMatch) return { command: bashMatch[1].trim(), language: 'bash' };
-  const pythonMatch = response.match(/```python\n([\s\S]*?)```/);
-  if (pythonMatch) return { command: pythonMatch[1].trim(), language: 'python' };
-  const shellMatch = response.match(/```sh\n([\s\S]*?)```/);
-  if (shellMatch) return { command: shellMatch[1].trim(), language: 'sh' };
-  return null;
+async function complete(env, modelId, messages, options = {}) {
+  const spec = getModel(modelId);
+  if (spec.provider === 'cerebras') return openAICompatible(env.CEREBRAS_API_KEY, 'https://api.cerebras.ai/v1/chat/completions', spec.model, messages, options);
+  if (spec.provider === 'gemini') return gemini(env.GEMINI_API_KEY, spec.model, messages, options);
+  if (spec.provider === 'workers-ai') return workersAI(env, spec.model, messages, options);
+  throw new Error(`مزود غير مدعوم: ${spec.provider}`);
 }
 
-function constantTimeEqual(a, b) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+async function openAICompatible(key, url, model, messages, options) {
+  if (!key) throw new Error('مفتاح مزود النموذج غير موجود في أسرار العامل');
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ model, messages, temperature: options.temperature ?? 0.2, max_tokens: options.maxTokens ?? 4096 }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error?.message || `Provider error ${r.status}`);
+  return d.choices?.[0]?.message?.content || '';
 }
 
-async function isSessionValid(env, token) {
+async function gemini(key, model, messages, options) {
+  if (!key) throw new Error('GEMINI_API_KEY غير موجود');
+  const system = messages.find(m => m.role === 'system')?.content;
+  const contents = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+  const body = { contents, ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}) };
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error?.message || `Gemini error ${r.status}`);
+  return d.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+}
+
+async function workersAI(env, model, messages, options) {
+  const d = await env.AI.run(model, { messages, max_tokens: options.maxTokens ?? 4096 });
+  return d.response || d.choices?.[0]?.message?.content || '';
+}
+
+function publicCatalog() { return MODEL_CATALOG.map(({ id, name, company, provider }) => ({ id, name, company, provider })); }
+
+const LIMIT = 14;
+
+async function loadContext(env, chatId, messages = []) {
+  let memory = '';
+  if (chatId) {
+    const row = await env.DB.prepare('SELECT content FROM project_memory WHERE chat_id = ?').bind(chatId).first();
+    memory = row?.content || '';
+  }
+  return { memory, recent: messages.slice(-LIMIT).map(m => ({ role: m.role === 'assistant' || m.role === 'model' ? 'assistant' : 'user', content: String(m.content || '') })) };
+}
+
+function systemPrompt(memory) { return `أنت FOX// AI، وكيل شخصي يخطط بوضوح وينفذ الأدوات فقط بعد موافقة المستخدم. افصل بين ما تعرفه وما تقترحه. لا تدّع تنفيذ شيء لم تنفذه. استخدم العربية إن كانت رسالة المستخدم عربية.\n\n## ملخص التسليم من الذاكرة\n${memory || '(لا يوجد ملخص بعد)'}`; }
+
+async function refreshMemory(env, chatId, oldMemory, user, answer, complete) {
+  if (!chatId) return oldMemory || '';
+  const prompt = `أنشئ ملخص تسليم دقيقًا ومضغوطًا ليستطيع نموذج آخر متابعة هذه المحادثة. العناوين الإلزامية: الهدف، متطلبات المستخدم، القرارات، ما تم، المشاكل/القيود، الخطوة التالية. لا تضف تخمينًا.\n\nالملخص السابق:\n${oldMemory || '(فارغ)'}\n\nالمستخدم:\n${user}\n\nالرد:\n${answer}`;
+  const next = await complete([{ role: 'system', content: 'أنت مدير ذاكرة سياقية.' }, { role: 'user', content: prompt }], { maxTokens: 1800 });
+  const value = next.trim() || oldMemory || '';
+  await env.DB.prepare('INSERT INTO project_memory (chat_id, content, updated_at) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET content = ?, updated_at = ?').bind(chatId, value, Date.now(), value, Date.now()).run();
+  return value;
+}
+
+function detectProposedCommand(text) {
+  const m = String(text || '').match(/```(?:bash|sh|shell|python)\n([\s\S]*?)```/i);
+  return m ? { command: m[1].trim(), language: /python/i.test(m[0]) ? 'python' : 'bash', requiresApproval: true } : null;
+}
+
+function agentPolicy() {
+  return 'الأدوات المتاحة حاليًا: اقتراح أوامر فقط. لا تنفّذ أمرًا ولا تطلب صلاحيات إضافية تلقائيًا. إذا احتاجت المهمة تنفيذًا، قدم خطة ثم كتلة أمر واضحة ليوافق المستخدم عليها صراحة.';
+}
+
+
+async function createPlan(env, modelId, task, memory = '') {
+  const prompt = `حوّل المهمة التالية إلى خطة تنفيذ عملية من 3 إلى 8 خطوات. أعد JSON فقط بالشكل {"goal":"...","steps":[{"id":"step-1","title":"...","description":"...","tool":"none|terminal|files|web","verification":"..."}]}. لا تنفذ شيئًا ولا تخترع وصولًا.\nالمهمة: ${task}\nالسياق: ${memory}`;
+  try {
+    const raw = await complete(env, modelId, [{ role: 'system', content: agentPolicy() }, { role: 'user', content: prompt }], { maxTokens: 1800, temperature: 0.1 });
+    const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    if (Array.isArray(parsed.steps) && parsed.steps.length) return normalizePlan(parsed, task);
+  } catch (e) { console.error('planner', e); }
+  return normalizePlan({ goal: task, steps: [{ title: 'تحليل المتطلبات', description: task, tool: 'none', verification: 'تأكيد المطلوب' }, { title: 'اقتراح التنفيذ', description: 'إعداد خطة قابلة للمراجعة', tool: 'none', verification: 'مراجعة المستخدم' }] }, task);
+}
+function normalizePlan(plan, task) { return { id: crypto.randomUUID(), goal: plan.goal || task, status: 'draft', steps: plan.steps.map((s, i) => ({ id: s.id || `step-${i + 1}`, title: s.title || `الخطوة ${i + 1}`, description: s.description || '', tool: s.tool || 'none', verification: s.verification || '', status: 'pending', attempts: 0, output: '' })) }; }
+async function saveRun(env, chatId, plan) { const now = Date.now(); await env.DB.prepare('INSERT INTO agent_runs (id, chat_id, goal, plan_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(plan.id, chatId, plan.goal, JSON.stringify(plan), plan.status, now, now).run(); return plan; }
+async function readRun(env, id) { const row = await env.DB.prepare('SELECT * FROM agent_runs WHERE id = ?').bind(id).first(); if (!row) return null; return { ...row, plan: JSON.parse(row.plan_json) }; }
+async function updateRun(env, run) { const now = Date.now(); await env.DB.prepare('UPDATE agent_runs SET plan_json = ?, status = ?, updated_at = ? WHERE id = ?').bind(JSON.stringify(run.plan), run.plan.status, now, run.id).run(); return run; }
+async function approvePlan(env, runId) { const run = await readRun(env, runId); if (!run) throw new Error('المهمة غير موجودة'); run.plan.status = 'running'; run.plan.steps[0].status = 'running'; await updateRun(env, run); return run; }
+
+async function updateStep(env, runId, stepId, patch = {}) {
+  const run = await readRun(env, runId); if (!run) throw new Error('المهمة غير موجودة');
+  const step = run.plan.steps.find(s => s.id === stepId); if (!step) throw new Error('الخطوة غير موجودة');
+  if (patch.status === 'retrying') { step.attempts = (step.attempts || 0) + 1; step.status = step.attempts > 3 ? 'failed' : 'running'; }
+  else Object.assign(step, { status: patch.status || step.status, output: patch.output ?? step.output });
+  if (step.status === 'completed') { const next = run.plan.steps.find(s => s.status === 'pending'); if (next) next.status = 'running'; else run.plan.status = 'completed'; }
+  if (step.status === 'failed') run.plan.status = 'paused';
+  await updateRun(env, run); return run;
+}
+
+
+async function advanceRun(env, runId, modelId) {
+  const run = await readRun(env, runId);
+  if (!run) throw new Error('المهمة غير موجودة');
+  if (run.plan.status === 'draft') throw new Error('الخطة تحتاج موافقة صريحة أولاً');
+  const step = run.plan.steps.find(s => s.status === 'running' || s.status === 'pending');
+  if (!step) return run;
+  if (step.status === 'pending') { step.status = 'running'; await updateRun(env, run); }
+  const prompt = `نفّذ تحليليًا الخطوة التالية ضمن وكيل آمن. لا تدّع تنفيذ أدوات خارجية. أعد JSON فقط: {"result":"...","needsTerminal":false,"command":"","verification":"...","success":true}.\nالهدف: ${run.goal}\nالخطوة: ${step.title}\nالوصف: ${step.description}\nالتحقق المطلوب: ${step.verification}`;
+  const raw = await complete(env, modelId, [{ role: 'system', content: 'أنت منفذ خطوات دقيق. لا تنفذ أوامر تلقائيًا.' }, { role: 'user', content: prompt }], { maxTokens: 1600, temperature: 0.1 });
+  let result; try { result = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '{}'); } catch { result = { result: raw, success: true }; }
+  step.output = result.result || raw; step.verification = result.verification || step.verification;
+  if (result.needsTerminal && result.command) { step.status = 'awaiting_approval'; step.command = result.command; run.plan.status = 'paused'; }
+  else if (result.success === false) { step.status = 'failed'; run.plan.status = 'paused'; }
+  else { step.status = 'completed'; const next = run.plan.steps.find(s => s.status === 'pending'); if (next) next.status = 'running'; else run.plan.status = 'completed'; }
+  await updateRun(env, run); return run;
+}
+
+async function dispatchCommand(env, chatId, command) {
+  if (!command || command.length > 12000) throw new Error('أمر غير صالح أو طويل جدًا');
+  const id = Date.now(); const now = id;
+  await env.DB.prepare('INSERT INTO experiments (id, chat_id, command, status, output, exit_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(id, chatId, command, 'pending', '', null, now, now).run();
+  if (!env.GITHUB_TOKEN) throw new Error('GITHUB_TOKEN غير مهيأ');
+  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO || 'abdelrhym096290-ux/video-compressor-bot'}/actions/workflows/${env.GITHUB_WORKFLOW || 'terminal.yml'}/dispatches`, { method: 'POST', headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' }, body: JSON.stringify({ ref: 'main', inputs: { command, experimentId: id } }) });
+  if (!r.ok) { await env.DB.prepare('UPDATE experiments SET status = ?, updated_at = ? WHERE id = ?').bind('failed', Date.now(), id).run(); throw new Error(`فشل إرسال التجربة: ${r.status}`); }
+  return { id, status: 'pending', command };
+}
+async function listExperiments(env) { const r = await env.DB.prepare('SELECT id, chat_id, command, status, output, exit_code, created_at, updated_at FROM experiments ORDER BY created_at DESC LIMIT 30').all(); return r.results || []; }
+
+// ===== FOX// AI Worker API =====
+
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
+const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS } });
+
+export default { async fetch(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
+  if (request.method === 'GET') return json({ name: 'FOX// AI', status: 'ready', version: '2.0.0' });
+  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  try {
+    if (new URL(request.url).pathname === '/result') return receiveResult(env, request);
+    const body = await request.json();
+    await ensureAgentSchema(env);
+    const action = body.action;
+    if (action === 'models') return json({ models: publicCatalog() });
+    if (action === 'login') return login(env, request, body);
+    if (action === 'check_session') return json({ valid: await validSession(env, body.sessionToken) });
+    if (action === 'logout') { await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(body.sessionToken || '').run(); return json({ success: true }); }
+    if (!await validSession(env, body.sessionToken)) return json({ error: 'الجلسة غير صالحة', authRequired: true }, 401);
+    if (action === 'get_memory') return getMemory(env, body.chatId);
+    if (action === 'memory_update') return saveMemory(env, body.chatId, body.content || '');
+    if (action === 'plan_task') return planTask(env, body);
+    if (action === 'get_run') return json(await readRun(env, body.runId) || { error: 'المهمة غير موجودة' }, 200);
+    if (action === 'approve_plan') return json(await approvePlan(env, body.runId));
+    if (action === 'update_step') return json(await updateStep(env, body.runId, body.stepId, { status: body.status, output: body.output }));
+    if (action === 'retry_step') return json(await updateStep(env, body.runId, body.stepId, { status: 'retrying' }));
+    if (action === 'advance_run') return json(await advanceRun(env, body.runId, body.model || body.provider));
+    if (action === 'get_experiments') return json({ experiments: await listExperiments(env) });
+    if (action === 'run_command') return json(await dispatchCommand(env, body.chatId, body.command));
+    if (action === 'chat') return chat(env, body);
+    if (action === 'approve_tool') return json({ error: 'تنفيذ الأدوات يحتاج ربط منفصل وموافقة صريحة' }, 501);
+    return json({ error: 'إجراء غير معروف' }, 400);
+  } catch (e) { console.error(e); return json({ error: e.message || 'خطأ داخلي' }, 500); }
+} };
+
+async function login(env, request, body) {
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const row = await env.DB.prepare('SELECT attempts, locked_until FROM login_attempts WHERE ip = ?').bind(ip).first();
+  const now = Date.now();
+  if (row?.locked_until > now) return json({ error: 'محاولات كثيرة، حاول لاحقًا' }, 429);
+  if (body.accessPassword !== env.ACCESS_PASSWORD) {
+    const attempts = (row?.attempts || 0) + 1; const lock = attempts >= 5 ? now + 600000 : null;
+    await env.DB.prepare('INSERT INTO login_attempts (ip, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(ip) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?').bind(ip, attempts, lock, now, attempts, lock, now).run();
+    return json({ error: 'كلمة المرور غير صحيحة', authRequired: true }, 401);
+  }
+  const token = crypto.randomUUID(); const expires = now + 86400000;
+  await env.DB.prepare('INSERT INTO sessions (token, created_at, expires_at) VALUES (?, ?, ?)').bind(token, now, expires).run();
+  return json({ success: true, token, expiresAt: expires });
+}
+
+async function validSession(env, token) {
   if (!token) return false;
-  try {
-    const now = Date.now();
-    const session = await env.DB.prepare('SELECT expires_at FROM sessions WHERE token = ?').bind(token).first();
-    if (!session) return false;
-    if (session.expires_at <= now) { env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run().catch(() => {}); return false; }
-    return true;
-  } catch (e) { return false; }
+  const row = await env.DB.prepare('SELECT expires_at FROM sessions WHERE token = ?').bind(token).first();
+  return !!row && row.expires_at > Date.now();
 }
 
-export class ExperimentState {
-  constructor(state, env) { this.state = state; this.env = env; }
-
-  async fetch(request) {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    if (path === '/start') return await this.startExperiment(request);
-    if (path === '/result') return await this.handleResult(request);
-    if (path === '/check') return await this.checkStatus();
-    if (path === '/retry') return await this.retryExperiment();
-    if (path === '/alarm') return await this.handleAlarm();
-    return new Response(JSON.stringify({ error: 'Invalid DO path' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-  }
-
-  async startExperiment(request) {
-    const data = await request.json();
-    const now = Date.now();
-
-    // منع بدء تجربة جديدة فوق تجربة نشطة بالفعل لنفس المحادثة
-    const existing = await this.state.storage.get('experiment');
-    if (existing && (existing.status === 'pending' || existing.status === 'retrying')) {
-      return new Response(JSON.stringify({
-        error: 'توجد تجربة نشطة بالفعل لهذه المحادثة — انتظر انتهاءها أولاً',
-        activeExperiment: existing,
-      }), { status: 409, headers: { 'Content-Type': 'application/json' } });
-    }
-
-    const experimentData = {
-      command: data.command, chatId: data.chatId || 'unknown', status: 'pending',
-      attempts: 0, startedAt: now, dispatchedAt: now, lastUpdate: now, githubToken: data.githubToken,
-    };
-    await this.state.storage.put('experiment', experimentData);
-    await this.state.storage.setAlarm(now + 60000);
-    return await this.dispatchToGitHub(data.command, data.githubToken, experimentData.chatId);
-  }
-
-  async handleResult(request) {
-    const data = await request.json();
-    const output = data.output || '';
-    const exitCode = data.exitCode ?? 0;
-    const experiment = await this.state.storage.get('experiment');
-    if (!experiment) return new Response(JSON.stringify({ error: 'لا توجد تجربة نشطة' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
-
-    // حارس ثبات: لو التجربة أُنهيت بالفعل (عبر alarm سبق ووصل قبل هذا الـ webhook)، لا نعالجها مرة أخرى
-    if (experiment.status === 'completed' || experiment.status === 'failed') {
-      return new Response(JSON.stringify({ status: experiment.status, experiment, note: 'نتيجة متكررة تم تجاهلها (مُنهاة مسبقًا)' }), { headers: { 'Content-Type': 'application/json' } });
-    }
-
-    // نُلغي المؤقت فورًا قبل أي معالجة أخرى — يمنع تسابقه مع هذا الطلب
-    await this.state.storage.deleteAlarm();
-
-    const now = Date.now();
-    experiment.output = output; experiment.exitCode = exitCode; experiment.lastUpdate = now;
-
-    if (exitCode === 0) {
-      experiment.status = 'completed';
-      await this.state.storage.put('experiment', experiment);
-      return new Response(JSON.stringify({ status: 'completed', experiment }), { headers: { 'Content-Type': 'application/json' } });
-    }
-
-    if (experiment.attempts >= 5 || (now - experiment.startedAt) >= 20 * 60 * 1000) {
-      experiment.status = 'failed';
-      await this.state.storage.put('experiment', experiment);
-      return new Response(JSON.stringify({ status: 'failed', experiment }), { headers: { 'Content-Type': 'application/json' } });
-    }
-
-    experiment.attempts += 1;
-    experiment.status = 'retrying';
-    experiment.dispatchedAt = now;
-    await this.state.storage.put('experiment', experiment);
-    await this.state.storage.setAlarm(now + 60000); // شبكة أمان لهذه المحاولة الجديدة أيضًا
-    await this.dispatchToGitHub(experiment.command, experiment.githubToken, experiment.chatId);
-    return new Response(JSON.stringify({ status: 'retrying', attempt: experiment.attempts, experiment }), { headers: { 'Content-Type': 'application/json' } });
-  }
-
-  // ملاحظة إصلاح: كان يُرسل { command } فقط بدون chat_id — يعني نتيجة كل
-  // تشغيل ترجع بدون أي إشارة لأي محادثة تخصّها، فيسقط الـ webhook دائمًا
-  // على experimentId='unknown' في worker fetch handler. الآن يُرسل chat_id
-  // ليعود بالضبط في payload الـ /result من Terminal.yml (انظر التعديل هناك).
-  async dispatchToGitHub(command, githubToken, chatId) {
-    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + githubToken, 'Accept': 'application/vnd.github.v3+json', 'X-GitHub-Api-Version': '2022-11-28' },
-      body: JSON.stringify({ ref: 'main', inputs: { command, chat_id: chatId || 'unknown' } }),
-    });
-    if (response.status === 204) return new Response(JSON.stringify({ success: true, message: 'تم إرسال الأمر للتنفيذ', experimentId: this.state.id.toString() }), { headers: { 'Content-Type': 'application/json' } });
-    const errorData = await response.json().catch(() => ({}));
-    return new Response(JSON.stringify({ error: errorData.message || 'GitHub API error' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  }
-
-  async handleAlarm() {
-    const experiment = await this.state.storage.get('experiment');
-    if (!experiment) return new Response('No experiment');
-
-    // حارس ثبات مطابق لـ handleResult — يمنع إعادة معالجة تجربة مُنهاة بالفعل
-    if (experiment.status === 'completed' || experiment.status === 'failed') {
-      return new Response('Already finalized');
-    }
-
-    const elapsed = Date.now() - experiment.startedAt;
-    const MAX_TIME = 20 * 60 * 1000, MAX_ATTEMPTS = 5;
-
-    try {
-      const status = await this.checkGitHubRuns(experiment.githubToken, experiment.dispatchedAt || experiment.startedAt);
-      if (status.status === 'completed') {
-        experiment.status = 'completed'; experiment.lastUpdate = Date.now();
-        await this.state.storage.put('experiment', experiment);
-        await this.state.storage.deleteAlarm();
-        return new Response('Experiment completed');
-      }
-    } catch (e) {}
-
-    if (elapsed >= MAX_TIME || experiment.attempts >= MAX_ATTEMPTS) {
-      experiment.status = 'failed'; experiment.lastUpdate = Date.now();
-      await this.state.storage.put('experiment', experiment);
-      await this.state.storage.deleteAlarm();
-      return new Response('Experiment failed');
-    }
-
-    experiment.attempts += 1; experiment.status = 'retrying'; experiment.lastUpdate = Date.now();
-    await this.state.storage.put('experiment', experiment);
-    await this.state.storage.setAlarm(Date.now() + 60000);
-    return new Response('Retrying - attempt ' + experiment.attempts);
-  }
-
-  // sinceTs: لا نأخذ "آخر تشغيل في المستودع" مطلقًا، بل أول تشغيل بدأ بعد
-  // وقت الإرسال الفعلي لهذه التجربة (بهامش 5 ثوانٍ) — يقلل خطر التقاط
-  // تشغيل يخص تجربة أخرى، رغم أن GitHub API لا يُرجع run_id مباشرة عند
-  // workflow_dispatch فيبقى هذا تقريبًا لا ضمانًا مطلقًا.
-  async checkGitHubRuns(githubToken, sinceTs) {
-    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/actions/runs?per_page=5`, {
-      method: 'GET',
-      headers: { 'Authorization': 'Bearer ' + githubToken, 'Accept': 'application/vnd.github.v3+json', 'X-GitHub-Api-Version': '2022-11-28' },
-    });
-    const data = await response.json();
-    const runs = data.workflow_runs || [];
-    const match = runs.find(r => new Date(r.created_at).getTime() >= (sinceTs - 5000));
-    if (!match) return { status: 'no_matching_run' };
-    return { id: match.id, status: match.status, conclusion: match.conclusion };
-  }
-
-  async checkStatus() {
-    const experiment = await this.state.storage.get('experiment');
-    if (!experiment) return new Response(JSON.stringify({ error: 'لا توجد تجربة نشطة' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
-    return new Response(JSON.stringify(experiment), { headers: { 'Content-Type': 'application/json' } });
-  }
-
-  async retryExperiment() {
-    const experiment = await this.state.storage.get('experiment');
-    if (!experiment || experiment.attempts >= 5) return new Response(JSON.stringify({ error: 'الحد الأقصى' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-    experiment.attempts += 1; experiment.status = 'retrying'; experiment.lastUpdate = Date.now();
-    await this.state.storage.put('experiment', experiment);
-    return new Response(JSON.stringify({ retry: experiment.attempts }), { headers: { 'Content-Type': 'application/json' } });
-  }
+async function getMemory(env, chatId) {
+  if (!chatId) return json({ error: 'chatId مطلوب' }, 400);
+  const row = await env.DB.prepare('SELECT content, updated_at FROM project_memory WHERE chat_id = ?').bind(chatId).first();
+  return json({ content: row?.content || '', updatedAt: row?.updated_at || null });
 }
 
-// ============ النماذج ============
-// Gemini: نموذج واحد فقط مؤكد فعليًا (gemini-3.5-flash) — أُزيلت الإصدارات
-// الأخرى (3.6/3.7/3.8) لأنها لم تُؤكَّد كموجودة فعليًا. المفاتيح المسطّحة
-// القديمة تبقى مدعومة لتوافق أي واجهة قديمة، لكنها كلها تُرجع نفس النموذج.
-const CONFIRMED_GEMINI_MODEL = 'gemini-3.5-flash';
-const GEMINI_MODEL_MAP = {
-  'gemini': CONFIRMED_GEMINI_MODEL,
-  'gemini-3.5-flash': CONFIRMED_GEMINI_MODEL,
-};
-
-// Workers AI: هذه القائمة أكدت أنها تعمل فعليًا — لم تُمس.
-const WORKERS_AI_MODELS = {
-  'cf-glm-flash': '@cf/zai-org/glm-4.7-flash',
-  'cf-qwen3-coder': '@cf/qwen/qwen3.8-27b',
-  'cf-coder': '@cf/qwen/qwen2.5-coder-32b-instruct',
-  'cf-qwen3': '@cf/qwen/qwen3-30b-a3b-fp8',
-  'cf-gpt-oss-20b': '@cf/openai/gpt-oss-20b',
-  'cf-gemma-4': '@cf/google/gemma-4-26b-a4b-it',
-  'cf-nemotron': '@cf/nvidia/nemotron-3-120b-a12b',
-  'cf-gpt-oss-120b': '@cf/openai/gpt-oss-120b',
-  'cf-deepseek-r1': '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
-  'cf-qwq': '@cf/qwen/qwq-32b',
-  'cf-llama-4': '@cf/meta/llama-4-scout-17b-16e-instruct',
-  'cf-mistral': '@cf/mistralai/mistral-small-3.1-24b-instruct',
-  'cf-llama-70b': '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-  'cf-llama-vision': '@cf/meta/llama-3.2-11b-vision-instruct',
-  'cf-granite': '@cf/ibm-granite/granite-4.0-h-micro',
-};
-
-// Cerebras: مضافة حديثًا عبر CEREBRAS_API_KEY. واجهتها متوافقة مع OpenAI
-// Chat Completions (https://api.cerebras.ai/v1/chat/completions)، فلا
-// تحتاج دالة استدعاء منفصلة معقّدة — راجع callCerebras بالأسفل.
-// المفاتيح اليمنى هنا هي بالضبط أسماء النماذج كما أرجعها GET /v1/models
-// من Cerebras وقت الإضافة — إن غيّرت Cerebras الأسماء لاحقًا يجب تحديثها هنا.
-const CEREBRAS_MODELS = {
-  'cerebras-gemma-4-31b': 'gemma-4-31b',
-  'cerebras-qwen-3.8-27b': 'qwen-3.8-27b',
-  'cerebras-gpt-oss-120b': 'gpt-oss-120b',
-};
-
-const GITHUB_REPO = 'abdelrhym096290-ux/video-compressor-bot';
-const GITHUB_WORKFLOW = 'terminal.yml';
-
-// يقبل صيغتين: "gemini:gemini-3.5-flash" / "cf:@cf/qwen/..." (الواجهة
-// الحالية) أو مفتاحًا مسطحًا قديمًا مثل "cf-coder" أو "gemini" — يحل
-// تعارض العقد بين الواجهة والـ Worker بدل تركه يفشل بصمت.
-function resolveModel(raw) {
-  const fallback = { kind: 'gemini', modelId: CONFIRMED_GEMINI_MODEL };
-  if (!raw) return fallback;
-
-  if (raw.includes(':')) {
-    const idx = raw.indexOf(':');
-    const prefix = raw.slice(0, idx);
-    const rest = raw.slice(idx + 1);
-    if (prefix === 'gemini') return { kind: 'gemini', modelId: GEMINI_MODEL_MAP[rest] || fallback.modelId };
-    if (prefix === 'cf') return { kind: 'workers-ai', modelId: rest };
-    if (prefix === 'cerebras') return { kind: 'cerebras', modelId: CEREBRAS_MODELS[rest] || rest };
-  }
-
-  if (GEMINI_MODEL_MAP[raw]) return { kind: 'gemini', modelId: GEMINI_MODEL_MAP[raw] };
-  if (WORKERS_AI_MODELS[raw]) return { kind: 'workers-ai', modelId: WORKERS_AI_MODELS[raw] };
-  if (CEREBRAS_MODELS[raw]) return { kind: 'cerebras', modelId: CEREBRAS_MODELS[raw] };
-  return fallback;
+async function saveMemory(env, chatId, content) {
+  if (!chatId) return json({ error: 'chatId مطلوب' }, 400);
+  const now = Date.now();
+  await env.DB.prepare('INSERT INTO project_memory (chat_id, content, updated_at) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET content = ?, updated_at = ?').bind(chatId, content, now, content, now).run();
+  return json({ success: true, content });
 }
 
-async function callGemini(apiKey, systemText, historyMessages, modelId) {
-  const contents = historyMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] }));
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelId + ':generateContent';
-  const requestBody = { contents };
-  if (systemText) requestBody.systemInstruction = { parts: [{ text: systemText }] };
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-    body: JSON.stringify(requestBody),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    if (response.status === 429) throw new Error('تم تجاوز الحد المجاني. حاول لاحقاً.');
-    throw new Error(data.error?.message || 'Gemini API error');
-  }
-  const candidate = data.candidates?.[0];
-  if (!candidate) return 'لا يوجد رد';
-  return candidate.content?.parts?.[0]?.text || 'لا يوجد رد';
+async function chat(env, body) {
+  if (!body.chatId || !Array.isArray(body.messages) || !body.messages.length) return json({ error: 'chatId والرسائل مطلوبان' }, 400);
+  const selected = body.model || body.provider ? getModel(body.model || body.provider) : chooseModel(body.messages.at(-1)?.content);
+  const context = await loadContext(env, body.chatId, body.messages);
+  const messages = [{ role: 'system', content: systemPrompt(context.memory) + '\n\n' + agentPolicy() }, ...context.recent];
+  const answer = await complete(env, selected.id, messages, { maxTokens: 4096 });
+  const last = context.recent.filter(m => m.role === 'user').at(-1)?.content || '';
+  let memory = context.memory;
+  try { memory = await refreshMemory(env, body.chatId, context.memory, last, answer, (m, o) => complete(env, selected.id, m, o)); } catch (e) { console.error('context refresh', e); }
+  return json({ response: answer, model: selected, memory, pendingExecution: detectProposedCommand(answer), trace: { provider: selected.provider, model: selected.model, contextMessages: context.recent.length, memoryUpdated: memory !== context.memory } });
 }
 
-async function callWorkersAI(env, modelId, systemText, historyMessages) {
-  const messages = [{ role: 'system', content: systemText }, ...historyMessages];
-  try {
-    const response = await env.AI.run(modelId, { messages, max_tokens: 4096 }, { gateway: { id: 'fox-gateway' } });
-    const contentOut = response.response || response.choices?.[0]?.message?.content || (typeof response === 'string' ? response : '');
-    if (!contentOut) throw new Error('استجابة فارغة');
-    return contentOut;
-  } catch (error) {
-    if (error.message?.includes('quota') || error.message?.includes('429')) throw new Error('تم استنفاد حصة Workers AI اليومية.');
-    throw new Error(`خطأ من Workers AI (${modelId}): ${error.message || 'غير معروف'}`);
-  }
+async function planTask(env, body) {
+  if (!body.chatId || !body.task) return json({ error: 'chatId و task مطلوبان' }, 400);
+  const context = await loadContext(env, body.chatId, []);
+  const selected = body.model || body.provider ? getModel(body.model || body.provider) : chooseModel(body.task);
+  const plan = await createPlan(env, selected.id, body.task, context.memory);
+  await saveRun(env, body.chatId, plan);
+  return json({ plan });
 }
 
-// Cerebras Cloud — واجهة متوافقة مع OpenAI (نفس شكل رسائل callWorkersAI
-// بالضبط). لا يوجد gateway/binding خاص هنا كما في AI.run — استدعاء HTTP
-// عادي بمفتاح CEREBRAS_API_KEY من الأسرار.
-async function callCerebras(apiKey, modelId, systemText, historyMessages) {
-  const messages = [{ role: 'system', content: systemText }, ...historyMessages];
-  const response = await fetch('https://api.cerebras.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-    body: JSON.stringify({ model: modelId, messages, max_tokens: 4096 }),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    if (response.status === 429) throw new Error('تم تجاوز الحد المجاني لـ Cerebras. حاول لاحقاً.');
-    throw new Error(data.error?.message || `Cerebras API error (${modelId})`);
-  }
-  const contentOut = data.choices?.[0]?.message?.content;
-  if (!contentOut) throw new Error('استجابة فارغة من Cerebras');
-  return contentOut;
+async function receiveResult(env, request) {
+  const raw = await request.text();
+  const signature = (request.headers.get('X-FOX-Signature') || '').replace('sha256=', '');
+  if (!env.HMAC_SECRET || !(await verifyHmac(raw, signature, env.HMAC_SECRET))) return json({ error: 'توقيع النتيجة غير صالح' }, 403);
+  const body = JSON.parse(raw);
+  if (!body.experimentId) return json({ error: 'experimentId مطلوب' }, 400);
+  await env.DB.prepare('UPDATE experiments SET status = ?, output = ?, exit_code = ?, updated_at = ? WHERE id = ?').bind(body.exit_code === 0 ? 'completed' : 'failed', body.output || '', body.exit_code ?? 1, Date.now(), body.experimentId).run();
+  return json({ success: true, experimentId: body.experimentId });
 }
 
-async function updateMemory(env, chatId, userMessage, aiResponse) {
-  if (!chatId || !userMessage || !aiResponse) return '';
-  try {
-    const existing = await env.DB.prepare('SELECT content FROM project_memory WHERE chat_id = ?').bind(chatId).first();
-    const currentMemory = existing?.content || '';
-    const memoryPrompt = `أنت مسؤول صيانة وثيقة توثيق حية. حدّث الوثيقة بدمج المعلومات الجديدة.\n\nالوثيقة الحالية:\n${currentMemory || '(فارغة)'}\n\nآخر رسالة:\n${userMessage}\n\nرد المساعد:\n${aiResponse}\n\nأعد كتابة الوثيقة المحدثة.`;
-    const response = await env.AI.run('@cf/qwen/qwen2.5-coder-32b-instruct', { messages: [{ role: 'user', content: memoryPrompt }], max_tokens: 2000 }, { gateway: { id: 'fox-gateway' } });
-    const updatedContent = response.response || '';
-    if (!updatedContent) return currentMemory;
-    await env.DB.prepare(`INSERT INTO project_memory (chat_id, content, updated_at) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET content = ?, updated_at = ?`)
-      .bind(chatId, updatedContent, Date.now(), updatedContent, Date.now()).run();
-    return updatedContent;
-  } catch (error) { return ''; }
+async function verifyHmac(text, expected, secret) {
+  if (!expected) return false;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(text));
+  const actual = Array.from(new Uint8Array(sig)).map(x => x.toString(16).padStart(2, '0')).join('');
+  return actual.length === expected.length && actual.split('').every((x, i) => x === expected[i]);
 }
 
-async function getUsageFromGateway(env) {
-  const ACCOUNT_ID = '83880c2ae9ec32b24fc954ea8dd57d6d';
-  const now = new Date();
-  const startISO = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-  const endISO = now.toISOString();
-  const query = `query { viewer { accounts(filter: { accountTag: "${ACCOUNT_ID}" }) { aiGatewayRequestsAdaptiveGroups(filter: { datetimeHour_geq: "${startISO}", datetimeHour_leq: "${endISO}" } limit: 1000) { count dimensions { model provider gateway datetimeHour } sum { tokensIn tokensOut totalTokens cost } } } } }`;
-  const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + env.CF_API_TOKEN },
-    body: JSON.stringify({ query }),
-  });
-  const data = await response.json();
-  if (data.errors) throw new Error(data.errors[0]?.message || 'GraphQL error');
-  const groups = data.data?.viewer?.accounts?.[0]?.aiGatewayRequestsAdaptiveGroups || [];
-  let totalRequests = 0, totalTokensIn = 0, totalTokensOut = 0, totalTokens = 0, totalCost = 0;
-  const modelStats = {};
-  groups.forEach(function(g) {
-    totalRequests += g.count || 0;
-    totalTokensIn += g.sum?.tokensIn || 0;
-    totalTokensOut += g.sum?.tokensOut || 0;
-    totalTokens += g.sum?.totalTokens || 0;
-    totalCost += g.sum?.cost || 0;
-    const modelKey = g.dimensions?.model || 'unknown';
-    if (!modelStats[modelKey]) modelStats[modelKey] = { requests: 0, tokensIn: 0, tokensOut: 0 };
-    modelStats[modelKey].requests += g.count || 0;
-    modelStats[modelKey].tokensIn += g.sum?.tokensIn || 0;
-    modelStats[modelKey].tokensOut += g.sum?.tokensOut || 0;
-  });
-  return { period: { from: startISO, to: endISO }, totals: { requests: totalRequests, tokensIn: totalTokensIn, tokensOut: totalTokensOut, totalTokens, cost: totalCost }, byModel: modelStats, note: 'بيانات الاستهلاك من AI Gateway' };
+async function ensureAgentSchema(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS agent_runs (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, goal TEXT NOT NULL, plan_json TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)').run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_agent_runs_chat ON agent_runs(chat_id, updated_at DESC)').run();
 }
+
+export class ExperimentState { constructor(state) { this.state = state; } async fetch() { return json({ error: 'Execution service is isolated from the agent core' }, 501); } }
