@@ -8,6 +8,10 @@ import { multimodalMessages, modelCapabilities } from './src/media.js';
 const CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type'};
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json;charset=utf-8',...CORS}});
 const text=x=>String(x||'').trim();
+// Compatibility export: older deployments created Durable Objects with this class name.
+// It is intentionally not used by the new D1 task engine, but must remain exported so
+// Cloudflare can deploy new versions without deleting or migrating existing objects.
+export class ExperimentState { constructor(state,env){this.state=state;this.env=env;} async fetch(){return json({name:'ExperimentState',status:'compatible'});} }
 
 async function schema(env){const q=[
 'CREATE TABLE IF NOT EXISTS context_state (chat_id TEXT PRIMARY KEY, state_json TEXT NOT NULL, updated_at INTEGER NOT NULL)',
