@@ -11,6 +11,14 @@ database_id = "af119c1d-6f40-41d3-aab0-590cdce0462e"
 [ai]
 binding = "AI"
 
+[[durable_objects.bindings]]
+name = "EXPERIMENT_STATE"
+class_name = "ExperimentState"
+
+[exports.ExperimentState]
+type = "durable-object"
+storage = "legacy-kv"
+
 [assets]
 directory = "."
 binding = "ASSETS"
