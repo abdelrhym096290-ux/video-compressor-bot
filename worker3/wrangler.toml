@@ -1,5 +1,5 @@
 name = "fox1-ai"
-main = "worker.js"
+main = "Worker.js"
 compatibility_date = "2026-09-03"
 keep_vars = true
 
