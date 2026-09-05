@@ -1,902 +1,247 @@
-export default {
-  async fetch(request, env) {
-    if (request.method !== "POST") {
-      return new Response("OK", { status: 200 });
-    }
 
-    const BOT_TOKEN = env.BOT_TOKEN;
-    const GITHUB_TOKEN = env.GITHUB_TOKEN;
-    const BOT_PASSWORD = env.BOT_PASSWORD;
-    const GITHUB_REPO = "abdelrhym118-cloud/Abd00118";
-    const GITHUB_WORKFLOW = "compress.yml";
-    const RESOLUTIONS = ["240", "360", "480", "720", "1080"];
 
-    try {
-      const update = await request.json();
+// ===== Embedded FOX// AI modules =====
+const MODEL_CATALOG = [
+  { id: 'cerebras-gemma-4-31b', provider: 'cerebras', model: 'gemma-4-31b', name: 'Gemma 4 31B', company: 'Cerebras', kind: 'chat' },
+  { id: 'cerebras-qwen-3.8-27b', provider: 'cerebras', model: 'qwen-3.8-27b', name: 'Qwen 3.8 27B', company: 'Cerebras', kind: 'chat' },
+  { id: 'cerebras-gpt-oss-120b', provider: 'cerebras', model: 'gpt-oss-120b', name: 'GPT-OSS 120B', company: 'Cerebras', kind: 'chat' },
+  { id: 'gemini-3.5-flash', provider: 'gemini', model: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', company: 'Google', kind: 'chat' },
+  { id: 'cf-qwen3-coder', provider: 'workers-ai', model: '@cf/qwen/qwen3.8-27b', name: 'Qwen Coder', company: 'Cloudflare', kind: 'chat' },
+  { id: 'cf-gpt-oss-120b', provider: 'workers-ai', model: '@cf/openai/gpt-oss-120b', name: 'GPT-OSS 120B', company: 'Cloudflare', kind: 'chat' },
+];
 
-      // استقبال فيديو أو ملف فيديو مباشرة.
-      if (
-        update.message &&
-        (update.message.video ||
-          (update.message.document &&
-            (update.message.document.mime_type || "").startsWith("video/")))
-      ) {
-        const chatId = update.message.chat.id;
-        const isAuthorized = await env.SESSIONS.get(`authorized:${chatId}`);
+function getModel(id) { return MODEL_CATALOG.find(x => x.id === id) || MODEL_CATALOG[0]; }
 
-        if (!isAuthorized) {
-          await sendMessage(BOT_TOKEN, chatId, "🔒 هذا البوت خاص. أرسل كلمة المرور للمتابعة:");
-          return ok();
-        }
-
-        const defaultName = extractDefaultName(update.message);
-        const preset = await getPreset(env, chatId);
-
-        // وضع الإعداد التلقائي: يستعمل الإعداد المحفوظ مباشرة.
-        if (preset && preset.active) {
-          const finalName = buildAutomaticName(preset, defaultName);
-
-          const autoSession = {
-            message_id: update.message.message_id,
-            url: "", // ← للإرسال لـ GitHub
-            codec: preset.codec || "av1",
-            encode_mode: preset.encode_mode || "nofilters",
-            filter_profile:
-              preset.filter_profile ||
-              (preset.encode_mode === "filters" ? "realistic" : "none"),
-            preset: preset.preset || preset.av1_preset || "8",
-            encode_method: preset.encode_method || "crf",
-            target_value: preset.target_value || "28",
-            resolution: preset.resolution || "480",
-            filename: finalName,
-            auto_advance_episode: preset.auto_naming === "series",
-          };
-
-          await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ إرسال المهمة تلقائياً: ${finalName}`);
-          await finalizeAndTrigger(
-            env,
-            BOT_TOKEN,
-            GITHUB_TOKEN,
-            GITHUB_REPO,
-            GITHUB_WORKFLOW,
-            chatId,
-            autoSession,
-          );
-          return ok();
-        }
-
-        // جلسة يدوية جديدة.
-        await setSession(env, chatId, {
-          message_id: update.message.message_id,
-          url: "",
-          default_name: defaultName,
-        });
-        await sendCodecKeyboard(BOT_TOKEN, chatId);
-        return ok();
-      }
-
-      // الرسائل النصية والأوامر والمدخلات الرقمية.
-      if (update.message && update.message.text !== undefined) {
-        const chatId = update.message.chat.id;
-        const text = update.message.text.trim();
-        const isAuthorized = await env.SESSIONS.get(`authorized:${chatId}`);
-
-        if (!isAuthorized) {
-          if (text === BOT_PASSWORD) {
-            await env.SESSIONS.put(`authorized:${chatId}`, "true");
-            await sendMessage(BOT_TOKEN, chatId, "✅ تم التحقق بنجاح. أرسل /start للبدء.");
-          } else {
-            await sendMessage(BOT_TOKEN, chatId, "🔒 هذا البوت خاص. أرسل كلمة المرور للمتابعة:");
-          }
-          return ok();
-        }
-
-        const session = (await getSession(env, chatId)) || {};
-
-        // ★★★ دعم روابط تيليجرام ★★★
-        if (isTelegramLink(text)) {
-          if (session.awaiting_preset || session.awaiting_target_value || 
-              session.awaiting_res || session.awaiting_filename || 
-              session.awaiting_series_title || session.awaiting_episode_start) {
-            await sendMessage(BOT_TOKEN, chatId, "⚠️ أنت في منتصف عملية إعداد. أكمل الإعداد أولاً أو ألغِ العملية.");
-            return ok();
-          }
-
-          const preset = await getPreset(env, chatId);
-          const linkSession = {
-            message_id: "",
-            url: text, // ← الرابط هنا
-            default_name: extractNameFromTelegramLink(text),
-          };
-
-          if (preset && preset.active) {
-            const finalName = buildAutomaticName(preset, linkSession.default_name || "video");
-            const autoSession = {
-              message_id: "",
-              url: text, // ← الرابط هنا
-              codec: preset.codec || "av1",
-              encode_mode: preset.encode_mode || "nofilters",
-              filter_profile:
-                preset.filter_profile ||
-                (preset.encode_mode === "filters" ? "realistic" : "none"),
-              preset: preset.preset || preset.av1_preset || "8",
-              encode_method: preset.encode_method || "crf",
-              target_value: preset.target_value || "28",
-              resolution: preset.resolution || "480",
-              filename: finalName,
-              auto_advance_episode: preset.auto_naming === "series",
-            };
-            await sendMessage(BOT_TOKEN, chatId, `📤 جارٍ معالجة رابط تيليجرام تلقائياً: ${finalName}`);
-            await finalizeAndTrigger(env, BOT_TOKEN, GITHUB_TOKEN, GITHUB_REPO, GITHUB_WORKFLOW, chatId, autoSession);
-          } else {
-            await setSession(env, chatId, linkSession);
-            await sendCodecKeyboard(BOT_TOKEN, chatId);
-          }
-          return ok();
-        }
-        // ★★★ نهاية دعم الروابط ★★★
-
-        if (text === "/start") {
-          await sendMessage(BOT_TOKEN, chatId, startMessage(await getPreset(env, chatId)));
-          return ok();
-        }
-
-        if (text === "/setup" || text === "/settings") {
-          await setSession(env, chatId, { configuring_preset: true });
-          await sendCodecKeyboard(BOT_TOKEN, chatId);
-          return ok();
-        }
-
-        if (text === "/preset") {
-          await sendMessage(BOT_TOKEN, chatId, presetStatusText(await getPreset(env, chatId)));
-          return ok();
-        }
-
-        if (text === "/auto_off") {
-          const preset = await getPreset(env, chatId);
-          if (!preset) {
-            await sendMessage(BOT_TOKEN, chatId, "لا يوجد إعداد محفوظ أصلاً.");
-          } else {
-            preset.active = false;
-            await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, "⏸️ تم إيقاف الوضع التلقائي. أرسل فيديو وستُسأل عن الإعدادات.");
-          }
-          return ok();
-        }
-
-        if (text === "/auto_on") {
-          const preset = await getPreset(env, chatId);
-          if (!preset) {
-            await sendMessage(BOT_TOKEN, chatId, "لا يوجد إعداد محفوظ. استخدم /setup أولاً.");
-          } else {
-            preset.active = true;
-            await setPreset(env, chatId, preset);
-            await sendMessage(BOT_TOKEN, chatId, `▶️ تم تفعيل الوضع التلقائي.\n${presetStatusText(preset)}`);
-          }
-          return ok();
-        }
-
-        // الاسم الذي سيظهر في تسمية مسلسل تلقائية ضمن /setup.
-        if (session.awaiting_series_title) {
-          const seriesTitle = cleanFileName(text);
-          if (!seriesTitle) {
-            await sendMessage(BOT_TOKEN, chatId, "📝 أرسل اسماً صحيحاً للمسلسل، مثل: Solo Leveling S02");
-            return ok();
-          }
-          session.series_title = seriesTitle;
-          session.awaiting_series_title = false;
-          session.awaiting_episode_start = true;
-          await setSession(env, chatId, session);
-          await sendMessage(BOT_TOKEN, chatId, `✅ اسم السلسلة: ${seriesTitle}\n🔢 أرسل رقم الحلقة الأولى، مثل: 1`);
-          return ok();
-        }
-
-        // رقم أول حلقة في تسمية مسلسل تلقائية ضمن /setup.
-        if (session.awaiting_episode_start) {
-          if (!/^[1-9]\d{0,5}$/.test(text)) {
-            await sendMessage(BOT_TOKEN, chatId, "🔢 أرسل رقم حلقة موجباً فقط، مثل: 1 أو 12.");
-            return ok();
-          }
-          session.next_episode = Number.parseInt(text, 10);
-          session.awaiting_episode_start = false;
-          await setSession(env, chatId, session);
-          await savePresetAndConfirm(env, BOT_TOKEN, chatId, session);
-          return ok();
-        }
-
-        // إدخال رقم سرعة AV1 أو VVC.
-        if (session.awaiting_preset) {
-          const codec = session.codec || "av1";
-          if (!isValidPreset(codec, text)) {
-            const hint =
-              codec === "vvc"
-                ? "أرسل رقم سرعة VVC من 1 إلى 4 فقط:"
-                : "أرسل رقم سرعة AV1 من 0 إلى 13 فقط:";
-            await sendMessage(BOT_TOKEN, chatId, hint);
-            return ok();
-          }
-
-          session.preset = text;
-          session.awaiting_preset = false;
-          await setSession(env, chatId, session);
-          await sendMessage(
-            BOT_TOKEN,
-            chatId,
-            codec === "vvc" ? `✅ تم تسجيل سرعة VVC: ${text}` : `✅ تم تسجيل AV1 preset: ${text}`,
-          );
-          await sendEncodeMethodKeyboard(BOT_TOKEN, chatId, codec);
-          return ok();
-        }
-
-        // إدخال CRF أو QP أو معدل البت.
-        if (session.awaiting_target_value) {
-          if (!isValidTargetValue(session.codec, session.encode_method, text)) {
-            await sendMessage(BOT_TOKEN, chatId, targetValueHint(session.codec, session.encode_method));
-            return ok();
-          }
-
-          session.target_value = text;
-          session.awaiting_target_value = false;
-          await setSession(env, chatId, session);
-
-          if (session.codec === "audio") {
-            if (session.configuring_preset) {
-              await sendAutoNamingKeyboard(BOT_TOKEN, chatId);
-            } else {
-              session.awaiting_filename = true;
-              await setSession(env, chatId, session);
-              await promptFilename(BOT_TOKEN, chatId, null, session.default_name, false);
-            }
-          } else {
-            await sendMessage(BOT_TOKEN, chatId, `✅ تم تسجيل القيمة: ${text}`);
-            await sendQualityKeyboard(BOT_TOKEN, chatId, RESOLUTIONS);
-          }
-          return ok();
-        }
-
-        // إدخال دقة مخصصة.
-        if (session.awaiting_res) {
-          if (!isValidResolution(text)) {
-            await sendMessage(BOT_TOKEN, chatId, "أرسل ارتفاعاً صحيحاً بين 144 و2160، مثل 550:");
-            return ok();
-          }
-          session.resolution = text;
-          session.awaiting_res = false;
-          await setSession(env, chatId, session);
-          await continueAfterResolution(env, BOT_TOKEN, chatId, session);
-          return ok();
-        }
-
-        // إدخال اسم الملف النهائي.
-        if (session.awaiting_filename) {
-          session.filename = await applyCounterToName(env, chatId, text || session.default_name || "video");
-          session.awaiting_filename = false;
-          await setSession(env, chatId, session);
-          await sendMessage(BOT_TOKEN, chatId, `تم اعتماد الاسم النهائي: ${session.filename}`);
-          await finalizeAndTrigger(
-            env,
-            BOT_TOKEN,
-            GITHUB_TOKEN,
-            GITHUB_REPO,
-            GITHUB_WORKFLOW,
-            chatId,
-            session,
-          );
-          return ok();
-        }
-
-        await sendMessage(BOT_TOKEN, chatId, "📤 أرسل فيديو مباشرة أو رابط تيليجرام للبدء، أو استخدم /setup لحفظ إعداد تلقائي.");
-        return ok();
-      }
-
-      // ضغطات الأزرار.
-      if (update.callback_query) {
-        const query = update.callback_query;
-        const chatId = query.message.chat.id;
-        const data = query.data;
-        await answerCallback(BOT_TOKEN, query.id);
-
-        const isAuthorized = await env.SESSIONS.get(`authorized:${chatId}`);
-        if (!isAuthorized) return ok();
-
-        const session = (await getSession(env, chatId)) || {};
-
-        if (data === "cancel") {
-          await deleteSession(env, chatId);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "🚫 تم إلغاء العملية.");
-          return ok();
-        }
-
-        // 1. اختيار المرمّز.
-        if (data.startsWith("codec_")) {
-          const codec = data.split("_")[1];
-          if (!["av1", "vvc", "audio"].includes(codec)) return ok();
-
-          session.codec = codec;
-          if (codec === "audio") {
-            session.encode_mode = "audio";
-            session.filter_profile = "none";
-            session.preset = "none";
-            session.encode_method = "audio";
-            session.awaiting_target_value = true;
-            await setSession(env, chatId, session);
-            await editMessage(BOT_TOKEN, chatId, query.message.message_id, "أرسل معدل بت الصوت، مثال: 32k أو 48k:");
-          } else {
-            await setSession(env, chatId, session);
-            await editMessage(
-              BOT_TOKEN,
-              chatId,
-              query.message.message_id,
-              `🎞️ المرمّز المختار: ${codec === "vvc" ? "H.266 / VVC" : "AV1"}`,
-            );
-            await sendEncodeModeKeyboard(BOT_TOKEN, chatId);
-          }
-          return ok();
-        }
-
-        // 2. اختيار «مع فلاتر» أو «بدون فلاتر».
-        if (data.startsWith("mode_")) {
-          const mode = data.split("_")[1];
-          if (!["filters", "nofilters"].includes(mode)) return ok();
-
-          session.encode_mode = mode;
-          session.filter_profile = mode === "nofilters" ? "none" : undefined;
-          await setSession(env, chatId, session);
-
-          if (mode === "filters") {
-            await editMessage(
-              BOT_TOKEN,
-              chatId,
-              query.message.message_id,
-              "🧩 اختر نوع الفلاتر: الأنمي للرسوم والمساحات اللونية، والواقعي للتصوير الحقيقي:",
-              filterProfileKeyboardMarkup(),
-            );
-          } else {
-            session.awaiting_preset = true;
-            await setSession(env, chatId, session);
-            await editMessage(BOT_TOKEN, chatId, query.message.message_id, presetPrompt(session.codec));
-          }
-          return ok();
-        }
-
-        // 3. اختيار ملف الفلاتر عند «مع فلاتر».
-        if (data.startsWith("filter_")) {
-          const profile = data.split("_")[1];
-          if (!["anime", "realistic"].includes(profile)) return ok();
-
-          session.filter_profile = profile;
-          session.awaiting_preset = true;
-          await setSession(env, chatId, session);
-          await editMessage(
-            BOT_TOKEN,
-            chatId,
-            query.message.message_id,
-            `${profile === "anime" ? "🌸 تم اختيار فلاتر الأنمي." : "🎬 تم اختيار فلاتر المحتوى الواقعي."}\n${presetPrompt(session.codec)}`,
-          );
-          return ok();
-        }
-
-        // اختصار اختياري إن استعملت الأزرار القديمة في رسالة سابقة.
-        if (data.startsWith("preset_")) {
-          const presetValue = data.split("_")[1];
-          if (!isValidPreset(session.codec || "av1", presetValue)) return ok();
-          session.preset = presetValue;
-          await setSession(env, chatId, session);
-          await editMessage(
-            BOT_TOKEN,
-            chatId,
-            query.message.message_id,
-            `🏎️ تم تسجيل السرعة: ${presetValue}\n🎛️ اختر طريقة الضغط:`,
-            encodeMethodKeyboardMarkup(session.codec || "av1"),
-          );
-          return ok();
-        }
-
-        // 4. اختيار CRF أو QP أو Two-Pass أو VBR.
-        if (data.startsWith("encmethod_")) {
-          const method = data.split("_")[1];
-          if (!isValidEncodeMethod(session.codec, method)) return ok();
-
-          session.encode_method = method;
-          session.awaiting_target_value = true;
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, encodeMethodPrompt(session.codec, method));
-          return ok();
-        }
-
-        // 5. إعداد التسمية التلقائية كجزء من /setup.
-        if (data === "autoname_keep") {
-          session.auto_naming = "source";
-          delete session.series_title;
-          delete session.next_episode;
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "📄 سيحتفظ كل ملف باسمه المرفق تلقائياً.");
-          await savePresetAndConfirm(env, BOT_TOKEN, chatId, session);
-          return ok();
-        }
-
-        if (data === "autoname_series") {
-          session.auto_naming = "series";
-          session.awaiting_series_title = true;
-          await setSession(env, chatId, session);
-          await editMessage(
-            BOT_TOKEN,
-            chatId,
-            query.message.message_id,
-            "📝 أرسل اسم السلسلة كما تريد ظهوره.\nمثال: Solo Leveling S02\n\nسيكون الناتج: Solo Leveling S02 - E01",
-          );
-          return ok();
-        }
-
-        // 6. اختيار الدقة.
-        if (data === "custom_res") {
-          session.awaiting_res = true;
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, "📐 أرسل الارتفاع المطلوب رقماً فقط، مثال: 550:");
-          return ok();
-        }
-
-        if (data.startsWith("res_")) {
-          const resolution = data.split("_")[1];
-          if (!isValidResolution(resolution)) return ok();
-          session.resolution = resolution;
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `🎯 تم اختيار الدقة: ${resolution}p`);
-          await continueAfterResolution(env, BOT_TOKEN, chatId, session);
-          return ok();
-        }
-
-        // 7. استعمال الاسم المرفق.
-        if (data === "name_skip") {
-          session.filename = await applyCounterToName(env, chatId, session.default_name || "video");
-          session.awaiting_filename = false;
-          await setSession(env, chatId, session);
-          await editMessage(BOT_TOKEN, chatId, query.message.message_id, `⏳ جارٍ إرسال المهمة: ${session.filename}`);
-          await finalizeAndTrigger(
-            env,
-            BOT_TOKEN,
-            GITHUB_TOKEN,
-            GITHUB_REPO,
-            GITHUB_WORKFLOW,
-            chatId,
-            session,
-          );
-          return ok();
-        }
-      }
-    } catch (error) {
-      console.error("Worker handler error:", error?.message, error?.stack);
-    }
-
-    return ok();
-  },
-};
-
-function ok() {
-  return new Response("OK", { status: 200 });
+async function complete(env, modelId, messages, options = {}) {
+  const spec = getModel(modelId);
+  if (spec.provider === 'cerebras') return openAICompatible(env.CEREBRAS_API_KEY, 'https://api.cerebras.ai/v1/chat/completions', spec.model, messages, options);
+  if (spec.provider === 'gemini') return gemini(env.GEMINI_API_KEY, spec.model, messages, options);
+  if (spec.provider === 'workers-ai') return workersAI(env, spec.model, messages, options);
+  throw new Error(`مزود غير مدعوم: ${spec.provider}`);
 }
 
-async function getSession(env, chatId) {
-  const raw = await env.SESSIONS.get(`session:${chatId}`);
-  return raw ? JSON.parse(raw) : null;
+async function openAICompatible(key, url, model, messages, options) {
+  if (!key) throw new Error('مفتاح مزود النموذج غير موجود في أسرار العامل');
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` }, body: JSON.stringify({ model, messages, temperature: options.temperature ?? 0.2, max_tokens: options.maxTokens ?? 4096 }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error?.message || `Provider error ${r.status}`);
+  return d.choices?.[0]?.message?.content || '';
 }
 
-async function setSession(env, chatId, session) {
-  await env.SESSIONS.put(`session:${chatId}`, JSON.stringify(session), { expirationTtl: 3600 });
+async function gemini(key, model, messages, options) {
+  if (!key) throw new Error('GEMINI_API_KEY غير موجود');
+  const system = messages.find(m => m.role === 'system')?.content;
+  const contents = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+  const body = { contents, ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}) };
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error?.message || `Gemini error ${r.status}`);
+  return d.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
 }
 
-async function deleteSession(env, chatId) {
-  await env.SESSIONS.delete(`session:${chatId}`);
+async function workersAI(env, model, messages, options) {
+  const d = await env.AI.run(model, { messages, max_tokens: options.maxTokens ?? 4096 });
+  return d.response || d.choices?.[0]?.message?.content || '';
 }
 
-async function getPreset(env, chatId) {
-  const raw = await env.SESSIONS.get(`preset:${chatId}`);
-  return raw ? JSON.parse(raw) : null;
-}
+function publicCatalog() { return MODEL_CATALOG.map(({ id, name, company, provider }) => ({ id, name, company, provider })); }
 
-async function setPreset(env, chatId, preset) {
-  await env.SESSIONS.put(`preset:${chatId}`, JSON.stringify(preset));
-}
+const LIMIT = 14;
 
-async function applyCounterToName(_env, _chatId, baseName) {
-  return cleanFileName(baseName) || "video";
-}
-
-function cleanFileName(value) {
-  return String(value || "")
-    .replace(/\.[^/.]+$/, "")
-    .replace(/[\\/:*?"<>|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function formatEpisode(value) {
-  return String(Number.parseInt(value, 10)).padStart(2, "0");
-}
-
-function buildAutomaticName(preset, sourceName) {
-  if (
-    preset?.auto_naming === "series" &&
-    preset.series_title &&
-    Number.isInteger(preset.next_episode) &&
-    preset.next_episode > 0
-  ) {
-    return `${cleanFileName(preset.series_title)} - E${formatEpisode(preset.next_episode)}`;
+async function loadContext(env, chatId, messages = []) {
+  let memory = '';
+  if (chatId) {
+    const row = await env.DB.prepare('SELECT content FROM project_memory WHERE chat_id = ?').bind(chatId).first();
+    memory = row?.content || '';
   }
-  return cleanFileName(sourceName) || "video";
+  return { memory, recent: messages.slice(-LIMIT).map(m => ({ role: m.role === 'assistant' || m.role === 'model' ? 'assistant' : 'user', content: String(m.content || '') })) };
 }
 
-async function continueAfterResolution(env, botToken, chatId, session) {
-  if (session.configuring_preset) {
-    await sendAutoNamingKeyboard(botToken, chatId);
-    return;
-  }
+function systemPrompt(memory) { return `أنت FOX// AI، وكيل شخصي يخطط بوضوح وينفذ الأدوات فقط بعد موافقة المستخدم. افصل بين ما تعرفه وما تقترحه. لا تدّع تنفيذ شيء لم تنفذه. استخدم العربية إن كانت رسالة المستخدم عربية.\n\n## ملخص التسليم من الذاكرة\n${memory || '(لا يوجد ملخص بعد)'}`; }
 
-  session.awaiting_filename = true;
-  await setSession(env, chatId, session);
-  await promptFilename(botToken, chatId, null, session.default_name, false);
+async function refreshMemory(env, chatId, oldMemory, user, answer, complete) {
+  if (!chatId) return oldMemory || '';
+  const prompt = `أنشئ ملخص تسليم دقيقًا ومضغوطًا ليستطيع نموذج آخر متابعة هذه المحادثة. العناوين الإلزامية: الهدف، متطلبات المستخدم، القرارات، ما تم، المشاكل/القيود، الخطوة التالية. لا تضف تخمينًا.\n\nالملخص السابق:\n${oldMemory || '(فارغ)'}\n\nالمستخدم:\n${user}\n\nالرد:\n${answer}`;
+  const next = await complete([{ role: 'system', content: 'أنت مدير ذاكرة سياقية.' }, { role: 'user', content: prompt }], { maxTokens: 1800 });
+  const value = next.trim() || oldMemory || '';
+  await env.DB.prepare('INSERT INTO project_memory (chat_id, content, updated_at) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET content = ?, updated_at = ?').bind(chatId, value, Date.now(), value, Date.now()).run();
+  return value;
 }
 
-async function savePresetAndConfirm(env, botToken, chatId, session) {
-  const oldPreset = await getPreset(env, chatId);
-  const preset = {
-    codec: session.codec || "av1",
-    encode_mode: session.encode_mode || "nofilters",
-    filter_profile:
-      session.filter_profile || (session.encode_mode === "filters" ? "realistic" : "none"),
-    preset: session.preset || "8",
-    encode_method: session.encode_method || "crf",
-    target_value: session.target_value || "28",
-    resolution: session.resolution || "480",
-    auto_naming: session.auto_naming || "source",
-    active: true,
-  };
-
-  if (session.auto_naming === "series") {
-    preset.series_title = cleanFileName(session.series_title);
-    preset.next_episode = Number.parseInt(session.next_episode, 10);
-  }
-
-  await setPreset(env, chatId, preset);
-  await deleteSession(env, chatId);
-  await sendMessage(botToken, chatId, `✅ تم حفظ الإعداد وتفعيل الوضع التلقائي.\n${presetStatusText(preset)}\n⏸️ استخدم /auto_off لإيقافه.`);
+function detectProposedCommand(text) {
+  const m = String(text || '').match(/```(?:bash|sh|shell|python)\n([\s\S]*?)```/i);
+  return m ? { command: m[1].trim(), language: /python/i.test(m[0]) ? 'python' : 'bash', requiresApproval: true } : null;
 }
 
-function presetStatusText(preset) {
-  if (!preset) return "لا يوجد إعداد محفوظ.";
-
-  const codecLabel =
-    preset.codec === "vvc" ? "H.266 / VVC" : preset.codec === "audio" ? "صوت فقط" : "AV1";
-  const modeLabel =
-    preset.encode_mode === "filters"
-      ? preset.filter_profile === "anime"
-        ? "مع فلاتر الأنمي"
-        : "مع فلاتر الواقعي"
-      : preset.encode_mode === "audio"
-        ? "صوت فقط"
-        : "بدون فلاتر";
-  const methodLabel =
-    preset.encode_method === "crf"
-      ? "CRF"
-      : preset.encode_method === "qp"
-        ? "QP"
-        : preset.encode_method === "vbr"
-          ? "VBR"
-          : preset.encode_method === "twopass"
-            ? "Two-Pass"
-            : "استخراج صوت";
-
-  const lines = [
-    `المرمّز: ${codecLabel}`,
-    `الوضع: ${modeLabel}`,
-    `السرعة: ${preset.preset || "-"}`,
-    `الطريقة: ${methodLabel}`,
-    `القيمة: ${preset.target_value}`,
-  ];
-  if (preset.codec !== "audio") lines.push(`الدقة: ${preset.resolution}p`);
-  if (preset.auto_naming === "series" && preset.series_title && preset.next_episode) {
-    lines.push(`التسمية: ${preset.series_title} - E${formatEpisode(preset.next_episode)}`);
-  } else {
-    lines.push("التسمية: الاحتفاظ باسم الفيديو المرفق");
-  }
-  return lines.join("\n");
+function agentPolicy() {
+  return 'الأدوات المتاحة حاليًا: اقتراح أوامر فقط. لا تنفّذ أمرًا ولا تطلب صلاحيات إضافية تلقائيًا. إذا احتاجت المهمة تنفيذًا، قدم خطة ثم كتلة أمر واضحة ليوافق المستخدم عليها صراحة.';
 }
 
-function startMessage(preset) {
-  return [
-    "🚀 أرسل فيديو مباشرة أو رابط تيليجرام للبدء.",
-    "",
-    "الأوامر:",
-    "/setup لحفظ إعداد تلقائي",
-    "/preset لعرض الإعداد المحفوظ",
-    "/auto_on و /auto_off لتشغيل أو إيقاف الوضع التلقائي",
-    "إعداد اسم السلسلة وعدّاد الحلقات موجود ضمن /setup.",
-    "",
-    "📎 يمكنك إرسال:",
-    "- فيديو مباشر من جهازك",
-    "- رابط تيليجرام مثل: https://t.me/channel/123",
-    preset?.active ? "" : null,
-    preset?.active ? "▶️ الوضع التلقائي مفعّل حالياً." : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
 
-function isValidPreset(codec, value) {
-  if (codec === "av1") return /^(?:[0-9]|1[0-3])$/.test(value);
-  if (codec === "vvc") return /^[1-4]$/.test(value);
-  return codec === "audio";
-}
-
-function isValidEncodeMethod(codec, method) {
-  if (codec === "av1") return ["crf", "twopass"].includes(method);
-  if (codec === "vvc") return ["qp", "vbr"].includes(method);
-  if (codec === "audio") return method === "audio";
-  return false;
-}
-
-function isValidTargetValue(codec, method, value) {
-  if (codec === "audio" || method === "twopass" || method === "vbr") {
-    return /^[1-9]\d{0,5}(?:[kKmM])?$/.test(value);
-  }
-  if ((codec === "av1" && method === "crf") || (codec === "vvc" && method === "qp")) {
-    return /^(?:[0-9]|[1-5][0-9]|6[0-3])$/.test(value);
-  }
-  return false;
-}
-
-function isValidResolution(value) {
-  if (!/^\d{3,4}$/.test(value)) return false;
-  const height = Number.parseInt(value, 10);
-  return height >= 144 && height <= 2160;
-}
-
-function presetPrompt(codec) {
-  return codec === "vvc"
-    ? "أرسل رقم سرعة VVC: 1 أبطأ، 2 بطيء، 3 سريع، 4 الأسرع."
-    : "أرسل رقم سرعة AV1 من 0 إلى 13، مثل 4 أو 8.";
-}
-
-function targetValueHint(codec, method) {
-  if (codec === "audio") return "أرسل معدل بت صحيحاً، مثل 32k أو 48k.";
-  if (codec === "av1" && method === "crf") return "أرسل قيمة CRF من 0 إلى 63، مثل 28 أو 35.";
-  if (codec === "vvc" && method === "qp") return "أرسل قيمة QP من 0 إلى 63، مثل 32 أو 38.";
-  return "أرسل معدل بت صحيحاً، مثل 250k أو 1000k.";
-}
-
-function encodeMethodPrompt(codec, method) {
-  if (codec === "av1" && method === "crf") {
-    return "تم اختيار CRF. أرسل قيمة CRF من 0 إلى 63، مثل 28 أو 35:";
-  }
-  if (codec === "av1" && method === "twopass") {
-    return "تم اختيار Two-Pass. أرسل معدل البت المستهدف، مثل 250k أو 1000k:";
-  }
-  if (codec === "vvc" && method === "qp") {
-    return "تم اختيار QP. أرسل قيمة QP من 0 إلى 63، مثل 32 أو 38:";
-  }
-  return "تم اختيار VBR. أرسل معدل البت المستهدف، مثل 250k أو 1000k:";
-}
-
-function isTelegramLink(text) {
-  return /^https?:\/\/(t\.me|telegram\.me)\/(?:c\/)?[^\/\s]+\/\d+/.test(text);
-}
-
-function extractNameFromTelegramLink(url) {
+async function createPlan(env, modelId, task, memory = '') {
+  const prompt = `حوّل المهمة التالية إلى خطة تنفيذ عملية من 3 إلى 8 خطوات. أعد JSON فقط بالشكل {"goal":"...","steps":[{"id":"step-1","title":"...","description":"...","tool":"none|terminal|files|web","verification":"..."}]}. لا تنفذ شيئًا ولا تخترع وصولًا.\nالمهمة: ${task}\nالسياق: ${memory}`;
   try {
-    const parsed = new URL(url);
-    const pathParts = parsed.pathname.split('/').filter(Boolean);
-    const channelName = pathParts[0] || "telegram";
-    const messageId = pathParts[1] || "";
-    return `${channelName}_${messageId}`;
-  } catch {
-    return "telegram_video";
+    const raw = await complete(env, modelId, [{ role: 'system', content: agentPolicy() }, { role: 'user', content: prompt }], { maxTokens: 1800, temperature: 0.1 });
+    const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    if (Array.isArray(parsed.steps) && parsed.steps.length) return normalizePlan(parsed, task);
+  } catch (e) { console.error('planner', e); }
+  return normalizePlan({ goal: task, steps: [{ title: 'تحليل المتطلبات', description: task, tool: 'none', verification: 'تأكيد المطلوب' }, { title: 'اقتراح التنفيذ', description: 'إعداد خطة قابلة للمراجعة', tool: 'none', verification: 'مراجعة المستخدم' }] }, task);
+}
+function normalizePlan(plan, task) { return { id: crypto.randomUUID(), goal: plan.goal || task, status: 'draft', steps: plan.steps.map((s, i) => ({ id: s.id || `step-${i + 1}`, title: s.title || `الخطوة ${i + 1}`, description: s.description || '', tool: s.tool || 'none', verification: s.verification || '', status: 'pending', attempts: 0, output: '' })) }; }
+async function saveRun(env, chatId, plan) { const now = Date.now(); await env.DB.prepare('INSERT INTO agent_runs (id, chat_id, goal, plan_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(plan.id, chatId, plan.goal, JSON.stringify(plan), plan.status, now, now).run(); return plan; }
+async function readRun(env, id) { const row = await env.DB.prepare('SELECT * FROM agent_runs WHERE id = ?').bind(id).first(); if (!row) return null; return { ...row, plan: JSON.parse(row.plan_json) }; }
+async function updateRun(env, run) { const now = Date.now(); await env.DB.prepare('UPDATE agent_runs SET plan_json = ?, status = ?, updated_at = ? WHERE id = ?').bind(JSON.stringify(run.plan), run.plan.status, now, run.id).run(); return run; }
+async function approvePlan(env, runId) { const run = await readRun(env, runId); if (!run) throw new Error('المهمة غير موجودة'); run.plan.status = 'running'; run.plan.steps[0].status = 'running'; await updateRun(env, run); return run; }
+
+async function updateStep(env, runId, stepId, patch = {}) {
+  const run = await readRun(env, runId); if (!run) throw new Error('المهمة غير موجودة');
+  const step = run.plan.steps.find(s => s.id === stepId); if (!step) throw new Error('الخطوة غير موجودة');
+  if (patch.status === 'retrying') { step.attempts = (step.attempts || 0) + 1; step.status = step.attempts > 3 ? 'failed' : 'running'; }
+  else Object.assign(step, { status: patch.status || step.status, output: patch.output ?? step.output });
+  if (step.status === 'completed') { const next = run.plan.steps.find(s => s.status === 'pending'); if (next) next.status = 'running'; else run.plan.status = 'completed'; }
+  if (step.status === 'failed') run.plan.status = 'paused';
+  await updateRun(env, run); return run;
+}
+
+
+async function advanceRun(env, runId, modelId) {
+  const run = await readRun(env, runId);
+  if (!run) throw new Error('المهمة غير موجودة');
+  if (run.plan.status === 'draft') throw new Error('الخطة تحتاج موافقة صريحة أولاً');
+  const step = run.plan.steps.find(s => s.status === 'running' || s.status === 'pending');
+  if (!step) return run;
+  if (step.status === 'pending') { step.status = 'running'; await updateRun(env, run); }
+  const prompt = `نفّذ تحليليًا الخطوة التالية ضمن وكيل آمن. لا تدّع تنفيذ أدوات خارجية. أعد JSON فقط: {"result":"...","needsTerminal":false,"command":"","verification":"...","success":true}.\nالهدف: ${run.goal}\nالخطوة: ${step.title}\nالوصف: ${step.description}\nالتحقق المطلوب: ${step.verification}`;
+  const raw = await complete(env, modelId, [{ role: 'system', content: 'أنت منفذ خطوات دقيق. لا تنفذ أوامر تلقائيًا.' }, { role: 'user', content: prompt }], { maxTokens: 1600, temperature: 0.1 });
+  let result; try { result = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '{}'); } catch { result = { result: raw, success: true }; }
+  step.output = result.result || raw; step.verification = result.verification || step.verification;
+  if (result.needsTerminal && result.command) { step.status = 'awaiting_approval'; step.command = result.command; run.plan.status = 'paused'; }
+  else if (result.success === false) { step.status = 'failed'; run.plan.status = 'paused'; }
+  else { step.status = 'completed'; const next = run.plan.steps.find(s => s.status === 'pending'); if (next) next.status = 'running'; else run.plan.status = 'completed'; }
+  await updateRun(env, run); return run;
+}
+
+async function dispatchCommand(env, chatId, command) {
+  if (!command || command.length > 12000) throw new Error('أمر غير صالح أو طويل جدًا');
+  const id = Date.now(); const now = id;
+  await env.DB.prepare('INSERT INTO experiments (id, chat_id, command, status, output, exit_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').bind(id, chatId, command, 'pending', '', null, now, now).run();
+  if (!env.GITHUB_TOKEN) throw new Error('GITHUB_TOKEN غير مهيأ');
+  const r = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO || 'abdelrhym096290-ux/video-compressor-bot'}/actions/workflows/${env.GITHUB_WORKFLOW || 'terminal.yml'}/dispatches`, { method: 'POST', headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' }, body: JSON.stringify({ ref: 'main', inputs: { command, experimentId: id } }) });
+  if (!r.ok) { await env.DB.prepare('UPDATE experiments SET status = ?, updated_at = ? WHERE id = ?').bind('failed', Date.now(), id).run(); throw new Error(`فشل إرسال التجربة: ${r.status}`); }
+  return { id, status: 'pending', command };
+}
+async function listExperiments(env) { const r = await env.DB.prepare('SELECT id, chat_id, command, status, output, exit_code, created_at, updated_at FROM experiments ORDER BY created_at DESC LIMIT 30').all(); return r.results || []; }
+
+// ===== FOX// AI Worker API =====
+
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
+const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS } });
+
+export default { async fetch(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
+  if (request.method === 'GET') return json({ name: 'FOX// AI', status: 'ready', version: '2.0.0' });
+  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  try {
+    if (new URL(request.url).pathname === '/result') return receiveResult(env, request);
+    const body = await request.json();
+    await ensureAgentSchema(env);
+    const action = body.action;
+    if (action === 'models') return json({ models: publicCatalog() });
+    if (action === 'login') return login(env, request, body);
+    if (action === 'check_session') return json({ valid: await validSession(env, body.sessionToken) });
+    if (action === 'logout') { await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(body.sessionToken || '').run(); return json({ success: true }); }
+    if (!await validSession(env, body.sessionToken)) return json({ error: 'الجلسة غير صالحة', authRequired: true }, 401);
+    if (action === 'get_memory') return getMemory(env, body.chatId);
+    if (action === 'memory_update') return saveMemory(env, body.chatId, body.content || '');
+    if (action === 'plan_task') return planTask(env, body);
+    if (action === 'get_run') return json(await readRun(env, body.runId) || { error: 'المهمة غير موجودة' }, 200);
+    if (action === 'approve_plan') return json(await approvePlan(env, body.runId));
+    if (action === 'update_step') return json(await updateStep(env, body.runId, body.stepId, { status: body.status, output: body.output }));
+    if (action === 'retry_step') return json(await updateStep(env, body.runId, body.stepId, { status: 'retrying' }));
+    if (action === 'advance_run') return json(await advanceRun(env, body.runId, body.model || body.provider));
+    if (action === 'get_experiments') return json({ experiments: await listExperiments(env) });
+    if (action === 'run_command') return json(await dispatchCommand(env, body.chatId, body.command));
+    if (action === 'chat') return chat(env, body);
+    if (action === 'approve_tool') return json({ error: 'تنفيذ الأدوات يحتاج ربط منفصل وموافقة صريحة' }, 501);
+    return json({ error: 'إجراء غير معروف' }, 400);
+  } catch (e) { console.error(e); return json({ error: e.message || 'خطأ داخلي' }, 500); }
+} };
+
+async function login(env, request, body) {
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const row = await env.DB.prepare('SELECT attempts, locked_until FROM login_attempts WHERE ip = ?').bind(ip).first();
+  const now = Date.now();
+  if (row?.locked_until > now) return json({ error: 'محاولات كثيرة، حاول لاحقًا' }, 429);
+  if (body.accessPassword !== env.ACCESS_PASSWORD) {
+    const attempts = (row?.attempts || 0) + 1; const lock = attempts >= 5 ? now + 600000 : null;
+    await env.DB.prepare('INSERT INTO login_attempts (ip, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(ip) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?').bind(ip, attempts, lock, now, attempts, lock, now).run();
+    return json({ error: 'كلمة المرور غير صحيحة', authRequired: true }, 401);
   }
+  const token = crypto.randomUUID(); const expires = now + 86400000;
+  await env.DB.prepare('INSERT INTO sessions (token, created_at, expires_at) VALUES (?, ?, ?)').bind(token, now, expires).run();
+  return json({ success: true, token, expiresAt: expires });
 }
 
-// ★★★ جزء الإرسال - كما هو بالضبط من الكود الذي يعمل ★★★
-async function triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId) {
-  const body = {
-    ref: "main",
-    inputs: {
-      message_id: session.message_id ? String(session.message_id) : "",
-      url: session.url || "",
-      chat_id: String(chatId),
-      filename: session.filename || "video",
-      codec: session.codec || "av1",
-      preset: session.preset || "8",
-      encode_mode: session.encode_mode || "nofilters",
-      filter_profile:
-        session.filter_profile || (session.encode_mode === "filters" ? "realistic" : "none"),
-      encode_method: session.encode_method || "crf",
-      target_value: String(session.target_value || "28"),
-      resolution: session.resolution || "480",
-      frame_rate: "24",
-    },
-  };
-
-  const response = await fetch(
-    `https://api.github.com/repos/${githubRepo}/actions/workflows/${githubWorkflow}/dispatches`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `token ${githubToken}`,
-        Accept: "application/vnd.github.v3+json",
-        "User-Agent": "Cloudflare-Worker",
-      },
-      body: JSON.stringify(body),
-    },
-  );
-
-  const responseText = await response.text();
-  if (!response.ok) {
-    console.error("GitHub workflow dispatch failed:", {
-      status: response.status,
-      repository: githubRepo,
-      workflow: githubWorkflow,
-      detail: responseText.slice(0, 1500),
-    });
-    return false;
-  }
-
-  console.log("GitHub workflow dispatched:", {
-    status: response.status,
-    repository: githubRepo,
-    workflow: githubWorkflow,
-  });
-  return true;
-}
-// ★★★ نهاية جزء الإرسال ★★★
-
-async function finalizeAndTrigger(env, botToken, githubToken, githubRepo, githubWorkflow, chatId, session) {
-  const success = await triggerGitHub(githubToken, githubRepo, githubWorkflow, session, chatId);
-  if (success) {
-    if (session.auto_advance_episode) {
-      const preset = await getPreset(env, chatId);
-      if (preset?.auto_naming === "series" && Number.isInteger(preset.next_episode)) {
-        preset.next_episode += 1;
-        await setPreset(env, chatId, preset);
-      }
-    }
-    await sendMessage(botToken, chatId, "✅ تم إرسال المهمة إلى مصنع الضغط السحابي.");
-  } else {
-    await sendMessage(botToken, chatId, "❌ فشل إرسال المهمة إلى GitHub. تحقق من سجل العامل ورمز GitHub." );
-  }
-  await deleteSession(env, chatId);
+async function validSession(env, token) {
+  if (!token) return false;
+  const row = await env.DB.prepare('SELECT expires_at FROM sessions WHERE token = ?').bind(token).first();
+  return !!row && row.expires_at > Date.now();
 }
 
-function extractDefaultName(message) {
-  const name = message.caption || message.document?.file_name || message.video?.file_name || null;
-  if (!name) return null;
-  return name.replace(/\.[^/.]+$/, "").replace(/[\\/:*?"<>|]/g, " ").trim();
+async function getMemory(env, chatId) {
+  if (!chatId) return json({ error: 'chatId مطلوب' }, 400);
+  const row = await env.DB.prepare('SELECT content, updated_at FROM project_memory WHERE chat_id = ?').bind(chatId).first();
+  return json({ content: row?.content || '', updatedAt: row?.updated_at || null });
 }
 
-async function promptFilename(botToken, chatId, editMessageId, defaultName, useEdit) {
-  const text = defaultName
-    ? `الاسم المرفق: ${defaultName}\n\nأرسل اسماً جديداً، أو اضغط «✅ استخدام الاسم المرفق».`
-    : "أرسل الاسم النهائي للملف:";
-  const keyboard = defaultName
-    ? { inline_keyboard: [[{ text: "✅ استخدام الاسم المرفق", callback_data: "name_skip" }]] }
-    : null;
-
-  if (useEdit && editMessageId) {
-    await editMessage(botToken, chatId, editMessageId, text, keyboard);
-  } else {
-    await sendMessage(botToken, chatId, text, keyboard);
-  }
+async function saveMemory(env, chatId, content) {
+  if (!chatId) return json({ error: 'chatId مطلوب' }, 400);
+  const now = Date.now();
+  await env.DB.prepare('INSERT INTO project_memory (chat_id, content, updated_at) VALUES (?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET content = ?, updated_at = ?').bind(chatId, content, now, content, now).run();
+  return json({ success: true, content });
 }
 
-async function sendCodecKeyboard(botToken, chatId) {
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: "⚡ AV1", callback_data: "codec_av1" },
-        { text: "🧪 H.266 / VVC", callback_data: "codec_vvc" },
-      ],
-      [{ text: "🎵 صوت فقط", callback_data: "codec_audio" }],
-      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-    ],
-  };
-  await sendMessage(botToken, chatId, "⚙️ اختر المرمّز أو استخراج الصوت:", keyboard);
+async function chat(env, body) {
+  if (!body.chatId || !Array.isArray(body.messages) || !body.messages.length) return json({ error: 'chatId والرسائل مطلوبان' }, 400);
+  const selected = getModel(body.model || body.provider);
+  const context = await loadContext(env, body.chatId, body.messages);
+  const messages = [{ role: 'system', content: systemPrompt(context.memory) + '\n\n' + agentPolicy() }, ...context.recent];
+  const answer = await complete(env, selected.id, messages, { maxTokens: 4096 });
+  const last = context.recent.filter(m => m.role === 'user').at(-1)?.content || '';
+  let memory = context.memory;
+  try { memory = await refreshMemory(env, body.chatId, context.memory, last, answer, (m, o) => complete(env, selected.id, m, o)); } catch (e) { console.error('context refresh', e); }
+  return json({ response: answer, model: selected, memory, pendingExecution: detectProposedCommand(answer), trace: { provider: selected.provider, model: selected.model, contextMessages: context.recent.length, memoryUpdated: memory !== context.memory } });
 }
 
-async function sendEncodeModeKeyboard(botToken, chatId) {
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "🛠️ مع فلاتر", callback_data: "mode_filters" }],
-      [{ text: "✨ بدون فلاتر", callback_data: "mode_nofilters" }],
-      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-    ],
-  };
-  await sendMessage(botToken, chatId, "🖼️ اختر وضع الصورة:", keyboard);
+async function planTask(env, body) {
+  if (!body.chatId || !body.task) return json({ error: 'chatId و task مطلوبان' }, 400);
+  const context = await loadContext(env, body.chatId, []);
+  const plan = await createPlan(env, body.model || body.provider, body.task, context.memory);
+  await saveRun(env, body.chatId, plan);
+  return json({ plan });
 }
 
-function filterProfileKeyboardMarkup() {
-  return {
-    inline_keyboard: [
-      [{ text: "🌸 أنمي", callback_data: "filter_anime" }],
-      [{ text: "🎬 محتوى واقعي", callback_data: "filter_realistic" }],
-      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-    ],
-  };
+async function receiveResult(env, request) {
+  const raw = await request.text();
+  const signature = (request.headers.get('X-FOX-Signature') || '').replace('sha256=', '');
+  if (!env.HMAC_SECRET || !(await verifyHmac(raw, signature, env.HMAC_SECRET))) return json({ error: 'توقيع النتيجة غير صالح' }, 403);
+  const body = JSON.parse(raw);
+  if (!body.experimentId) return json({ error: 'experimentId مطلوب' }, 400);
+  await env.DB.prepare('UPDATE experiments SET status = ?, output = ?, exit_code = ?, updated_at = ? WHERE id = ?').bind(body.exit_code === 0 ? 'completed' : 'failed', body.output || '', body.exit_code ?? 1, Date.now(), body.experimentId).run();
+  return json({ success: true, experimentId: body.experimentId });
 }
 
-async function sendEncodeMethodKeyboard(botToken, chatId, codec) {
-  const text = codec === "vvc" ? "🎛️ اختر طريقة ترميز H.266 / VVC:" : "🎛️ اختر طريقة ترميز AV1:";
-  await sendMessage(botToken, chatId, text, encodeMethodKeyboardMarkup(codec));
+async function verifyHmac(text, expected, secret) {
+  if (!expected) return false;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(text));
+  const actual = Array.from(new Uint8Array(sig)).map(x => x.toString(16).padStart(2, '0')).join('');
+  return actual.length === expected.length && actual.split('').every((x, i) => x === expected[i]);
 }
 
-function encodeMethodKeyboardMarkup(codec) {
-  if (codec === "vvc") {
-    return {
-      inline_keyboard: [
-        [{ text: "🎚️ جودة ثابتة (QP)", callback_data: "encmethod_qp" }],
-        [{ text: "📊 معدل بت (VBR)", callback_data: "encmethod_vbr" }],
-        [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-      ],
-    };
-  }
-  return {
-    inline_keyboard: [
-      [{ text: "🎚️ ضغط ذكي (CRF)", callback_data: "encmethod_crf" }],
-      [{ text: "⚖️ حجم مضبوط (Two-Pass)", callback_data: "encmethod_twopass" }],
-      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-    ],
-  };
+async function ensureAgentSchema(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS agent_runs (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, goal TEXT NOT NULL, plan_json TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)').run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_agent_runs_chat ON agent_runs(chat_id, updated_at DESC)').run();
 }
 
-async function sendAutoNamingKeyboard(botToken, chatId) {
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "📄 الاحتفاظ باسم كل فيديو", callback_data: "autoname_keep" }],
-      [{ text: "📺 اسم مسلسل + عداد حلقات", callback_data: "autoname_series" }],
-      [{ text: "🚫 إلغاء", callback_data: "cancel" }],
-    ],
-  };
-  await sendMessage(
-    botToken,
-    chatId,
-    "🏷️ اختر التسمية التلقائية للوضع التلقائي:\n\n📄 الاحتفاظ بالاسم: يستعمل اسم الفيديو المرفق.\n📺 مسلسل: تسمي كل نتيجة مثل: اسم السلسلة - E01 ثم E02.",
-    keyboard,
-  );
-}
-
-async function sendQualityKeyboard(botToken, chatId, resolutions) {
-  const rows = [];
-  for (let index = 0; index < resolutions.length; index += 2) {
-    rows.push(
-      resolutions.slice(index, index + 2).map((resolution) => ({
-        text: `${resolution}p`,
-        callback_data: `res_${resolution}`,
-      })),
-    );
-  }
-  rows.push([{ text: "✏️ دقة مخصصة", callback_data: "custom_res" }]);
-  await sendMessage(botToken, chatId, "🎯 اختر الدقة النهائية:", { inline_keyboard: rows });
-}
-
-async function sendTelegram(botToken, method, body) {
-  const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    console.error(`Telegram ${method} failed:`, response.status, await response.text());
-  }
-}
-
-async function sendMessage(botToken, chatId, text, keyboard = null) {
-  const body = { chat_id: chatId, text };
-  if (keyboard) body.reply_markup = keyboard;
-  await sendTelegram(botToken, "sendMessage", body);
-}
-
-async function editMessage(botToken, chatId, messageId, text, keyboard = null) {
-  const body = { chat_id: chatId, message_id: messageId, text };
-  if (keyboard) body.reply_markup = keyboard;
-  await sendTelegram(botToken, "editMessageText", body);
-}
-
-async function answerCallback(botToken, callbackQueryId) {
-  await sendTelegram(botToken, "answerCallbackQuery", { callback_query_id: callbackQueryId });
-}
+export class ExperimentState { constructor(state) { this.state = state; } async fetch() { return json({ error: 'Execution service is isolated from the agent core' }, 501); } }
