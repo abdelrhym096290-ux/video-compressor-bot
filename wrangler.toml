@@ -27,4 +27,5 @@ binding = "ASSETS"
 enabled = true
 head_sampling_rate = 1
 
-# Large binary files use GitHub Release Assets when GITHUB_TOKEN and GITHUB_ASSET_REPO/GITHUB_REPO are configured; D1 stores metadata and search text.
+[build]
+command = "npx wrangler deploy"
