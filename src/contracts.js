@@ -1,6 +1,6 @@
-export const TASK_STATUS = Object.freeze(['received','clarifying','planning','awaiting_approval','running','verifying','recovering','paused','completed','failed','cancelled']);
+export const TASK_STATUS = Object.freeze(['received','submitted','clarifying','planning','awaiting_approval','waiting_for_input','running','verifying','producing','recovering','paused','completed','failed','cancelled']);
 export const STEP_STATUS = Object.freeze(['pending','running','awaiting_approval','verifying','completed','failed','retrying','cancelled']);
-export const EVENT_TYPES = Object.freeze(['task_received','plan_created','approval_requested','approval_granted','step_started','tool_requested','tool_completed','verification_passed','verification_failed','context_updated','model_called','task_paused','task_completed','task_failed']);
+export const EVENT_TYPES = Object.freeze(['task_received','task_submitted','plan_created','approval_requested','approval_granted','step_started','tool_requested','tool_completed','verification_passed','verification_failed','context_updated','model_called','user_intervention','task_paused','task_completed','task_failed']);
 export const ROLES = Object.freeze(['system','user','assistant','tool']);
 export function id(prefix='id'){ return `${prefix}_${crypto.randomUUID()}`; }
 export function now(){ return Date.now(); }
