@@ -26,6 +26,3 @@ binding = "ASSETS"
 [observability]
 enabled = true
 head_sampling_rate = 1
-
-[build]
-command = "npx wrangler deploy"
