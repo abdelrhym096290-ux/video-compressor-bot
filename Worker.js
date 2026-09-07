@@ -146,7 +146,6 @@ async function receiveToolResult(env, request) {
     if (tr && tr.plan_json) {
       const task = JSON.parse(tr.task_json);
       const plan = JSON.parse(tr.plan_json);
-      const finished = plan.steps.find(x => x.id === row.step_id);
       const rest = plan.steps.filter(x => x.id !== row.step_id && x.status === 'pending');
       const next = rest[0];
       const nextSteps = plan.steps.map(x => 
@@ -430,7 +429,6 @@ async function memory(env, b) {
 async function messages(env, b) {
   if (!b.chatId) return json({error:'chatId مطلوب'}, 400);
   
-  // Return full file data including data_url, storage, asset_id
   const files = await env.DB.prepare('SELECT id, name, mime, size, data_url, storage, asset_id, asset_url, content_text, created_at FROM conversation_files WHERE chat_id=? ORDER BY created_at DESC').bind(b.chatId).all();
   
   return json({
@@ -533,7 +531,8 @@ async function downloadFile(env, b) {
     status: 200,
     headers: {
       'content-type': r.headers.get('content-type') || 'application/octet-stream',
-      'cache-control': 'private, max-age=3600'
+      'cache-control': 'private, max-age=3600',
+      ...CORS
     }
   });
 }
@@ -593,10 +592,8 @@ export default {
       return receiveToolResult(env, request);
     }
     
+    // API only - no static file serving
     if (request.method === 'GET') {
-      if ((pathname === '/' || pathname === '/index.html') && env.ASSETS) {
-        return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
-      }
       return json({name:'FOX AI', status:'ready', version:'3.0.0'});
     }
     
