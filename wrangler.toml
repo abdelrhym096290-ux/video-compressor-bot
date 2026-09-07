@@ -27,4 +27,4 @@ binding = "ASSETS"
 enabled = true
 head_sampling_rate = 1
 
-# R2 is intentionally disabled for now; the Worker falls back to D1 metadata/text storage.
+# Large binary files use GitHub Release Assets when GITHUB_TOKEN and GITHUB_ASSET_REPO/GITHUB_REPO are configured; D1 stores metadata and search text.
