@@ -5,22 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>FOX AI</title>
 <style>
-:root{--bg:#0a0a0f;--surface:#12121a;--surface2:#1c1c26;--surface3:#2c2c30;--line:#282836;--line2:#383848;--ink:#f0f0f8;--muted:#9090a4;--faint:#606074;--radius:16px;--radius-sm:12px;--shadow:0 8px 30px rgba(0,0,0,.5);--font:'Segoe UI','Tahoma','Arial',system-ui,sans-serif;--accent:#e06442;--accent2:#f28561;--accent3:#b6452e;--accent-bg:rgba(224,100,66,.1);--green:#27ae60;--red:#e74c3c}
-[data-theme="light"]{--bg:#f2f2f7;--surface:#fff;--surface2:#f0f0f5;--surface3:#e5e5ea;--line:#e0e0e8;--line2:#d0d0d8;--ink:#1a1a2a;--muted:#606074;--faint:#9090a4}
+/* ============ المتغيرات ============ */
+:root{
+  --bg:#0a0a0f;--surface:#12121a;--surface2:#1c1c26;--surface3:#2c2c30;
+  --line:#282836;--line2:#383848;--ink:#f0f0f8;--muted:#9090a4;--faint:#606074;
+  --radius:16px;--radius-sm:12px;--shadow:0 8px 30px rgba(0,0,0,.5);
+  --font:'Segoe UI','Tahoma','Arial',system-ui,sans-serif;
+  --accent:#e06442;--accent2:#f28561;--accent3:#b6452e;--accent-bg:rgba(224,100,66,.1);
+}
+[data-theme="light"]{
+  --bg:#f2f2f7;--surface:#fff;--surface2:#f0f0f5;--surface3:#e5e5ea;
+  --line:#e0e0e8;--line2:#d0d0d8;--ink:#1a1a2a;--muted:#606074;--faint:#9090a4;
+}
 [data-accent="orange"]{--accent:#e06442;--accent2:#f28561;--accent3:#b6452e}
 [data-accent="blue"]{--accent:#3498db;--accent2:#5dade2;--accent3:#217dbb}
 [data-accent="green"]{--accent:#27ae60;--accent2:#2ecc71;--accent3:#1e8449}
 [data-accent="red"]{--accent:#e74c3c;--accent2:#ec7063;--accent3:#b03a2e}
+
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font:14px/1.7 var(--font)}
 button,input,textarea{font:inherit;color:inherit;border:0;background:none;outline:none}
 button{cursor:pointer}textarea{resize:none}
 ::-webkit-scrollbar{display:none}
 .app{max-width:430px;margin:0 auto;height:100dvh;display:flex;flex-direction:column;position:relative;border-inline:1px solid var(--line);background:var(--bg)}
+
+/* ============ الأيقونات ============ */
 svg{display:inline-block;vertical-align:middle;fill:currentColor;width:20px;height:20px}
-.icon-btn{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:.2s;flex-shrink:0;color:var(--ink)}
+.icon-btn{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:.2s;flex-shrink:0;color:var(--ink)}
 .icon-btn:active{background:var(--surface2)}
 .icon-btn svg{width:20px;height:20px}
+
+/* ============ الشريط العلوي ============ */
 .top-nav{display:flex;align-items:center;gap:6px;padding:8px 12px;min-height:56px;flex-shrink:0;position:relative;z-index:40;border-bottom:1px solid var(--line)}
 .tn-side{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .tn-center{flex:1;display:flex;align-items:center;justify-content:center}
@@ -30,6 +45,8 @@ svg{display:inline-block;vertical-align:middle;fill:currentColor;width:20px;heig
 .toggle-wrap{display:flex;align-items:center;gap:2px;background:var(--surface2);border-radius:20px;padding:3px}
 .toggle-wrap button{height:28px;border-radius:15px;padding:0 14px;font-size:12px;font-weight:700;color:var(--muted)}
 .toggle-wrap button.active{background:var(--accent);color:#fff}
+
+/* ============ المحتوى ============ */
 .content{flex:1;overflow-y:auto;padding:14px 16px;scroll-behavior:smooth}
 .shortcuts-row{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;margin:2px 0 20px}
 .shortcut-card{flex:0 0 auto;width:80px;height:85px;background:var(--surface);border-radius:var(--radius);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;transition:.15s;border:1px solid var(--line)}
@@ -37,15 +54,19 @@ svg{display:inline-block;vertical-align:middle;fill:currentColor;width:20px;heig
 .shortcut-card svg{width:22px;height:22px;fill:var(--accent)}
 .shortcut-card span{font-size:11px;font-weight:600}
 .recent-title{font-size:12px;font-weight:600;color:var(--faint);margin:4px 0 10px;text-align:right}
+
+/* ============ صفوف المحادثات ============ */
 .chat-row{display:flex;align-items:center;gap:10px;padding:12px 4px;border-bottom:1px solid var(--line);position:relative}
 .chat-row:last-child{border-bottom:0}
 .chat-row-main{flex:1;display:flex;align-items:center;gap:10px;cursor:pointer;overflow:hidden}
 .chat-row-main svg{width:18px;height:18px;fill:var(--accent);flex-shrink:0}
 .chat-row-main span{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-row-options{position:relative;flex-shrink:0}
-.more-btn{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+.more-btn{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center}
 .more-btn:active{background:var(--surface2)}
 .more-btn svg{width:18px;height:18px;fill:var(--muted)}
+
+/* ============ الرسائل ============ */
 .message{margin-bottom:14px;display:flex;flex-direction:column;position:relative}
 .message.user{align-items:flex-start}
 .message.agent{align-items:flex-end}
@@ -55,56 +76,23 @@ svg{display:inline-block;vertical-align:middle;fill:currentColor;width:20px;heig
 .bubble{padding:12px 16px;border-radius:18px;font-size:13.5px;line-height:1.6;word-break:break-word;flex:1;user-select:text;-webkit-user-select:text}
 .message.user .bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
 .message.agent .bubble{background:var(--surface);border:1px solid var(--line);border-bottom-left-radius:4px}
-.msg-options-btn{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:8px}
+.msg-options-btn{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
 .msg-options-btn svg{width:14px;height:14px;fill:var(--muted)}
-.tool-approval{display:flex;gap:6px;margin-top:8px}
-.tool-approval button{flex:1;padding:8px;border-radius:8px;font-size:11px;font-weight:600}
-.tool-approval .approve{background:var(--green);color:#fff}
-.tool-approval .reject{background:var(--red);color:#fff}
+
+/* ============ شريط الإدخال ============ */
 .composer-wrap{display:none;padding:8px 10px 12px;flex-shrink:0;border-top:1px solid var(--line)}
 .composer-wrap.visible{display:block}
 .composer-card{background:var(--surface);border-radius:24px;padding:8px 6px 6px;border:1px solid var(--line)}
 .composer-input{width:100%;padding:6px 12px;font-size:14px;min-height:24px;max-height:100px;text-align:right;direction:rtl}
 .composer-toolbar{display:flex;align-items:center;justify-content:space-between;padding:0 4px}
 .composer-cluster{display:flex;align-items:center;gap:2px}
-.composer-toolbar button{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+.composer-toolbar button{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center}
 .composer-toolbar button:active{background:var(--surface2)}
 .composer-toolbar svg{width:20px;height:20px;fill:var(--muted)}
 .btn-send-active{background:var(--accent)!important}
 .btn-send-active svg{fill:#fff!important}
-.agent-panel{background:var(--surface);border-radius:var(--radius);border:1px solid var(--line);padding:16px;margin-bottom:10px}
-.agent-panel h3{font-size:13px;font-weight:700;margin-bottom:8px;color:var(--accent)}
-.step-item{display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;background:var(--surface2);margin-bottom:6px;font-size:12px}
-.step-item .step-status{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
-.step-status.completed{background:rgba(39,174,96,.2);color:var(--green)}
-.step-status.running{background:var(--accent-bg);color:var(--accent)}
-.step-status.pending{background:var(--surface3);color:var(--muted)}
-.step-item .step-info{flex:1;min-width:0}
-.step-item .step-info b{display:block;font-size:12px}
-.step-item .step-info small{color:var(--muted);font-size:11px}
-.step-actions{display:flex;gap:4px;flex-shrink:0}
-.step-actions button{width:24px;height:24px;border-radius:6px;background:var(--surface3);font-size:10px;display:flex;align-items:center;justify-content:center}
-.task-controls{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
-.task-controls button{flex:1;padding:8px;border-radius:8px;background:var(--surface2);font-size:11px;font-weight:600}
-.task-controls button.primary{background:var(--accent);color:#fff}
-.task-controls button.danger{background:rgba(231,76,60,.2);color:var(--red)}
-.workspace-section{margin-bottom:10px}
-.workspace-files{background:var(--surface);border-radius:var(--radius);border:1px solid var(--line);padding:12px}
-.workspace-files h4{font-size:12px;font-weight:700;margin-bottom:8px;color:var(--accent)}
-.file-item{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:11px;cursor:pointer}
-.file-item:last-child{border-bottom:0}
-.file-item svg{width:14px;height:14px;fill:var(--muted);flex-shrink:0}
-.file-item span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.file-item small{color:var(--faint);flex-shrink:0}
-.experiment-log{background:var(--surface);border-radius:var(--radius);border:1px solid var(--line);padding:12px}
-.experiment-log h4{font-size:12px;font-weight:700;margin-bottom:8px;color:var(--accent)}
-.exp-item{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:11px}
-.exp-item:last-child{border-bottom:0}
-.exp-status{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.exp-status.completed{background:var(--green)}
-.exp-status.running{background:var(--accent)}
-.exp-status.failed{background:var(--red)}
-.exp-status.cancelled{background:var(--muted)}
+
+/* ============ شاشة Agent ============ */
 .agent-profile{text-align:center;padding:20px;background:var(--surface);border-radius:var(--radius);border:1px solid var(--line);margin-bottom:16px}
 .agent-avatar{width:80px;height:80px;border-radius:50%;background:var(--accent-bg);display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
 .agent-avatar svg{width:40px;height:40px;fill:var(--accent)}
@@ -117,6 +105,8 @@ svg{display:inline-block;vertical-align:middle;fill:currentColor;width:20px;heig
 .memory-item{display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;background:var(--surface2);margin-bottom:6px;font-size:12px;position:relative}
 .memory-item svg{width:14px;height:14px;fill:var(--accent);flex-shrink:0}
 .memory-item .memory-options{margin-right:auto;position:relative}
+
+/* ============ الإعدادات ============ */
 .plan-card{background:var(--surface);border-radius:var(--radius);padding:16px;margin-bottom:10px;border:1px solid var(--line)}
 .plan-top{display:flex;align-items:center;justify-content:space-between}
 .plan-plan{font-size:18px;font-weight:800;color:var(--accent)}
@@ -129,35 +119,143 @@ svg{display:inline-block;vertical-align:middle;fill:currentColor;width:20px;heig
 .s-label{flex:1;text-align:right;font-size:13px;font-weight:500}
 .s-value{font-size:11px;color:var(--faint)}
 .s-chevron{width:16px;height:16px;fill:var(--faint);flex-shrink:0;transform:scaleX(-1)}
+
+/* ============ زر الإضافة ============ */
 .fab{position:absolute;bottom:20px;left:16px;width:56px;height:56px;border-radius:50%;background:var(--accent);box-shadow:0 4px 18px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:50;transition:.2s}
 .fab:active{transform:scale(.9)}
 .fab svg{width:28px;height:28px;fill:#fff}
 .fab.hidden{display:none}
+
+/* ============ القوائم المنسدلة - محسنة ============ */
 .dd-backdrop{position:fixed;inset:0;z-index:999;display:none;background:rgba(0,0,0,.3)}
 .dd-backdrop.open{display:block}
-.dropdown-panel{position:fixed;background:var(--surface2);border-radius:16px;padding:6px;box-shadow:0 8px 30px rgba(0,0,0,.5);z-index:1000;min-width:200px;max-width:220px;display:none;border:1px solid var(--line);overflow-y:auto;max-height:60vh}
-.dropdown-panel.open{display:block;animation:ddIn .2s ease}
-@keyframes ddIn{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}
-.dd-item{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:10px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
-.dd-item:active{background:var(--surface3)}
-.dd-item svg{width:16px;height:16px;fill:var(--accent);flex-shrink:0}
-.dd-item.danger{color:#e74c3c}
-.dd-item.danger svg{fill:#e74c3c}
-.dd-divider{height:1px;background:var(--line2);margin:4px 6px}
+.dropdown-panel{
+  position:fixed;
+  background:var(--surface2);
+  border-radius:16px;
+  padding:6px;
+  box-shadow:0 8px 30px rgba(0,0,0,.5);
+  z-index:1000;
+  min-width:200px;
+  max-width:220px;
+  display:none;
+  border:1px solid var(--line);
+  overflow-y:auto;
+  max-height:60vh;
+}
+.dropdown-panel.open{
+  display:block;
+  animation:ddIn .2s ease;
+}
+@keyframes ddIn{
+  from{opacity:0;transform:scale(.95)}
+  to{opacity:1;transform:scale(1)}
+}
+.dd-item{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:11px 12px;
+  border-radius:10px;
+  font-size:13px;
+  font-weight:500;
+  cursor:pointer;
+  white-space:nowrap;
+}
+.dd-item:active{
+  background:var(--surface3);
+}
+.dd-item svg{
+  width:16px;
+  height:16px;
+  fill:var(--accent);
+  flex-shrink:0;
+}
+.dd-item.danger{
+  color:#e74c3c;
+}
+.dd-item.danger svg{
+  fill:#e74c3c;
+}
+.dd-divider{
+  height:1px;
+  background:var(--line2);
+  margin:4px 6px;
+}
+
+/* ============ الألوان ============ */
 .color-dots{display:flex;gap:12px;justify-content:center;margin:15px 0}
 .color-dot{width:32px;height:32px;border-radius:50%;cursor:pointer;border:3px solid transparent}
 .color-dot.active{border-color:var(--ink)}
 .color-dot.orange{background:#e06442}.color-dot.blue{background:#3498db}
 .color-dot.green{background:#27ae60}.color-dot.red{background:#e74c3c}
+
+/* ============ Toast ============ */
 .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:var(--surface3);color:var(--ink);padding:10px 20px;border-radius:16px;font-size:12px;font-weight:600;z-index:3000;box-shadow:var(--shadow);max-width:80%;text-align:center}
 .from-footer{text-align:center;color:var(--faint);font-size:12px;margin-top:20px}
-@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.7)}}
-.task-filters{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px;padding-bottom:4px}
-.longpress-menu{position:fixed;z-index:3000;background:var(--surface2);border-radius:12px;padding:6px;box-shadow:var(--shadow);display:none;border:1px solid var(--line)}
-.longpress-menu.open{display:block;animation:ddIn .15s ease}
-.longpress-menu button{display:flex;align-items:center;gap:8px;width:100%;padding:10px 14px;border-radius:8px;font-size:12px;font-weight:500;cursor:pointer;background:none;border:0;color:var(--ink)}
-.longpress-menu button:active{background:var(--surface3)}
-.longpress-menu button svg{width:14px;height:14px;fill:var(--accent)}
+
+/* ============ تفاصيل المهمة ============ */
+.task-goal-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px}
+.task-goal-card b{font-size:13px}
+.task-goal-card .status-line{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px;margin-top:4px}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex-shrink:0}
+.status-dot.running{background:var(--accent);animation:pulse2 1.4s infinite}
+.status-dot.finished{background:#2ecc71}
+.status-dot.failed{background:#e74c3c}
+@keyframes pulse2{0%,100%{opacity:1}50%{opacity:.4}}
+.step-row{display:flex;gap:8px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px}
+.step-row:last-child{border:0}
+.step-dot{width:18px;height:18px;border-radius:50%;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;margin-top:1px;font-weight:700}
+.step-row.done .step-dot{background:rgba(46,204,113,.18);color:#2ecc71}
+.step-row.run .step-dot{background:var(--accent-bg);color:var(--accent);animation:pulse2 1.3s infinite}
+.step-row.await .step-dot{background:rgba(243,156,18,.2);color:#f39c12}
+.step-row.fail .step-dot{background:rgba(231,76,60,.15);color:#e74c3c}
+.step-title{font-weight:700;font-size:12px}
+.step-sub{font-size:10px;color:var(--faint);margin-top:1px}
+.terminal-box{background:#000;border:1px solid var(--line2);border-radius:var(--radius-sm);padding:10px;margin:8px 0;font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:10.5px;color:#7ee787;max-height:200px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}
+.terminal-box .cursor{display:inline-block;width:6px;height:11px;background:#7ee787;animation:blink2 1s step-end infinite;vertical-align:middle;margin-right:2px}
+.terminal-meta{display:flex;justify-content:space-between;font-size:9px;color:var(--faint);margin-top:6px}
+@keyframes blink2{0%,50%{opacity:1}51%,100%{opacity:0}}
+.approval-box{background:rgba(243,156,18,.1);border:1px solid #f39c12;border-radius:var(--radius-sm);padding:11px;margin:8px 0;font-size:12px}
+.approval-box .row{display:flex;gap:6px;margin-top:8px}
+.approval-box .row button{flex:1;border-radius:10px;padding:11px;font-weight:700;font-size:12px}
+.approval-box .approve{background:#2ecc71;color:#fff}
+.approval-box .reject{background:var(--surface2);color:var(--ink)}
+.task-controls{display:flex;gap:6px;margin:10px 0;flex-wrap:wrap}
+.task-controls button{flex:1;min-width:70px;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:11px;font-size:11px;font-weight:600;color:var(--ink)}
+.task-controls button.danger{color:#e74c3c}
+.task-controls button.primary{background:var(--accent);color:#fff;border-color:var(--accent3)}
+.steer-row{display:flex;gap:6px;margin-top:6px}
+.steer-row input{flex:1;background:var(--surface2);border:1px solid var(--line);border-radius:20px;padding:10px 14px;font-size:12px;color:var(--ink)}
+.steer-row button{background:var(--accent);color:#fff;border-radius:50%;width:38px;height:38px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.result-box{background:rgba(46,204,113,.1);border:1px solid #2ecc71;border-radius:var(--radius-sm);padding:11px;margin:8px 0;font-size:12px}
+.result-box button{margin-top:8px;background:#2ecc71;color:#fff;border-radius:10px;padding:10px 12px;font-weight:700;width:100%}
+.event-card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px;margin-bottom:6px;font-size:11px;cursor:pointer}
+.event-card .ev-head{display:flex;justify-content:space-between;color:var(--muted)}
+.event-card pre{margin-top:6px;font-size:10px;color:var(--faint);white-space:pre-wrap;overflow-wrap:anywhere;max-height:120px;overflow:auto;display:none}
+.event-card.open pre{display:block}
+.agent-activity{display:flex;align-items:center;gap:8px;padding:11px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);font-size:11px;color:var(--muted);margin-bottom:8px}
+.agent-activity svg{width:16px;height:16px;animation:spin2 1s linear infinite;fill:var(--accent);flex-shrink:0}
+@keyframes spin2{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+.file-card{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:6px;font-size:11px}
+.file-card svg{width:18px;fill:var(--accent);flex-shrink:0}
+.file-card .fc-info{flex:1;overflow:hidden}
+.file-card .fc-info b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.file-card .fc-info small{color:var(--faint)}
+.search-result{padding:9px 0;border-bottom:1px solid var(--line);font-size:12px;cursor:pointer}
+.search-result small{display:block;color:var(--faint);margin-top:2px}
+.settings-real{display:flex;align-items:center;gap:8px;padding:11px 0;border-bottom:1px solid var(--line)}
+.settings-real:last-child{border:0}
+.settings-real select,.settings-real input[type=text]{flex:1;background:var(--surface2);border-radius:8px;padding:8px;font-size:12px;color:var(--ink);text-align:right}
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1990;display:none}
+.modal-backdrop.open{display:block}
+.modal-sheet{position:fixed;left:0;right:0;bottom:0;max-width:430px;margin:0 auto;background:var(--surface);border-radius:18px 18px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));z-index:2000;display:none;max-height:75dvh;overflow-y:auto}
+.modal-sheet.open{display:block;animation:slideUp2 .25s ease-out}
+@keyframes slideUp2{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.modal-sheet h3{font-size:15px;margin-bottom:6px;text-align:center}
+.typing-dots{letter-spacing:2px;animation:typingPulse 1.2s infinite;display:inline-block}
+@keyframes typingPulse{0%,100%{opacity:.3}50%{opacity:1}}
+
 </style>
 </head>
 <body>
@@ -172,7 +270,6 @@ svg{display:inline-block;vertical-align:middle;fill:currentColor;width:20px;heig
         <div class="composer-cluster">
           <button id="micBtn" title="ميكروفون"></button>
           <button id="attachBtn" title="مرفقات"></button>
-          <button id="planBtn" title="إنشاء خطة"></button>
         </div>
         <div class="composer-cluster">
           <button id="sendBtn" title="إرسال"></button>
@@ -184,123 +281,898 @@ svg{display:inline-block;vertical-align:middle;fill:currentColor;width:20px;heig
 <input type="file" id="fileInput" hidden multiple />
 <div class="dd-backdrop" id="ddBackdrop"></div>
 <div class="dropdown-panel" id="dropdownPanel"></div>
-<div class="longpress-menu" id="longpressMenu"></div>
+<div class="modal-backdrop" id="modalBackdrop"></div>
+<div class="modal-sheet" id="modalSheet"></div>
 
 <script>
 'use strict';
-const API_URL='https://fox1-ai.abdelrhym096290.workers.dev';
-let pendingAttachments=[],activeTaskId=null,activePlan=null,pendingTool=null,taskFilter='all',longpressTimer=null;
-function readDataUrl(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file)})}
-async function api(payload){let token=localStorage.getItem('foxToken')||'';let r=await fetch(API_URL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload,sessionToken:token})});if(r.status===401){const pw=prompt('أدخل كلمة مرور FOX AI');if(!pw)throw Error('يلزم تسجيل الدخول');const lr=await fetch(API_URL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',accessPassword:pw})});const ld=await lr.json();if(!lr.ok||!ld.token)throw Error(ld.error||'فشل تسجيل الدخول');localStorage.setItem('foxToken',ld.token);r=await fetch(API_URL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload,sessionToken:ld.token})})}return r}
-const FALLBACK_MODELS=[{id:'cerebras-gemma-4-31b',name:'Gemma 4 31B',company:'Cerebras',description:'استدلال سريع'},{id:'gemini-5-flash',name:'Flash 5',company:'Google',description:'محادثة عامة'},{id:'cf-qwen3-coder',name:'Qwen 3.8 Coder',company:'Cloudflare',description:'برمجة'}];
-let availableModels=[];
-async function loadModels(){try{const r=await fetch(API_URL,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'models'})});const d=await r.json();if(d.models?.length){availableModels=d.models.map(x=>({...x,description:x.description||'نموذج متاح'}))}}catch{}if(!availableModels.length)availableModels=FALLBACK_MODELS}
-async function loadActiveTask(){const savedTaskId=localStorage.getItem('foxTaskId');if(!savedTaskId)return;try{const r=await api({action:'get_task_control',taskId:savedTaskId});if(r.ok){const d=await r.json();activeTaskId=savedTaskId;activePlan=d.plan||null}}catch{}}
-const SVG={search:'<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>',user:'<svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>',chevronDown:'<svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>',chevronR:'<svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>',star:'<svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>',folder:'<svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>',library:'<svg viewBox="0 0 24 24"><path d="M4 4h3v16H4zM9 4h3v16H9zM15 4.7l3 15.6-2.9.6L12 5.3z"/></svg>',clock:'<svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/></svg>',spark:'<svg viewBox="0 0 24 24"><path d="M12 2l1.6 5.8L19 9l-5.4 1.2L12 16l-1.6-5.8L5 9l5.4-1.2z"/></svg>',arrowUp:'<svg viewBox="0 0 24 24"><path d="M12 4l-8 8h6v8h4v-8h6z"/></svg>',mic:'<svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>',attach:'<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>',plus:'<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>',ai:'<svg viewBox="0 0 24 24"><path d="M12 2l1.6 5.8L19 9l-5.4 1.2L12 16l-1.6-5.8L5 9l5.4-1.2z"/></svg>',robot:'<svg viewBox="0 0 24 24"><path d="M12 2a2 2 0 00-2 2v1H7a3 3 0 00-3 3v9a3 3 0 003 3h10a3 3 0 003-3v-9a3 3 0 00-3-3h-3V4a2 2 0 00-2-2zm-3 9a1.5 1.5 0 110 3 1.5 1.5 0 010-3zm6 0a1.5 1.5 0 110 3 1.5 1.5 0 010-3z"/></svg>',copy:'<svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>',moon:'<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 109 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 01-4.4 2.26 5.403 5.403 0 01-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/></svg>',more:'<svg viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>',trash:'<svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg>',pencil:'<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75z"/></svg>',file:'<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zm2 16H8V4h5v5h5z"/></svg>',share:'<svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',check:'<svg viewBox="0 0 24 24"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>',selectText:'<svg viewBox="0 0 24 24"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2zm-2 11h-6v-2h6v2zm0-4h-6V8h6v2z"/></svg>',plan:'<svg viewBox="0 0 24 24"><path d="M4 4h16v4H4zM4 10h16v4H4zM4 16h16v4H4z"/></svg>',workspace:'<svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>',events:'<svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z"/></svg>',memory:'<svg viewBox="0 0 24 24"><path d="M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z"/></svg>',intervene:'<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>',help:'<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm1 17h-2v-2h2zm2.07-7.75l-.9.92A3.4 3.4 0 0013 15h-2v-.5a3.1 3.1 0 01.9-2.2l1.24-1.26A1.7 1.7 0 0013.6 9.7a1.7 1.7 0 00-1.7-1.7 1.7 1.7 0 00-1.7 1.7H8.2a3.7 3.7 0 117.4 0 3.3 3.3 0 01-.53 1.55z"/></svg>',plug:'<svg viewBox="0 0 24 24"><path d="M16.5 6.5l1-1L19 7l-1 1zM8.5 6.5l-1-1L5 7l1 1zM13 3h-2v4h2zM7 9v3a5 5 0 0010 0V9zm5 12a3 3 0 003-3h-6a3 3 0 003 3z"/></svg>',tools:'<svg viewBox="0 0 24 24"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9z"/></svg>'};
-const S={screen:'home',mode:'tasks',chatHistory:[],messages:[],currentChatId:null,selectedModel:'FOX AI 1.6 Lite',theme:localStorage.getItem('foxTheme')||'dark',accent:localStorage.getItem('foxAccent')||'orange',workspaceData:null,searchResults:null,taskEvents:[],memoryContent:'',previewFile:null};
-const AgentState={name:null,personality:[],knowledge:[],preferences:[],interactions:[],lastUpdated:null};
-try{const saved=JSON.parse(localStorage.getItem('foxAgent')||'{}');Object.assign(AgentState,saved)}catch{}
-const $=id=>document.getElementById(id);
-const topNav=$('topNav'),contentArea=$('contentArea'),fab=$('fab'),composerWrap=$('composerWrap'),input=$('input'),sendBtn=$('sendBtn'),micBtn=$('micBtn'),attachBtn=$('attachBtn'),planBtn=$('planBtn'),ddBackdrop=$('ddBackdrop'),dropdownPanel=$('dropdownPanel'),fileInput=$('fileInput'),longpressMenu=$('longpressMenu');
-function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
-function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),2500)}
-function nav(s){closeDropdown();S.screen=s;render()}
-function goBack(){nav('home')}
-function setMode(m){S.mode=m;S.screen=m==='agent'?'agent-home':'home';render()}
-function iconBtn(svgKey,onclick){return `<button class="icon-btn" onclick="${onclick}">${SVG[svgKey]}</button>`}
-function openDropdown(x,y,items){const panelWidth=220,panelHeight=items.length*46+20,screenWidth=window.innerWidth,screenHeight=window.innerHeight,appWidth=Math.min(screenWidth,430);let leftPos=x-panelWidth+40;if(leftPos<10)leftPos=10;if(leftPos+panelWidth>appWidth-10)leftPos=appWidth-panelWidth-10;let topPos=y+10;if(topPos+panelHeight>screenHeight-10)topPos=y-panelHeight-10;if(topPos<60)topPos=60;dropdownPanel.innerHTML=items.map(it=>{if(it.divider)return'<div class="dd-divider"></div>';return`<div class="dd-item ${it.danger?'danger':''}" onclick="${it.action}">${it.icon}<span>${esc(it.label)}</span></div>`}).join('');dropdownPanel.style.position='fixed';dropdownPanel.style.top=topPos+'px';dropdownPanel.style.left=leftPos+'px';dropdownPanel.style.right='auto';dropdownPanel.style.bottom='auto';dropdownPanel.style.maxWidth=panelWidth+'px';dropdownPanel.style.width='auto';dropdownPanel.style.zIndex='1000';dropdownPanel.className='dropdown-panel open';ddBackdrop.classList.add('open')}
-function closeDropdown(){dropdownPanel.classList.remove('open');ddBackdrop.classList.remove('open')}
-function showActivityIndicator(show){let indicator=document.getElementById('activityIndicator');if(show){if(!indicator){indicator=document.createElement('div');indicator.id='activityIndicator';indicator.style.cssText='display:flex;align-items:center;gap:6px;padding:4px 10px;font-size:11px;color:var(--muted);margin-bottom:8px;';composerWrap.insertBefore(indicator,composerWrap.firstChild)}indicator.innerHTML='<span style="width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.5s ease-in-out infinite;"></span><span>الوكيل يعمل...</span>'}else{if(indicator)indicator.remove()}}
-function renderTopNav(){let left='',center='',right='';if(S.screen==='home'){right=iconBtn('user',"nav('settings')");center=`<div class="toggle-wrap"><button class="${S.mode==='agent'?'active':''}" onclick="setMode('agent')">Agent</button><button class="${S.mode==='tasks'?'active':''}" onclick="setMode('tasks')">المهام</button></div>`;left=iconBtn('search',"showSearch()")}else if(S.screen==='agent-home'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">الوكيل الشخصي</div>';left=iconBtn('more','openAgentMenu(event)')}else if(S.screen==='agent-chat'){right=iconBtn('chevronR',"S.screen='agent-home';render()");center=`<div class="nav-title">${AgentState.name||'الوكيل'}</div>`;left=iconBtn('more','openAgentMenu(event)')}else if(S.screen==='chat'){right=iconBtn('chevronR','goBack()');center=`<button class="model-pill" onclick="openModelMenu(event)"><span>${esc(S.selectedModel)}</span>${SVG.chevronDown}</button>`;left=iconBtn('more','openChatMenu(event)')}else if(S.screen==='workspace'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">مساحة العمل</div>';left=iconBtn('more','openWorkspaceMenu(event)')}else if(S.screen==='task-events'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">أحداث المهمة</div>';left=''}else if(S.screen==='memory'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">الذاكرة والسياق</div>';left=''}else if(S.screen==='search-results'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">نتائج البحث</div>';left=''}else if(S.screen==='settings'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">الإعدادات</div>';left=''}else if(S.screen==='file-preview'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">معاينة الملف</div>';left=''}else if(S.screen==='model-settings'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">النموذج الافتراضي</div>';left=''}else if(S.screen==='token-settings'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">حدود النموذج</div>';left=''}else if(S.screen==='knowledge'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">المعرفة والذاكرة</div>';left=''}else if(S.screen==='integrations'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">التكاملات</div>';left=''}else if(S.screen==='upgrade'){right=iconBtn('chevronR','goBack()');center='<div class="nav-title">الترقية</div>';left=''}else{right=iconBtn('chevronR','goBack()');const titles={library:'المكتبة',projects:'المشاريع',scheduled:'المهام المجدولة',favorites:'المفضلة'};center=`<div class="nav-title">${titles[S.screen]||''}</div>`;left=''}topNav.innerHTML=`<div class="tn-side">${right}</div><div class="tn-center">${center}</div><div class="tn-side">${left}</div>`}
-function updateComposerVisibility(){const showComposer=S.screen==='chat'||S.screen==='agent-chat';composerWrap.classList.toggle('visible',showComposer);fab.classList.toggle('hidden',S.screen!=='home');if(S.screen==='agent-chat'){input.placeholder='تحدث مع وكيلك...'}else{input.placeholder='إرسال رسالة إلى FOX AI'}planBtn.style.display=S.screen==='chat'?'flex':'none'}
-function renderComposerIcons(){sendBtn.innerHTML=SVG.arrowUp;micBtn.innerHTML=SVG.mic;attachBtn.innerHTML=SVG.attach;planBtn.innerHTML=SVG.plan}
-function updateSendBtn(){sendBtn.classList.toggle('btn-send-active',input.value.trim().length>0)}
-function showSearch(){const query=prompt('اكتب كلمة البحث:');if(query&&query.trim().length>=2){searchAll(query.trim())}else if(query){toast('اكتب كلمتين على الأقل')}}
-async function searchAll(query){try{const r=await api({action:'search_all',query:query,chatId:null});const d=await r.json();if(r.ok){S.searchResults=d;S.screen='search-results';render()}else{toast(d.error||'تعذر البحث')}}catch(e){toast(e.message)}}
-function renderSearchResults(){const d=S.searchResults||{conversations:[],messages:[],files:[]};let html=`<div class="recent-title">نتائج البحث: "${esc(d.query||'')}"</div>`;if(d.conversations?.length){html+=`<div class="recent-title">المحادثات (${d.conversations.length})</div>`;html+=d.conversations.map(c=>`<div class="chat-row"><div class="chat-row-main" onclick="openChat('${String(c.id).replace(/'/g,"\\'")}')">${SVG.ai}<span>${esc(c.title)}</span></div></div>`).join('')}if(d.messages?.length){html+=`<div class="recent-title">الرسائل (${d.messages.length})</div>`;html+=d.messages.map(m=>`<div class="chat-row"><div class="chat-row-main" onclick="openChat('${String(m.chat_id).replace(/'/g,"\\'")}')">${m.role==='user'?SVG.user:SVG.robot}<span>${esc(m.content).slice(0,80)}</span></div></div>`).join('')}if(d.files?.length){html+=`<div class="recent-title">الملفات (${d.files.length})</div>`;html+=d.files.map(f=>`<div class="file-item">${SVG.file}<span>${esc(f.name)}</span><small>${Math.ceil(Number(f.size||0)/1024)}KB</small></div>`).join('')}if(!d.conversations?.length&&!d.messages?.length&&!d.files?.length){html+='<p style="text-align:center;color:var(--faint);margin-top:30px;">لا توجد نتائج</p>'}contentArea.innerHTML=html}
-function getFilteredChats(){const favorites=JSON.parse(localStorage.getItem('foxFavorites')||'[]');switch(taskFilter){case'favorite':return S.chatHistory.filter(c=>favorites.includes(String(c.id)));case'inprogress':return S.chatHistory.filter(c=>c.hasActiveTask===true);case'finished':return S.chatHistory.filter(c=>c.completed===true);default:return S.chatHistory}}
-function setTaskFilter(filter){taskFilter=filter;render()}
-function renderTaskFilters(){const filters=[{id:'all',label:'الكل'},{id:'inprogress',label:'قيد التنفيذ'},{id:'finished',label:'منتهية'},{id:'favorite',label:'المفضلة'}];return`<div class="task-filters">${filters.map(f=>`<button onclick="setTaskFilter('${f.id}')" style="flex:0 0 auto;padding:6px 14px;border-radius:16px;font-size:11px;font-weight:600;background:${taskFilter===f.id?'var(--accent)':'var(--surface)'};color:${taskFilter===f.id?'#fff':'var(--muted)'};border:1px solid ${taskFilter===f.id?'var(--accent)':'var(--line)'};cursor:pointer;transition:.15s;">${f.label}</button>`).join('')}</div>`}
-function renderHome(){if(S.mode==='tasks'){const filteredChats=getFilteredChats();const chatRows=filteredChats.length?filteredChats.map(c=>`<div class="chat-row"><div class="chat-row-main" onclick="openChat('${String(c.id).replace(/'/g,"\\'")}')">${SVG.ai}<span>${esc(c.title)}</span></div><div class="chat-row-options"><button class="more-btn" onclick="openChatRowMenu(event,'${String(c.id).replace(/'/g,"\\'")}')">${SVG.more}</button></div></div>`).join(''):'<p style="text-align:center;color:var(--faint);margin-top:30px;">لا توجد محادثات في هذا الفلتر</p>';let activeTaskHTML='';if(activeTaskId&&activePlan){activeTaskHTML=`<div class="agent-panel"><h3>المهمة النشطة: ${esc(activePlan.goal||'')}</h3>${activePlan.steps.map((s,i)=>`<div class="step-item"><div class="step-status ${s.status||'pending'}">${s.status==='completed'?'✓':s.status==='running'?'▶':i+1}</div><div class="step-info"><b>${esc(s.title)}</b><small>${esc(s.description||'')}</small></div><div class="step-actions">${s.status!=='completed'?`<button onclick="stepControl('${s.id}','complete_step')" title="إتمام">✓</button>`:''}${s.status!=='running'&&s.status!=='completed'?`<button onclick="stepControl('${s.id}','start_step')" title="بدء">▶</button>`:''}</div></div>`).join('')}<div class="task-controls"><button class="primary" onclick="advanceAgent()">تشغيل</button><button onclick="taskControl('pause_task')">إيقاف</button><button onclick="taskControl('resume_task')">استئناف</button><button onclick="loadTaskEvents()">الأحداث</button><button onclick="interveneInTask()">توجيه</button><button class="danger" onclick="taskControl('cancel_task')">إلغاء</button></div></div>`}contentArea.innerHTML=`<div class="shortcuts-row"><div class="shortcut-card" onclick="nav('workspace')">${SVG.workspace}<span>مساحة العمل</span></div><div class="shortcut-card" onclick="nav('settings')">${SVG.spark}<span>ترقية</span></div><div class="shortcut-card" onclick="nav('scheduled')">${SVG.clock}<span>مجدولة</span></div><div class="shortcut-card" onclick="nav('library')">${SVG.library}<span>المكتبة</span></div><div class="shortcut-card" onclick="nav('projects')">${SVG.folder}<span>المشاريع</span></div><div class="shortcut-card" onclick="nav('favorites')">${SVG.star}<span>المفضلة</span></div></div>${activeTaskHTML}${renderTaskFilters()}<div class="recent-title">المحادثات الأخيرة</div>${chatRows}`}}
-async function createPlan(){const taskText=input.value.trim();if(!taskText){toast('اكتب هدف المهمة أولاً');return}toast('جاري إنشاء الخطة...');try{const r=await api({action:'plan_task',chatId:S.currentChatId||Date.now().toString(),model:localStorage.getItem('foxSelectedModelId')||'cerebras-gemma-4-31b',task:taskText});const d=await r.json();if(!r.ok)throw Error(d.error||'تعذر إنشاء الخطة');activeTaskId=d.task?.id||null;activePlan=d.plan||null;if(activeTaskId)localStorage.setItem('foxTaskId',activeTaskId);if(S.currentChatId){S.messages.push({role:'user',content:taskText});S.messages.push({role:'agent',content:`📋 تم إنشاء الخطة:\n${d.plan.goal}\n\n${d.plan.steps.map((s,i)=>`${i+1}. ${s.title} - ${s.description}`).join('\n')}`})}input.value='';updateSendBtn();render();toast('تم إنشاء الخطة بنجاح');if(activeTaskId){await advanceAgent()}}catch(e){toast(e.message)}}
-async function advanceAgent(){if(!activeTaskId){toast('لا توجد مهمة نشطة');return}showActivityIndicator(true);toast('جاري تنفيذ الخطوة...');try{const r=await api({action:'advance_task',taskId:activeTaskId,model:localStorage.getItem('foxSelectedModelId')||'cerebras-gemma-4-31b',maxSteps:3});const d=await r.json();if(!r.ok)throw Error(d.error||'تعذر تشغيل الوكيل');activePlan=d.plan||activePlan;if(d.proposal){pendingTool=d.proposal;S.messages.push({role:'agent',content:`🔧 اقتراح طرفية:\n${d.proposal.command}`})}if(d.status==='completed'){toast('اكتملت المهمة بنجاح');if(S.currentChatId){const c=S.chatHistory.find(c=>String(c.id)===String(S.currentChatId));if(c){c.completed=true;localStorage.setItem('foxHistory',JSON.stringify(S.chatHistory))}}}else if(d.status==='waiting_for_tool_approval'){toast('بانتظار موافقة الطرفية')}else if(d.status==='waiting_for_user'){toast('بانتظار توجيهك')}else if(d.status==='failed'){toast('فشلت المهمة')}else{toast('تم تنفيذ الخطوة');if(S.currentChatId){const c=S.chatHistory.find(c=>String(c.id)===String(S.currentChatId));if(c){c.hasActiveTask=true;localStorage.setItem('foxHistory',JSON.stringify(S.chatHistory))}}}render()}catch(e){toast(e.message)}finally{showActivityIndicator(false)}}
-async function taskControl(action){if(!activeTaskId){toast('لا توجد مهمة نشطة');return}try{const r=await api({action,taskId:activeTaskId});const d=await r.json();if(!r.ok)throw Error(d.error||'تعذر تغيير حالة المهمة');toast(d.status==='paused'?'تم إيقاف المهمة':d.status==='cancelled'?'تم إلغاء المهمة':'تم استئناف المهمة')}catch(e){toast(e.message)}}
-async function stepControl(stepId,action){if(!activeTaskId){toast('لا توجد مهمة نشطة');return}try{const r=await api({action:'step_control',taskId:activeTaskId,stepId,...(action==='complete_step'?{output:'تمت الخطوة من الواجهة'}:{})});const d=await r.json();if(r.ok){activePlan=d.plan;toast('تم تحديث الخطوة');render()}else{toast(d.error||'تعذر التحديث')}}catch(e){toast(e.message)}}
-async function loadTaskEvents(){if(!activeTaskId){toast('لا توجد مهمة نشطة');return}try{const r=await api({action:'task_events',taskId:activeTaskId});const d=await r.json();if(r.ok){S.taskEvents=d.events||[];S.screen='task-events';render()}}catch(e){toast(e.message)}}
-function renderTaskEvents(){const events=S.taskEvents||[];contentArea.innerHTML=`<div class="recent-title">أحداث المهمة (${events.length})</div>${events.length?events.slice(-50).reverse().map(e=>{const names={step_started:'بدأت خطوة',model_called:'استدعاء النموذج',tool_requested:'طلب موافقة الطرفية',verification_passed:'نجاح التحقق',verification_failed:'فشل التحقق',user_intervention:'تعقيب المستخدم',task_completed:'اكتملت المهمة',approval_requested:'بانتظار موافقة'};let payloadHTML='';if(e.payload){try{const payload=typeof e.payload==='string'?JSON.parse(e.payload):e.payload;payloadHTML=`<pre style="background:var(--surface3);padding:8px;border-radius:6px;font-size:10px;overflow-x:auto;margin-top:6px;">${esc(JSON.stringify(payload,null,2))}</pre>`}catch{payloadHTML=`<pre style="background:var(--surface3);padding:8px;border-radius:6px;font-size:10px;overflow-x:auto;margin-top:6px;">${esc(String(e.payload))}</pre>`}}return`<details style="background:var(--surface);border-radius:8px;padding:10px;margin-bottom:6px;border:1px solid var(--line);"><summary style="cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;"><div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${e.type==='task_completed'?'var(--green)':e.type==='verification_failed'?'var(--red)':'var(--accent)'};"></div><span style="flex:1;">${esc(names[e.type]||e.type)}</span><small style="color:var(--faint);font-size:10px;">${new Date(e.created_at).toLocaleTimeString('ar')}</small></summary><div style="margin-top:8px;font-size:11px;color:var(--muted);"><div>الوقت الكامل: ${new Date(e.created_at).toLocaleString('ar')}</div>${payloadHTML}</div></details>`}).join(''):'<p style="text-align:center;color:var(--faint);margin-top:30px;">لا توجد أحداث</p>'}`}
-async function interveneInTask(){if(!activeTaskId){toast('لا توجد مهمة نشطة');return}const content=prompt('أدخل توجيهك للمهمة:');if(!content||!content.trim())return;try{const r=await api({action:'task_intervention',taskId:activeTaskId,content:content.trim(),advance:true});const d=await r.json();if(r.ok){toast('تم إرسال التوجيه');activePlan=d.plan||activePlan;render()}else{toast(d.error||'تعذر الإرسال')}}catch(e){toast(e.message)}}
-async function approveTool(approved){if(!pendingTool){toast('لا يوجد اقتراح طرفية معلق');return}try{const r=await api({action:'run_tool',chatId:S.currentChatId||'default',taskId:activeTaskId||null,proposal:pendingTool,approved:approved,approvalBudget:approved?5:0});const d=await r.json();if(r.ok){toast('تم تشغيل التجربة');pendingTool=null;if(d.experiment){S.messages.push({role:'agent',content:`⚡ تم تشغيل التجربة:\n${d.experiment.command}\n\nالحالة: ${d.experiment.status}`})}}else if(d.needsApproval){toast(d.reason||'يلزم موافقة إضافية')}else{toast(d.error||'تعذر التشغيل')}render()}catch(e){toast(e.message)}}
-async function loadWorkspace(){if(!S.currentChatId){toast('ابدأ محادثة أولاً');return}try{const r=await api({action:'workspace_status',chatId:S.currentChatId});const d=await r.json();if(r.ok&&d.workspace){S.workspaceData=d.workspace;S.screen='workspace';render()}}catch(e){toast(e.message)}}
-function renderWorkspace(){if(!S.workspaceData){contentArea.innerHTML='<div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">'+SVG.workspace+'</div><h2>لا توجد بيانات</h2><p>ابدأ محادثة أولاً</p></div>';return}const w=S.workspaceData;contentArea.innerHTML=`<div class="workspace-section"><div class="workspace-files"><h4>الملفات (${w.files?.length||0})</h4>${w.files?.length?w.files.map(f=>`<div class="file-item" style="cursor:pointer;" onclick="previewFile('${f.id}','${esc(f.name)}')">${SVG.file}<span>${esc(f.name)}</span><small>${Math.ceil(Number(f.size||0)/1024)}KB · ${esc(f.storage||'D1')}</small><button onclick="event.stopPropagation();downloadFile('${f.id}','${esc(f.name)}')" style="width:24px;height:24px;border-radius:6px;background:var(--surface3);font-size:10px;flex-shrink:0;">⬇</button></div>`).join(''):'<p style="color:var(--faint);text-align:center;padding:10px;">لا توجد ملفات</p>'}</div></div><div class="workspace-section"><div class="experiment-log"><h4>التجارب (${w.experiments?.length||0})</h4>${w.experiments?.length?w.experiments.map(e=>`<div class="exp-item"><div class="exp-status ${e.status}"></div><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(e.command)}</span><small>${esc(e.status)}</small></div>`).join(''):'<p style="color:var(--faint);text-align:center;padding:10px;">لا توجد تجارب</p>'}</div></div><div class="workspace-section"><div class="workspace-files"><h4>حصة الطرفية</h4><p style="font-size:12px;">المستخدم: ${w.budget?.used||0} / الممنوح: ${w.budget?.granted||0}</p><p style="font-size:12px;">المتبقي: ${w.budget?.remaining||0}</p></div></div>`}
-async function previewFile(fileId,fileName){try{const r=await api({action:'get_messages',chatId:S.currentChatId||'default'});const d=await r.json();const file=(d.files||[]).find(f=>f.id===fileId);if(!file){toast('الملف غير موجود');return}S.previewFile=file;S.screen='file-preview';render()}catch(e){toast('تعذر فتح الملف')}}
-function renderFilePreview(){const f=S.previewFile;if(!f)return;contentArea.innerHTML=`<div class="agent-panel"><h3>${esc(f.name)}</h3><div style="font-size:11px;color:var(--muted);margin-bottom:12px;"><div>النوع: ${esc(f.mime||'غير معروف')}</div><div>الحجم: ${Math.ceil(Number(f.size||0)/1024)}KB</div><div>التخزين: ${esc(f.storage||'D1')}</div><div>تاريخ الإنشاء: ${new Date(f.created_at).toLocaleString('ar')}</div></div><div style="display:flex;gap:8px;"><button onclick="downloadFile('${f.id}','${esc(f.name)}')" style="flex:1;padding:10px;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;">${SVG.file} تنزيل</button><button onclick="goBack()" style="flex:1;padding:10px;border-radius:8px;background:var(--surface2);font-weight:600;">رجوع</button></div></div>`}
-async function downloadFile(fileId,fileName){try{const r=await api({action:'get_messages',chatId:S.currentChatId||'default'});const d=await r.json();const file=(d.files||[]).find(f=>f.id===fileId);if(file&&file.data_url){const a=document.createElement('a');a.href=file.data_url;a.download=fileName;a.click();toast('تم التنزيل');return}if(file&&file.asset_id){const dl=await api({action:'download_file',assetId:file.asset_id});if(dl.ok){const blob=await dl.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=fileName;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);toast('تم التنزيل')}else{toast('تعذر التنزيل من GitHub')}}else{toast('لا توجد نسخة قابلة للتنزيل')}}catch(e){toast('تعذر التنزيل: '+e.message)}}
-async function loadMemory(){if(!S.currentChatId){toast('ابدأ محادثة أولاً');return}try{const r=await api({action:'get_memory',chatId:S.currentChatId});const d=await r.json();if(r.ok){S.memoryContent=d.content||'';S.screen='memory';render()}}catch(e){toast(e.message)}}
-function renderMemory(){contentArea.innerHTML=`<div class="agent-panel"><h3>الذاكرة والسياق</h3><div style="font-size:12px;color:var(--muted);white-space:pre-wrap;">${esc(S.memoryContent||'لا توجد ذاكرة محفوظة')}</div></div>`}
-function renderAgentHome(){const knowledgeCount=AgentState.knowledge.length,interactionCount=AgentState.interactions.length;contentArea.innerHTML=`<div class="agent-profile"><div class="agent-avatar">${SVG.robot}</div><h2>${AgentState.name||'وكيلك الشخصي'}</h2><p>${knowledgeCount?`تعلم ${knowledgeCount} معلومات عنك`:'لم يتعلم عنك بعد'}</p><p style="font-size:11px;margin-top:4px;">${interactionCount?`${interactionCount} تفاعل`:'لا توجد تفاعلات'}</p></div><button class="teach-btn" onclick="startAgentChat()">${SVG.spark} تحدث مع وكيلك</button><div class="agent-memory"><h3>ذاكرة الوكيل</h3>${AgentState.knowledge.length?AgentState.knowledge.map((k,i)=>`<div class="memory-item">${SVG.check}<span>${esc(k)}</span><button class="more-btn memory-options" onclick="openMemoryMenu(event,${i})">${SVG.more}</button></div>`).join(''):'<p style="text-align:center;color:var(--faint);padding:20px;">لا توجد ذكريات بعد. تحدث مع وكيلك ليتعلم عنك.</p>'}</div>`}
-function startAgentChat(){S.screen='agent-chat';render()}
-function renderAgentChat(){if(!AgentState.interactions.length){contentArea.innerHTML='<div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">'+SVG.robot+'</div><h2>ابدأ التحدث مع وكيلك</h2><p>كل ما تقوله سيتعلمه الوكيل</p></div>';return}contentArea.innerHTML=AgentState.interactions.map((m,i)=>`<div class="message ${m.role==='user'?'user':'agent'}"><div class="message-content"><div class="bubble">${esc(m.content)}</div><button class="msg-options-btn" onclick="openMessageMenu(event,${i})">${SVG.more}</button></div></div>`).join('')}
-function openChat(id){const c=S.chatHistory.find(c=>String(c.id)===String(id));if(!c)return;S.currentChatId=id;S.messages=c.messages||[];nav('chat')}
-function newChat(){S.messages=[];S.currentChatId=Date.now().toString();nav('chat')}
-function renderChat(){let html=`<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;"><button style="padding:8px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--line);font-size:11px;font-weight:600;flex:1;" onclick="createPlan()">${SVG.plan} خطة</button><button style="padding:8px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--line);font-size:11px;font-weight:600;flex:1;" onclick="loadWorkspace()">${SVG.workspace} مساحة</button><button style="padding:8px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--line);font-size:11px;font-weight:600;flex:1;" onclick="loadMemory()">${SVG.memory} ذاكرة</button></div>`;if(!S.messages.length){html+='<div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">'+SVG.robot+'</div><h2>ابدأ محادثة جديدة</h2><p>اكتب رسالتك الأولى</p></div>'}else{html+=S.messages.map((m,i)=>`<div class="message ${m.role==='user'?'user':'agent'}"><div class="message-content"><div class="bubble">${esc(m.content)}</div><button class="msg-options-btn" onclick="openMessageMenu(event,${i})">${SVG.more}</button></div></div>`).join('')}if(pendingTool){html+=`<div class="tool-approval"><button class="approve" onclick="approveTool(true)">موافقة</button><button class="reject" onclick="approveTool(false)">رفض</button></div>`}contentArea.innerHTML=html;contentArea.scrollTop=contentArea.scrollHeight}
-function openChatRowMenu(event,id){event.stopPropagation();openDropdown(event.clientX,event.clientY,[{icon:SVG.pencil,label:'إعادة تسمية',action:`renameChat('${id}')`},{icon:SVG.star,label:'إضافة للمفضلة',action:`addToFavorites('${id}')`},{icon:SVG.share,label:'مشاركة',action:`shareChat('${id}')`},{icon:SVG.copy,label:'نسخ النص',action:`copyChat('${id}')`},{divider:true},{icon:SVG.trash,label:'حذف',action:`deleteChat('${id}')`,danger:true}])}
-function openMessageMenu(event,index){event.stopPropagation();openDropdown(event.clientX,event.clientY,[{icon:SVG.selectText,label:'اختر النص',action:`selectMessageText(${index})`},{icon:SVG.copy,label:'نسخ',action:`copyMessage(${index})`},{icon:SVG.share,label:'مشاركة',action:`shareMessage(${index})`},{icon:SVG.pencil,label:'تعديل',action:`editMessage(${index})`},{divider:true},{icon:SVG.trash,label:'حذف',action:`deleteMessage(${index})`,danger:true}])}
-function openMemoryMenu(event,index){event.stopPropagation();openDropdown(event.clientX,event.clientY,[{icon:SVG.copy,label:'نسخ',action:`copyMemory(${index})`},{icon:SVG.pencil,label:'تعديل',action:`editMemory(${index})`},{divider:true},{icon:SVG.trash,label:'حذف',action:`deleteMemory(${index})`,danger:true}])}
-function openAgentMenu(event){event.stopPropagation();openDropdown(event.clientX,event.clientY,[{icon:SVG.pencil,label:'تعديل اسم الوكيل',action:'renameAgent()'},{icon:SVG.trash,label:'مسح ذاكرة الوكيل',action:'clearAgentMemory()',danger:true},{divider:true},{icon:SVG.share,label:'مشاركة الوكيل',action:'toast("المشاركة قريباً")'}])}
-function openModelMenu(event){event.stopPropagation();const models=availableModels.length?availableModels:[{id:'fox-lite',name:'FOX AI 1.6 Lite',company:'FOX'},{id:'fox-standard',name:'FOX AI 1.6',company:'FOX'},{id:'fox-max',name:'FOX AI 1.6 Max',company:'FOX'}];openDropdown(event.clientX,event.clientY,models.map(m=>({icon:SVG.spark,label:`${m.name}${m.company?' · '+m.company:''}`,action:`chooseModel('${m.id}','${m.name}${m.company?' · '+m.company:''}')`})))}
-function openChatMenu(event){event.stopPropagation();openDropdown(event.clientX,event.clientY,[{icon:SVG.star,label:'إضافة للمفضلة',action:`addToFavorites('${S.currentChatId}')`},{icon:SVG.workspace,label:'مساحة العمل',action:"nav('workspace')"},{icon:SVG.memory,label:'الذاكرة',action:'loadMemory()'},{icon:SVG.events,label:'أحداث المهمة',action:'loadTaskEvents()'},{icon:SVG.pencil,label:'إعادة تسمية',action:"renameCurrentChat()"},{icon:SVG.file,label:'عرض الملفات',action:"nav('library')"},{divider:true},{icon:SVG.trash,label:'حذف المحادثة',action:'deleteCurrentChat()',danger:true}])}
-function openWorkspaceMenu(event){event.stopPropagation();openDropdown(event.clientX,event.clientY,[{icon:SVG.workspace,label:'تحديث',action:'loadWorkspace()'},{icon:SVG.file,label:'الملفات',action:"toast('الملفات')"},{divider:true},{icon:SVG.trash,label:'مسح الكل',action:"toast('مسح الكل قريباً')",danger:true}])}
-function selectMessageText(index){const m=S.messages[index]||AgentState.interactions[index];if(!m)return;closeDropdown();setTimeout(()=>{const bubbles=document.querySelectorAll('.message .bubble');if(bubbles[index]){const bubble=bubbles[index];const range=document.createRange();range.selectNodeContents(bubble);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);toast('تم تحديد النص')}},100)}
-function renameChat(id){const c=S.chatHistory.find(c=>String(c.id)===String(id));if(!c)return;const newName=prompt('أدخل الاسم الجديد:',c.title);if(newName&&newName.trim()){c.title=newName.trim();localStorage.setItem('foxHistory',JSON.stringify(S.chatHistory));api({action:'rename_conversation',chatId:id,title:newName.trim()}).catch(()=>{});render()}}
-function renameCurrentChat(){if(!S.currentChatId)return;const c=S.chatHistory.find(c=>String(c.id)===String(S.currentChatId));if(!c)return;const newName=prompt('أدخل الاسم الجديد:',c.title);if(newName&&newName.trim()){c.title=newName.trim();localStorage.setItem('foxHistory',JSON.stringify(S.chatHistory));api({action:'rename_conversation',chatId:S.currentChatId,title:newName.trim()}).catch(()=>{});render()}}
-async function deleteChat(id){if(confirm('⚠️ تحذير: سيتم حذف هذه المحادثة نهائياً من الجهاز والخادم.\n\nلا يمكن التراجع عن هذا الإجراء.\n\nهل أنت متأكد تماماً؟')){S.chatHistory=S.chatHistory.filter(c=>String(c.id)!==String(id));localStorage.setItem('foxHistory',JSON.stringify(S.chatHistory));api({action:'delete_conversation',chatId:id}).catch(()=>{});render();toast('تم حذف المحادثة نهائياً')}}
-async function deleteCurrentChat(){if(S.currentChatId){await deleteChat(S.currentChatId);newChat()}}
-function copyChat(id){const c=S.chatHistory.find(c=>String(c.id)===String(id));if(c){const text=c.messages.map(m=>`${m.role==='user'?'المستخدم':'الوكيل'}: ${m.content}`).join('\n');navigator.clipboard?.writeText(text).catch(()=>{});toast('تم نسخ المحادثة')}}
-function shareChat(id){const c=S.chatHistory.find(c=>String(c.id)===String(id));if(c&&navigator.share){navigator.share({text:c.title}).catch(()=>{})}else{toast('تمت المشاركة')}}
-function copyMessage(index){const m=S.messages[index]||AgentState.interactions[index];if(m){navigator.clipboard?.writeText(m.content).catch(()=>{});toast('تم النسخ')}}
-function shareMessage(index){const m=S.messages[index]||AgentState.interactions[index];if(m&&navigator.share){navigator.share({text:m.content}).catch(()=>{})}else{toast('تمت المشاركة')}}
-function editMessage(index){const m=S.messages[index]||AgentState.interactions[index];if(m){const newText=prompt('عدل النص:',m.content);if(newText&&newText.trim()){m.content=newText.trim();render()}}}
-function deleteMessage(index){if(S.screen==='agent-chat'){AgentState.interactions.splice(index,1);localStorage.setItem('foxAgent',JSON.stringify(AgentState))}else{S.messages.splice(index,1);if(S.currentChatId){const c=S.chatHistory.find(c=>String(c.id)===String(S.currentChatId));if(c){c.messages=S.messages;localStorage.setItem('foxHistory',JSON.stringify(S.chatHistory))}}}render()}
-function copyMemory(index){const k=AgentState.knowledge[index];if(k){navigator.clipboard?.writeText(k).catch(()=>{});toast('تم النسخ')}}
-function editMemory(index){const newText=prompt('عدل الذكرى:',AgentState.knowledge[index]);if(newText&&newText.trim()){AgentState.knowledge[index]=newText.trim();localStorage.setItem('foxAgent',JSON.stringify(AgentState));render()}}
-function deleteMemory(index){AgentState.knowledge.splice(index,1);localStorage.setItem('foxAgent',JSON.stringify(AgentState));render()}
-function renameAgent(){const newName=prompt('أدخل اسم الوكيل:',AgentState.name||'');if(newName&&newName.trim()){AgentState.name=newName.trim();localStorage.setItem('foxAgent',JSON.stringify(AgentState));render()}}
-function clearAgentMemory(){if(confirm('هل أنت متأكد من مسح ذاكرة الوكيل بالكامل؟')){AgentState.knowledge=[];AgentState.preferences=[];AgentState.interactions=[];AgentState.personality=[];localStorage.setItem('foxAgent',JSON.stringify(AgentState));render();toast('تم مسح ذاكرة الوكيل')}}
-function chooseModel(id,label){S.selectedModel=label;localStorage.setItem('foxSelectedModelId',id);closeDropdown();render()}
-function addToFavorites(id){const favorites=JSON.parse(localStorage.getItem('foxFavorites')||'[]');if(!favorites.includes(String(id))){favorites.push(String(id));localStorage.setItem('foxFavorites',JSON.stringify(favorites));toast('تمت الإضافة للمفضلة')}}
-function removeFavorite(id){let favorites=JSON.parse(localStorage.getItem('foxFavorites')||'[]');favorites=favorites.filter(f=>f!==String(id));localStorage.setItem('foxFavorites',JSON.stringify(favorites));render();toast('تمت الإزالة من المفضلة')}
-function initLongpress(){document.addEventListener('touchstart',(e)=>{const bubble=e.target.closest('.bubble');if(!bubble)return;clearTimeout(longpressTimer);longpressTimer=setTimeout(()=>{const msgIndex=Array.from(document.querySelectorAll('.bubble')).indexOf(bubble);if(msgIndex>=0){showLongpressMenu(e.touches[0].clientX,e.touches[0].clientY,msgIndex)}},500)});document.addEventListener('touchend',()=>clearTimeout(longpressTimer));document.addEventListener('touchmove',()=>clearTimeout(longpressTimer))}
-function showLongpressMenu(x,y,msgIndex){longpressMenu.innerHTML=`<button onclick="copyMessageFromMenu(${msgIndex})">${SVG.copy} نسخ</button><button onclick="shareMessageFromMenu(${msgIndex})">${SVG.share} مشاركة</button><button onclick="deleteMessageFromMenu(${msgIndex})" style="color:var(--red)">${SVG.trash} حذف</button>`;longpressMenu.style.position='fixed';longpressMenu.style.top=Math.min(y,window.innerHeight-150)+'px';longpressMenu.style.left=Math.max(10,Math.min(x,window.innerWidth-180))+'px';longpressMenu.classList.add('open');setTimeout(()=>longpressMenu.classList.remove('open'),3000)}
-function copyMessageFromMenu(index){const m=S.messages[index]||AgentState.interactions[index];if(m){navigator.clipboard?.writeText(m.content).catch(()=>{});toast('تم النسخ')}longpressMenu.classList.remove('open')}
-function shareMessageFromMenu(index){const m=S.messages[index]||AgentState.interactions[index];if(m&&navigator.share){navigator.share({text:m.content}).catch(()=>{})}else{toast('تمت المشاركة')}longpressMenu.classList.remove('open')}
-function deleteMessageFromMenu(index){longpressMenu.classList.remove('open');if(confirm('⚠️ سيتم حذف هذه الرسالة نهائياً ولا يمكن استعادتها. هل أنت متأكد؟')){deleteMessage(index)}}
-function startVoiceInput(){const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SpeechRecognition){toast('المتصفح لا يدعم الإدخال الصوتي');return}const recognition=new SpeechRecognition();recognition.lang='ar-SA';recognition.interimResults=false;recognition.maxAlternatives=1;recognition.onstart=()=>toast('🎤 استمع الآن...');recognition.onresult=(event)=>{const transcript=event.results[0][0].transcript;input.value+=(input.value?' ':'')+transcript;updateSendBtn();toast('تم إضافة النص الصوتي')};recognition.onerror=(event)=>toast('خطأ في التعرف الصوتي: '+event.error);recognition.onend=()=>toast('انتهى التسجيل');recognition.start()}
-function openKnowledgeSettings(){S.screen='knowledge';render()}
-function renderKnowledge(){contentArea.innerHTML=`<div class="agent-panel"><h3>المعرفة والذاكرة</h3><p style="font-size:12px;color:var(--muted);margin-bottom:12px;">إدارة ذاكرة الوكيل والمعلومات المحفوظة</p><div style="margin-bottom:12px;"><label style="font-size:11px;font-weight:600;display:block;margin-bottom:6px;">اسم الوكيل</label><input type="text" id="agentNameInput" value="${esc(AgentState.name||'')}" placeholder="أدخل اسم الوكيل" style="width:100%;padding:10px;border-radius:8px;background:var(--surface2);font-size:13px;"></div><div style="margin-bottom:12px;"><label style="font-size:11px;font-weight:600;display:block;margin-bottom:6px;">المعرفة المحفوظة (${AgentState.knowledge.length})</label><div id="knowledgeList" style="max-height:200px;overflow-y:auto;">${AgentState.knowledge.length?AgentState.knowledge.map((k,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--surface2);border-radius:8px;margin-bottom:4px;"><span style="flex:1;font-size:12px;">${esc(k)}</span><button onclick="deleteKnowledgeItem(${i})" style="color:var(--red);font-size:16px;">×</button></div>`).join(''):'<p style="font-size:11px;color:var(--faint);text-align:center;">لا توجد معرفة محفوظة</p>'}</div></div><button onclick="saveAgentName()" style="width:100%;padding:12px;border-radius:8px;background:var(--accent);color:#fff;font-weight:700;">حفظ</button><button onclick="clearAgentMemory()" style="width:100%;padding:12px;border-radius:8px;background:rgba(231,76,60,.2);color:var(--red);font-weight:700;margin-top:8px;">مسح كل الذاكرة</button></div>`}
-function saveAgentName(){const nameInput=document.getElementById('agentNameInput');if(nameInput&&nameInput.value.trim()){AgentState.name=nameInput.value.trim();localStorage.setItem('foxAgent',JSON.stringify(AgentState));toast('تم حفظ اسم الوكيل')}}
-function deleteKnowledgeItem(index){AgentState.knowledge.splice(index,1);localStorage.setItem('foxAgent',JSON.stringify(AgentState));renderKnowledge()}
-function openIntegrations(){S.screen='integrations';render()}
-function renderIntegrations(){contentArea.innerHTML=`<div class="agent-panel"><h3>التكاملات والموصلات</h3><p style="font-size:12px;color:var(--muted);margin-bottom:12px;">إدارة الاتصالات الخارجية</p><div style="margin-bottom:8px;"><div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--surface2);border-radius:8px;"><svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:var(--green);"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg><span style="font-size:13px;font-weight:600;">Worker API</span><span style="font-size:11px;color:var(--green);margin-right:auto;">متصل</span></div></div><div style="margin-bottom:8px;"><div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--surface2);border-radius:8px;"><svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:var(--green);"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg><span style="font-size:13px;font-weight:600;">D1 Database</span><span style="font-size:11px;color:var(--green);margin-right:auto;">متصل</span></div></div><div style="margin-bottom:8px;"><div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--surface2);border-radius:8px;"><svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:var(--accent);"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm1 17h-2v-2h2zm2.07-7.75l-.9.92A3.4 3.4 0 0013 15h-2v-.5a3.1 3.1 0 01.9-2.2l1.24-1.26A1.7 1.7 0 0013.6 9.7a1.7 1.7 0 00-1.7-1.7 1.7 1.7 0 00-1.7 1.7H8.2a3.7 3.7 0 117.4 0 3.3 3.3 0 01-.53 1.55z"/></svg><span style="font-size:13px;font-weight:600;">GitHub Actions</span><span style="font-size:11px;color:var(--faint);margin-right:auto;">يعتمد على الإعداد</span></div></div><button onclick="toast('يمكن إضافة المزيد من التكاملات لاحقاً')" style="width:100%;padding:12px;border-radius:8px;background:var(--surface2);font-weight:600;border:1px dashed var(--line2);">+ إضافة تكامل جديد</button></div>`}
-function openUpgrade(){S.screen='upgrade';render()}
-function renderUpgrade(){contentArea.innerHTML=`<div class="agent-panel"><h3>ترقية FOX AI</h3><p style="font-size:12px;color:var(--muted);margin-bottom:12px;">اختر خطتك المناسبة</p><div style="background:var(--surface2);border:1px solid var(--accent);border-radius:12px;padding:16px;margin-bottom:12px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><span style="font-weight:800;font-size:15px;">الخطة المجانية</span><span style="background:var(--accent);color:#fff;padding:4px 10px;border-radius:8px;font-size:10px;font-weight:700;">حالية</span></div><ul style="font-size:12px;color:var(--muted);list-style:none;padding:0;"><li style="padding:4px 0;">✓ محادثة غير محدودة</li><li style="padding:4px 0;">✓ نماذج متعددة</li><li style="padding:4px 0;">✓ مرفقات حتى 700KB</li><li style="padding:4px 0;">✓ الوكيل والخطط</li></ul></div><div style="background:var(--surface2);border-radius:12px;padding:16px;margin-bottom:12px;opacity:.7;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><span style="font-weight:800;font-size:15px;">الخطة المتقدمة</span><span style="color:var(--faint);font-size:11px;">قريباً</span></div><ul style="font-size:12px;color:var(--muted);list-style:none;padding:0;"><li style="padding:4px 0;">✓ ملفات أكبر</li><li style="padding:4px 0;">✓ تجارب طرفية غير محدودة</li><li style="padding:4px 0;">✓ أولوية في المعالجة</li></ul></div><button onclick="toast('سيتم إطلاق الخطط المدفوعة قريباً')" style="width:100%;padding:12px;border-radius:8px;background:var(--accent);color:#fff;font-weight:700;">اشترك الآن</button></div>`}
-function renderLibrary(){contentArea.innerHTML='<div class="recent-title">الملفات</div><div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">'+SVG.library+'</div><h2>لا توجد ملفات</h2><p>ستظهر ملفاتك هنا</p></div>'}
-function renderProjects(){contentArea.innerHTML='<div class="recent-title">المشاريع</div><div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">'+SVG.folder+'</div><h2>لا توجد مشاريع</h2><p>أنشئ مشروعك الأول</p></div>'}
-function renderScheduled(){contentArea.innerHTML='<div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">'+SVG.clock+'</div><h2>لا توجد مهام مجدولة</h2><p>جدول مهامك هنا</p></div>'}
-function renderFavorites(){const favorites=JSON.parse(localStorage.getItem('foxFavorites')||'[]');const favChats=S.chatHistory.filter(c=>favorites.includes(String(c.id)));contentArea.innerHTML=`<div class="recent-title">المحادثات المفضلة (${favChats.length})</div>${favChats.length?favChats.map(c=>`<div class="chat-row"><div class="chat-row-main" onclick="openChat('${String(c.id).replace(/'/g,"\\'")}')">${SVG.star}<span>${esc(c.title)}</span></div><div class="chat-row-options"><button class="more-btn" onclick="removeFavorite('${String(c.id).replace(/'/g,"\\'")}')">×</button></div></div>`).join(''):'<p style="text-align:center;color:var(--faint);padding:40px;">لا توجد محادثات مفضلة</p>'}`}
-function renderSettings(){contentArea.innerHTML=`<div class="plan-card"><div class="plan-top"><button class="upgrade-btn" onclick="openUpgrade()">ترقية</button><div class="plan-plan">FOX AI</div></div><div style="display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line2);font-size:12px;"><span>0</span><span>${SVG.spark} الحصة</span></div></div><div class="plan-card"><h3 style="text-align:center;margin-bottom:10px;font-size:13px;">لون التطبيق</h3><div class="color-dots"><div class="color-dot orange ${S.accent==='orange'?'active':''}" onclick="setAccent('orange')"></div><div class="color-dot blue ${S.accent==='blue'?'active':''}" onclick="setAccent('blue')"></div><div class="color-dot green ${S.accent==='green'?'active':''}" onclick="setAccent('green')"></div><div class="color-dot red ${S.accent==='red'?'active':''}" onclick="setAccent('red')"></div></div></div><div class="settings-group"><div class="settings-row" onclick="toggleTheme()"><div class="s-icon">${SVG.moon}</div><div class="s-label">المظهر</div><div class="s-value">${S.theme==='light'?'فاتح':'داكن'}</div><svg class="s-chevron" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></div><div class="settings-row" onclick="openModelSettings()"><div class="s-icon">${SVG.spark}</div><div class="s-label">النموذج الافتراضي</div><div class="s-value">${esc(S.selectedModel)}</div><svg class="s-chevron" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></div><div class="settings-row" onclick="openTokenSettings()"><div class="s-icon">${SVG.tools}</div><div class="s-label">حدود النموذج</div><div class="s-value">${localStorage.getItem('foxMaxTokens')||'4096'} tokens</div><svg class="s-chevron" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></div><div class="settings-row" onclick="openKnowledgeSettings()"><div class="s-icon">${SVG.help}</div><div class="s-label">المعرفة والذاكرة</div><svg class="s-chevron" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></div><div class="settings-row" onclick="openIntegrations()"><div class="s-icon">${SVG.plug}</div><div class="s-label">التكاملات والموصلات</div><svg class="s-chevron" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></div></div><div class="from-footer">FOX AI<small>الإصدار 26.13.0</small></div>`}
-function openModelSettings(){S.screen='model-settings';render()}
-function renderModelSettings(){const currentModel=localStorage.getItem('foxSelectedModelId')||'cerebras-gemma-4-31b';contentArea.innerHTML=`<div class="agent-panel"><h3>اختيار النموذج الافتراضي</h3><p style="font-size:12px;color:var(--muted);margin-bottom:12px;">اختر النموذج المستخدم في المحادثات الجديدة</p>${availableModels.map(m=>`<div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--surface2);border-radius:8px;margin-bottom:8px;cursor:pointer;border:1px solid ${m.id===currentModel?'var(--accent)':'transparent'};" onclick="setDefaultModel('${m.id}')"><svg viewBox="0 0 24 24" style="width:20px;height:20px;fill:var(--accent);flex-shrink:0;"><path d="M12 2l1.6 5.8L19 9l-5.4 1.2L12 16l-1.6-5.8L5 9l5.4-1.2z"/></svg><div style="flex:1;"><div style="font-size:13px;font-weight:600;">${esc(m.name)}</div><div style="font-size:11px;color:var(--muted);">${esc(m.company||'')} · ${esc(m.description||'')}</div></div>${m.id===currentModel?'<span style="color:var(--accent);font-weight:700;">✓</span>':''}</div>`).join('')}</div>`}
-function setDefaultModel(id){localStorage.setItem('foxSelectedModelId',id);const m=availableModels.find(x=>x.id===id);if(m)S.selectedModel=`${m.name} · ${m.company}`;toast('تم تعيين النموذج الافتراضي');render()}
-function openTokenSettings(){S.screen='token-settings';render()}
-function renderTokenSettings(){const maxTokens=localStorage.getItem('foxMaxTokens')||'4096';const temperature=localStorage.getItem('foxTemperature')||'0.7';contentArea.innerHTML=`<div class="agent-panel"><h3>حدود النموذج</h3><div style="margin-bottom:16px;"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px;">الحد الأقصى للرموز (Max Tokens)</label><input type="number" id="maxTokensInput" value="${maxTokens}" min="100" max="8000" step="100" style="width:100%;padding:10px;border-radius:8px;background:var(--surface2);font-size:13px;"></div><div style="margin-bottom:16px;"><label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px;">درجة الحرارة (Temperature): ${temperature}</label><input type="range" id="temperatureInput" value="${temperature}" min="0" max="1" step="0.1" style="width:100%;" oninput="document.getElementById('tempValue').textContent=this.value"><div style="text-align:center;font-size:12px;color:var(--accent);font-weight:700;" id="tempValue">${temperature}</div></div><button onclick="saveTokenSettings()" style="width:100%;padding:12px;border-radius:8px;background:var(--accent);color:#fff;font-weight:700;">حفظ الإعدادات</button></div>`}
-function saveTokenSettings(){const maxTokens=document.getElementById('maxTokensInput')?.value;const temperature=document.getElementById('temperatureInput')?.value;if(maxTokens)localStorage.setItem('foxMaxTokens',maxTokens);if(temperature)localStorage.setItem('foxTemperature',temperature);toast('تم حفظ الإعدادات');render()}
-function toggleTheme(){S.theme=S.theme==='dark'?'light':'dark';localStorage.setItem('foxTheme',S.theme);document.documentElement.dataset.theme=S.theme;render()}
-function setAccent(color){S.accent=color;localStorage.setItem('foxAccent',color);document.documentElement.dataset.accent=color;render()}
-async function sendMessage(){const value=input.value.trim();if(!value)return;if(S.screen==='agent-chat'){AgentState.interactions.push({role:'user',content:value});if(!AgentState.knowledge.includes(value)){AgentState.knowledge.push(value)}input.value='';updateSendBtn();render();try{const r=await api({action:'chat',chatId:'agent-'+Date.now(),model:localStorage.getItem('foxSelectedModelId')||'cerebras-gemma-4-31b',messages:[{role:'user',content:value}],attachments:[]});const d=await r.json();if(r.ok&&d.response){AgentState.interactions.push({role:'agent',content:d.response})}else{AgentState.interactions.push({role:'agent',content:'فهمت! سأتذكر ذلك.'})}}catch{AgentState.interactions.push({role:'agent',content:'فهمت! سأتذكر ذلك.'})}AgentState.lastUpdated=new Date().toISOString();localStorage.setItem('foxAgent',JSON.stringify(AgentState));render()}else{if(activeTaskId){try{const r=await api({action:'task_intervention',taskId:activeTaskId,content:value,advance:true});const d=await r.json();if(r.ok){S.messages.push({role:'user',content:value});S.messages.push({role:'agent',content:'تم إرسال توجيهك للمهمة النشطة.'});activePlan=d.plan||activePlan;input.value='';updateSendBtn();render();return}}catch(e){}}if(!S.currentChatId)S.currentChatId=Date.now().toString();S.messages.push({role:'user',content:value});input.value='';updateSendBtn();render();try{const r=await api({action:'chat',chatId:S.currentChatId,model:localStorage.getItem('foxSelectedModelId')||'cerebras-gemma-4-31b',messages:S.messages,attachments:pendingAttachments});const d=await r.json();if(r.ok&&d.response){S.messages.push({role:'agent',content:d.response});if(d.pendingExecution){pendingTool=d.pendingExecution;S.messages.push({role:'agent',content:`🔧 اقتراح طرفية:\n${d.pendingExecution.command}`})}}else{S.messages.push({role:'agent',content:'عذراً، تعذر الاتصال بالخادم.'})}}catch(e){S.messages.push({role:'agent',content:'عذراً، حدث خطأ: '+e.message})}pendingAttachments=[];S.chatHistory=[...S.chatHistory.filter(x=>String(x.id)!==String(S.currentChatId)),{id:S.currentChatId,title:value.slice(0,60),messages:S.messages}];localStorage.setItem('foxHistory',JSON.stringify(S.chatHistory));render()}}
-function render(){renderTopNav();updateComposerVisibility();renderComposerIcons();switch(S.screen){case'home':renderHome();break;case'agent-home':renderAgentHome();break;case'agent-chat':renderAgentChat();break;case'chat':renderChat();break;case'workspace':renderWorkspace();break;case'task-events':renderTaskEvents();break;case'memory':renderMemory();break;case'search-results':renderSearchResults();break;case'settings':renderSettings();break;case'knowledge':renderKnowledge();break;case'integrations':renderIntegrations();break;case'upgrade':renderUpgrade();break;case'library':renderLibrary();break;case'projects':renderProjects();break;case'scheduled':renderScheduled();break;case'favorites':renderFavorites();break;case'file-preview':renderFilePreview();break;case'model-settings':renderModelSettings();break;case'token-settings':renderTokenSettings();break}}
-function bindEvents(){sendBtn.addEventListener('click',sendMessage);micBtn.addEventListener('click',startVoiceInput);attachBtn.addEventListener('click',()=>fileInput.click());planBtn.addEventListener('click',createPlan);fileInput.addEventListener('change',async()=>{pendingAttachments=[];const a=[];for(const f of fileInput.files){if(f.type.startsWith('image/')||f.type==='application/pdf'||!f.type.startsWith('text/')){pendingAttachments.push({name:f.name,mime:f.type||'application/octet-stream',size:f.size,data:await readDataUrl(f)});a.push(`[ملف مرفق: ${f.name}]`)}else{const tx=(await f.text()).slice(0,12000);pendingAttachments.push({name:f.name,mime:f.type||'text/plain',size:f.size,text:tx});a.push(`[ملف نصي مرفق: ${f.name}]\n${tx}`)}}input.value+=a.join('\n');updateSendBtn();toast(`تمت إضافة ${pendingAttachments.length} مرفق`)});fab.innerHTML=SVG.plus;fab.addEventListener('click',newChat);input.addEventListener('input',updateSendBtn);input.addEventListener('keydown',(e)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});ddBackdrop.addEventListener('click',closeDropdown);initLongpress()}
-async function init(){document.documentElement.dataset.theme=S.theme;document.documentElement.dataset.accent=S.accent;try{S.chatHistory=JSON.parse(localStorage.getItem('foxHistory')||'[]')}catch{}await loadModels();await loadActiveTask();const savedModelId=localStorage.getItem('foxSelectedModelId');if(savedModelId&&availableModels.length){const m=availableModels.find(x=>x.id===savedModelId);if(m)S.selectedModel=`${m.name} · ${m.company}`}bindEvents();render()}
-document.addEventListener('DOMContentLoaded',init);
+
+/* ============ الأيقونات ============ */
+const SVG = {
+  search: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>',
+  user: '<svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>',
+  chevronDown: '<svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>',
+  chevronR: '<svg viewBox="0 0 24 24"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/></svg>',
+  star: '<svg viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>',
+  folder: '<svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>',
+  library: '<svg viewBox="0 0 24 24"><path d="M4 4h3v16H4zM9 4h3v16H9zM15 4.7l3 15.6-2.9.6L12 5.3z"/></svg>',
+  clock: '<svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/></svg>',
+  spark: '<svg viewBox="0 0 24 24"><path d="M12 2l1.6 5.8L19 9l-5.4 1.2L12 16l-1.6-5.8L5 9l5.4-1.2z"/></svg>',
+  bell: '<svg viewBox="0 0 24 24"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1z"/></svg>',
+  arrowUp: '<svg viewBox="0 0 24 24"><path d="M12 4l-8 8h6v8h4v-8h6z"/></svg>',
+  mic: '<svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>',
+  attach: '<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>',
+  ai: '<svg viewBox="0 0 24 24"><path d="M12 2l1.6 5.8L19 9l-5.4 1.2L12 16l-1.6-5.8L5 9l5.4-1.2z"/></svg>',
+  robot: '<svg viewBox="0 0 24 24"><path d="M12 2a2 2 0 00-2 2v1H7a3 3 0 00-3 3v9a3 3 0 003 3h10a3 3 0 003-3v-9a3 3 0 00-3-3h-3V4a2 2 0 00-2-2zm-3 9a1.5 1.5 0 110 3 1.5 1.5 0 010-3zm6 0a1.5 1.5 0 110 3 1.5 1.5 0 010-3z"/></svg>',
+  copy: '<svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>',
+  moon: '<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 109 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 01-4.4 2.26 5.403 5.403 0 01-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/></svg>',
+  help: '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm1 17h-2v-2h2zm2.07-7.75l-.9.92A3.4 3.4 0 0013 15h-2v-.5a3.1 3.1 0 01.9-2.2l1.24-1.26A1.7 1.7 0 0013.6 9.7a1.7 1.7 0 00-1.7-1.7 1.7 1.7 0 00-1.7 1.7H8.2a3.7 3.7 0 117.4 0 3.3 3.3 0 01-.53 1.55z"/></svg>',
+  plug: '<svg viewBox="0 0 24 24"><path d="M16.5 6.5l1-1L19 7l-1 1zM8.5 6.5l-1-1L5 7l1 1zM13 3h-2v4h2zM7 9v3a5 5 0 0010 0V9zm5 12a3 3 0 003-3h-6a3 3 0 003 3z"/></svg>',
+  tools: '<svg viewBox="0 0 24 24"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9z"/></svg>',
+  more: '<svg viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg>',
+  pencil: '<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75z"/></svg>',
+  file: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zm2 16H8V4h5v5h5z"/></svg>',
+  share: '<svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>',
+  selectText: '<svg viewBox="0 0 24 24"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2zm-2 11h-6v-2h6v2zm0-4h-6V8h6v2z"/></svg>'
+};
+
+/* ============ الحالة ============ */
+const API='https://fox1-ai.abdelrhym096290.workers.dev';
+const S = {
+  screen: 'home',
+  mode: 'agent',
+  filter: 'all',
+  chatHistory: [],
+  messages: [],
+  currentChatId: null,
+  models: [],
+  selectedModel: localStorage.getItem('foxModel') || '',
+  theme: localStorage.getItem('foxTheme') || 'dark',
+  accent: localStorage.getItem('foxAccent') || 'orange',
+  favorites: JSON.parse(localStorage.getItem('foxFavorites') || '[]'),
+  task: null, taskPlan: null, taskControl: null, taskEventsList: []
+};
+let taskPollTimer = null;
+
+/* ============ العناصر ============ */
+const $ = id => document.getElementById(id);
+const topNav = $('topNav');
+const contentArea = $('contentArea');
+const fab = $('fab');
+const composerWrap = $('composerWrap');
+const input = $('input');
+const sendBtn = $('sendBtn');
+const micBtn = $('micBtn');
+const attachBtn = $('attachBtn');
+const ddBackdrop = $('ddBackdrop');
+const dropdownPanel = $('dropdownPanel');
+const fileInput = $('fileInput');
+
+/* ============ دوال مساعدة ============ */
+function esc(s) { return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function toast(m) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 2500); }
+function nav(s) { closeDropdown(); S.screen = s; render(); }
+function goBack() { nav('home'); }
+function setMode(m) { S.mode = m; S.screen = 'home'; render(); }
+function iconBtn(svgKey, onclick) { return `<button class="icon-btn" onclick="${onclick}">${SVG[svgKey]}</button>`; }
+function toBackendRole(r){ return r==='agent' ? 'assistant' : r; }
+function toLocalRole(r){ return r==='assistant' ? 'agent' : r; }
+function downloadText(filename,content){const blob=new Blob([content],{type:'text/plain;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),4000)}
+async function api(payload){
+  let token = localStorage.getItem('foxToken') || '';
+  let r = await fetch(API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload,sessionToken:token})});
+  if (r.status === 401) {
+    const pw = prompt('أدخل كلمة مرور FOX AI');
+    if (!pw) throw Error('يلزم تسجيل الدخول');
+    const lr = await fetch(API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',accessPassword:pw})});
+    const ld = await lr.json();
+    if (!lr.ok || !ld.token) throw Error(ld.error || 'فشل تسجيل الدخول');
+    localStorage.setItem('foxToken', ld.token);
+    r = await fetch(API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload,sessionToken:ld.token})});
+  }
+  const d = await r.json().catch(() => ({}));
+  return {ok:r.ok,status:r.status,data:d};
+}
+async function loadModels(){
+  try{
+    const r=await fetch(API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'models'})});
+    const d=await r.json();
+    if(d.models?.length){ S.models=d.models; if(!S.selectedModel||!S.models.find(x=>x.id===S.selectedModel)) S.selectedModel=S.models[0].id; }
+  }catch{}
+}
+function currentModelLabel(){ const m=S.models.find(x=>x.id===S.selectedModel); return m?`${m.name} · ${m.company}`:'اختيار النموذج'; }
+async function loadTaskIndex(){
+  try{
+    const r=await api({action:'list_conversations',limit:50});
+    if(!r.ok) return;
+    S.chatHistory = r.data.conversations.map(c=>({
+      id:c.id, title:c.title, taskId:c.taskId,
+      taskStatus:c.taskStatus, taskGoal:c.taskGoal, updatedAt:c.updatedAt,
+      favorite: S.favorites.includes(c.id)
+    }));
+  }catch(e){ toast('تعذر تحميل المحادثات: '+e.message); }
+}
+function mapStatusLabel(s){
+  return {planning:'قيد التخطيط',awaiting_approval:'بانتظار إذن',running:'قيد التنفيذ',recovering:'إعادة محاولة',verifying:'قيد التحقق',paused:'متوقفة مؤقتًا',completed:'مكتملة',failed:'فشلت',cancelled:'ملغاة'}[s] || 'محادثة';
+}
+function mapStatusGroup(s){
+  if(s==='completed') return 'finished';
+  if(['failed','cancelled'].includes(s)) return 'finished';
+  if(['running','recovering','verifying','awaiting_approval','planning'].includes(s)) return 'progress';
+  return 'other';
+}
+
+/* ============ القوائم المنسدلة - مصححة للهاتف ============ */
+function openDropdown(x, y, items) {
+  const panelWidth = 220;
+  const panelHeight = items.length * 46 + 20;
+  const screenWidth = window.innerWidth;
+  const screenHeight = window.innerHeight;
+  const appWidth = Math.min(screenWidth, 430);
+  
+  let leftPos = x - panelWidth + 40;
+  if (leftPos < 10) leftPos = 10;
+  if (leftPos + panelWidth > appWidth - 10) leftPos = appWidth - panelWidth - 10;
+  
+  let topPos = y + 10;
+  if (topPos + panelHeight > screenHeight - 10) topPos = y - panelHeight - 10;
+  if (topPos < 60) topPos = 60;
+  
+  dropdownPanel.innerHTML = items.map(it => {
+    if (it.divider) return '<div class="dd-divider"></div>';
+    return `<div class="dd-item ${it.danger ? 'danger' : ''}" onclick="${it.action}">${it.icon}<span>${esc(it.label)}</span></div>`;
+  }).join('');
+  
+  dropdownPanel.style.position = 'fixed';
+  dropdownPanel.style.top = topPos + 'px';
+  dropdownPanel.style.left = leftPos + 'px';
+  dropdownPanel.style.right = 'auto';
+  dropdownPanel.style.bottom = 'auto';
+  dropdownPanel.style.maxWidth = panelWidth + 'px';
+  dropdownPanel.style.width = 'auto';
+  dropdownPanel.style.zIndex = '1000';
+  
+  dropdownPanel.className = 'dropdown-panel open';
+  ddBackdrop.classList.add('open');
+}
+
+function closeDropdown() { 
+  dropdownPanel.classList.remove('open'); 
+  ddBackdrop.classList.remove('open'); 
+}
+function openModal(html){
+  const sheet=$('modalSheet'), backdrop=$('modalBackdrop');
+  sheet.innerHTML = html;
+  sheet.classList.add('open'); backdrop.classList.add('open');
+}
+function closeModal(){
+  $('modalSheet').classList.remove('open'); $('modalBackdrop').classList.remove('open');
+}
+
+/* ============ الشريط العلوي ============ */
+function renderTopNav() {
+  let left = '', center = '', right = '';
+  
+  if (S.screen === 'home') {
+    right = iconBtn('user', "nav('settings')");
+    center = `<div class="toggle-wrap">
+      <button class="${S.mode === 'agent' ? 'active' : ''}" onclick="setMode('agent')">Agent</button>
+      <button class="${S.mode === 'chat' ? 'active' : ''}" onclick="setMode('chat')">محادثة</button>
+    </div>`;
+    left = iconBtn('search', "nav('search')");
+  } else if (S.screen === 'task') {
+    right = iconBtn('chevronR', 'goBack()');
+    center = `<div class="nav-title">${esc((S.taskPlan?.goal||S.task?.goal||'مهمة').slice(0,22))}</div>`;
+    left = iconBtn('more', 'openTaskMenu(event)');
+  } else if (S.screen === 'chat') {
+    right = iconBtn('chevronR', 'goBack()');
+    center = `<button class="model-pill" onclick="openModelMenu(event)"><span>${esc(currentModelLabel())}</span>${SVG.chevronDown}</button>`;
+    left = iconBtn('more', 'openChatMenu(event)');
+  } else if (S.screen === 'settings') {
+    right = iconBtn('chevronR', 'goBack()');
+    center = `<div class="nav-title">الإعدادات</div>`;
+    left = '';
+  } else if (S.screen === 'search') {
+    right = iconBtn('chevronR', 'goBack()');
+    center = `<input id="searchInput" placeholder="بحث في المحادثات والملفات" style="width:100%;background:var(--surface2);border-radius:12px;padding:8px 12px;font-size:13px;text-align:right" oninput="runSearch(this.value)">`;
+    left = '';
+  } else {
+    right = iconBtn('chevronR', 'goBack()');
+    const titles = {library:'الملفات', projects:'المشاريع', scheduled:'المهام المجدولة'};
+    center = `<div class="nav-title">${titles[S.screen] || ''}</div>`;
+    left = '';
+  }
+  
+  topNav.innerHTML = `<div class="tn-side">${right}</div><div class="tn-center">${center}</div><div class="tn-side">${left}</div>`;
+}
+
+/* ============ شريط الإدخال ============ */
+function updateComposerVisibility() {
+  const showComposer = S.screen === 'chat' || S.screen === 'task';
+  composerWrap.classList.toggle('visible', showComposer);
+  fab.classList.toggle('hidden', S.screen !== 'home');
+  input.placeholder = S.screen === 'task' ? 'وجّه المهمة دون إلغائها...' : 'إرسال رسالة إلى FOX AI';
+}
+
+function renderComposerIcons() {
+  sendBtn.innerHTML = SVG.arrowUp;
+  micBtn.innerHTML = SVG.mic;
+  attachBtn.innerHTML = SVG.attach;
+}
+
+function updateSendBtn() {
+  sendBtn.classList.toggle('btn-send-active', input.value.trim().length > 0);
+}
+
+/* ============ الشاشة الرئيسية ============ */
+function renderHome() {
+  const filters = [['all','الكل'],['progress','قيد التنفيذ'],['finished','مكتملة'],['favorite','المفضلة']];
+  const chips = filters.map(([k,l])=>`<button class="shortcut-card" style="width:auto;height:36px;flex-direction:row;padding:0 14px;gap:6px;${S.filter===k?'background:var(--accent);border-color:var(--accent)':''}" onclick="setFilter('${k}')"><span style="${S.filter===k?'color:#fff':''}">${esc(l)}</span></button>`).join('');
+  let list = S.chatHistory;
+  if(S.filter==='progress') list = list.filter(c=>mapStatusGroup(c.taskStatus)==='progress');
+  else if(S.filter==='finished') list = list.filter(c=>mapStatusGroup(c.taskStatus)==='finished');
+  else if(S.filter==='favorite') list = list.filter(c=>c.favorite);
+
+  const chatRows = list.length ? list.map(c => {
+    const dotClass = mapStatusGroup(c.taskStatus)==='progress'?'running':mapStatusGroup(c.taskStatus)==='finished'?(c.taskStatus==='completed'?'finished':'failed'):'';
+    const openFn = c.taskId ? `openTask('${esc(c.taskId)}')` : `openChat('${esc(c.id)}')`;
+    return `<div class="chat-row">
+      <div class="chat-row-main" onclick="${openFn}">
+        ${SVG.ai}<span>${esc(c.title||'محادثة')}</span>
+        ${c.taskStatus?`<span class="dot ${dotClass}" style="width:7px;height:7px;border-radius:50%;background:${dotClass==='running'?'var(--accent)':dotClass==='finished'?'#2ecc71':dotClass==='failed'?'#e74c3c':'var(--faint)'};flex-shrink:0"></span>`:''}
+        ${c.favorite?'<span style="color:#f1c40f">★</span>':''}
+      </div>
+      <div class="chat-row-options">
+        <button class="more-btn" onclick="openChatRowMenu(event, '${esc(c.id)}')">${SVG.more}</button>
+      </div>
+    </div>`;
+  }).join('') : `<p style="text-align:center;color:var(--faint);margin-top:50px;">لا توجد محادثات في هذا التصنيف</p>`;
+
+  contentArea.innerHTML = `
+    <div class="shortcuts-row">
+      <div class="shortcut-card" onclick="nav('scheduled')">${SVG.clock}<span>مجدولة</span></div>
+      <div class="shortcut-card" onclick="nav('library')">${SVG.library}<span>الملفات</span></div>
+      <div class="shortcut-card" onclick="nav('projects')">${SVG.folder}<span>المشاريع</span></div>
+    </div>
+    <div class="shortcuts-row" id="filterRow">${chips}</div>
+    <div class="recent-title">${S.mode==='agent'?'المهام الأخيرة':'المحادثات الأخيرة'}</div>
+    ${chatRows}
+  `;
+}
+function setFilter(f){ S.filter=f; render(); }
+function toggleFavorite(id){
+  if(S.favorites.includes(id)) S.favorites=S.favorites.filter(x=>x!==id); else S.favorites.push(id);
+  localStorage.setItem('foxFavorites', JSON.stringify(S.favorites));
+  const c=S.chatHistory.find(x=>x.id===id); if(c) c.favorite=S.favorites.includes(id);
+  closeDropdown(); render();
+}
+
+/* ============ تفاصيل المهمة (الوكيل المستقل الحقيقي) ============ */
+async function openTask(taskId){
+  S.task = {id:taskId}; S.taskPlan=null; S.taskControl=null; S.taskEventsList=[];
+  S.screen = 'task'; render();
+  await refreshTaskDetail(taskId, true);
+}
+async function refreshTaskDetail(taskId, isFirstLoad){
+  try{
+    const r = await api({action:'get_task_control', taskId});
+    if(!r.ok){ toast(r.data.error||'تعذر تحميل المهمة'); return; }
+    S.task = r.data.task; S.taskPlan = r.data.plan; S.taskControl = r.data.control;
+    if(S.screen==='task') renderTaskDetail();
+    const status = S.taskControl?.status || S.task?.status;
+    if(!['completed','failed','cancelled'].includes(status)) scheduleTaskAdvance(taskId); else stopTaskPolling();
+  }catch(e){ toast(e.message); }
+}
+function scheduleTaskAdvance(taskId){
+  if(taskPollTimer && taskPollTimer._id===taskId) return;
+  stopTaskPolling();
+  taskPollTimer = setInterval(()=>advanceTaskTick(taskId), 3500);
+  taskPollTimer._id = taskId;
+}
+function stopTaskPolling(){ if(taskPollTimer){ clearInterval(taskPollTimer); taskPollTimer=null; } }
+async function advanceTaskTick(taskId){
+  try{
+    const r = await api({action:'advance_task', taskId, maxSteps:1});
+    if(r.ok){
+      S.task=r.data.task; S.taskPlan=r.data.plan;
+      if(S.screen==='task') renderTaskDetail();
+    }
+    const status=S.task?.status;
+    if(['completed','failed','cancelled'].includes(status)) stopTaskPolling();
+  }catch{}
+}
+const STATUS_LABEL = {received:'مستلمة',submitted:'مستلمة',clarifying:'بحاجة توضيح',planning:'قيد التخطيط',awaiting_approval:'بانتظار الاعتماد',waiting_for_input:'بانتظار توضيح منك',running:'قيد التنفيذ الذاتي',verifying:'قيد التحقق',producing:'قيد الإنتاج',recovering:'إعادة محاولة',paused:'متوقفة مؤقتًا',completed:'مكتملة',failed:'فشلت',cancelled:'ملغاة'};
+const STEP_LABEL = {pending:'قيد الانتظار',running:'قيد التنفيذ',awaiting_approval:'بانتظار إذن التنفيذ',completed:'مكتملة',failed:'فشلت',retrying:'إعادة محاولة',verifying:'قيد التحقق'};
+function renderTaskDetail(){
+  const t=S.task, plan=S.taskPlan, control=S.taskControl;
+  if(!t){ contentArea.innerHTML='<div class="agent-activity"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="50 20"/></svg><span>جارٍ التحميل...</span></div>'; return; }
+  const status = control?.status || t.status;
+  const group = mapStatusGroup(status);
+  const goal = plan?.goal || t.goal || 'مهمة';
+  let html = `<div class="task-goal-card"><b>${esc(goal)}</b><div class="status-line"><span class="status-dot ${group==='progress'?'running':group==='finished'?(status==='completed'?'finished':'failed'):''}"></span>${STATUS_LABEL[status]||status} • Agent Mode</div></div>`;
+
+  if(!plan){ html += `<div class="agent-activity"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="50 20"/></svg><span>جارٍ تحميل الخطة...</span></div>`; contentArea.innerHTML=html; return; }
+
+  const needsApproval = ['planning'].includes(t.status);
+  if(needsApproval) html += `<div class="recent-title" style="text-align:right">مراجعة الخطة قبل التنفيذ</div>`;
+
+  html += plan.steps.map((s,i)=>{
+    const cls = s.status==='completed'?'done':s.status==='failed'?'fail':s.status==='running'?'run':s.status==='awaiting_approval'?'await':'';
+    const icon = s.status==='completed'?'✓':s.status==='failed'?'×':s.status==='running'?'…':s.status==='awaiting_approval'?'!':(i+1);
+    const sub = needsApproval ? esc((s.description||'').slice(0,90)) : (STEP_LABEL[s.status]||s.status)+(s.error?' — '+esc(String(s.error).slice(0,90)):'');
+    return `<div class="step-row ${cls}"><span class="step-dot">${icon}</span><span style="flex:1"><div class="step-title">${esc(s.title)}</div><div class="step-sub">${sub}</div></span></div>`;
+  }).join('');
+
+  if(needsApproval){
+    html += `<button class="teach-btn" style="margin-top:10px" onclick="approveTaskClick('${t.id}','${plan.steps[0]?.id||''}')">${SVG.check} اعتماد الخطة وتشغيلها تلقائيًا</button>`;
+  } else if(!['completed','failed','cancelled'].includes(t.status)){
+    html += `<div class="task-controls">
+      <button class="${status==='paused'?'primary':''}" onclick="taskControlAction('${t.id}','${status==='paused'?'resume_task':'pause_task'}')">${status==='paused'?'استئناف':'إيقاف مؤقت'}</button>
+      <button class="danger" onclick="if(confirm('إلغاء هذه المهمة نهائيًا؟'))taskControlAction('${t.id}','cancel_task')">إلغاء</button>
+      <button onclick="loadTaskEvents('${t.id}')">سجل الأحداث</button>
+    </div>`;
+  }
+
+  const awaiting = plan.steps.find(s=>s.status==='awaiting_approval' && s.command);
+  if(awaiting){
+    html += `<div class="approval-box"><b>الخطوة «${esc(awaiting.title)}» تحتاج تنفيذ أمر فعلي:</b><div class="terminal-box">${esc(awaiting.command)}<span class="cursor"></span></div><div class="row"><button class="approve" onclick="approveStepTool('${t.id}','${awaiting.id}')">موافقة وتشغيل</button><button class="reject" onclick="rejectStepTool('${t.id}','${awaiting.id}')">رفض</button></div></div>`;
+  } else if(t.status==='waiting_for_input'){
+    html += `<div class="approval-box"><b>المهمة تحتاج توضيحًا منك:</b><div style="margin-top:6px">${esc((plan.steps.find(s=>s.id===t.currentStepId)?.output)||'يحتاج الوكيل معلومة إضافية لمتابعة العمل.')}</div></div>`;
+  } else {
+    const runningExp = plan.steps.find(s=>s.status==='awaiting_approval')?.experimentId;
+    if(['running','recovering'].includes(status)){
+      const lastDone=[...plan.steps].reverse().find(s=>s.status==='completed'&&s.output);
+      if(lastDone) html += `<div class="terminal-box">${esc(String(lastDone.output).slice(-500))}<span class="cursor"></span></div>`;
+    }
+  }
+
+  if(t.status==='completed'){
+    html += `<div class="result-box"><b>✓ اكتملت المهمة</b><button onclick="downloadTaskResult()">⬇ تنزيل النتيجة</button></div>`;
+  }
+
+  html += `<div id="eventsPanel"></div>`;
+  contentArea.innerHTML = html;
+}
+async function approveTaskClick(taskId, firstStepId){
+  toast('يبدأ التنفيذ الذاتي...');
+  try{
+    const r = await api({action:'step_control', taskId, stepId:firstStepId, action:'start_step'});
+    if(!r.ok) throw Error(r.data.error||'تعذر اعتماد الخطة');
+    S.task=r.data.task; S.taskPlan=r.data.plan; renderTaskDetail();
+    scheduleTaskAdvance(taskId);
+  }catch(e){ toast(e.message); }
+}
+async function taskControlAction(taskId, action){
+  try{
+    const r = await api({action, taskId});
+    if(!r.ok) throw Error(r.data.error||'تعذر تغيير حالة المهمة');
+    toast(action==='pause_task'?'تم الإيقاف المؤقت':action==='resume_task'?'تم الاستئناف':'تم الإلغاء');
+    if(action==='resume_task') scheduleTaskAdvance(taskId); else stopTaskPolling();
+    await refreshTaskDetail(taskId);
+  }catch(e){ toast(e.message); }
+}
+async function steerSend(){
+  const note = input.value.trim();
+  if(!note || !S.task?.id) return;
+  input.value=''; updateSendBtn();
+  try{
+    const r = await api({action:'task_intervention', taskId:S.task.id, content:note});
+    if(!r.ok) throw Error(r.data.error||'تعذر إرسال التوجيه');
+    S.task=r.data.task; S.taskPlan=r.data.plan; renderTaskDetail();
+    toast('تم إرسال التوجيه دون إلغاء المهمة');
+    scheduleTaskAdvance(S.task.id);
+  }catch(e){ toast(e.message); }
+}
+async function approveStepTool(taskId, stepId){
+  const step = S.taskPlan?.steps.find(s=>s.id===stepId);
+  if(!step) return;
+  toast('جارٍ إرسال الأمر إلى GitHub Actions...');
+  try{
+    const proposal = {id:crypto.randomUUID(), kind:'terminal', command:step.command, language:step.language||'bash'};
+    const r = await api({action:'run_tool', chatId:S.task.conversationId, proposal, approved:true, taskId, stepId});
+    if(!r.ok){
+      if(r.data.needsApproval && /حصة/.test(r.data.reason||'')){
+        const choice = prompt('انتهت حصة تنفيذ الطرفية. اكتب 5 أو 10 لمنح إذن جديد.');
+        if(choice==='5'||choice==='10'){
+          const r2 = await api({action:'run_tool', chatId:S.task.conversationId, proposal, approved:true, taskId, stepId, renewBudget:Number(choice)});
+          if(!r2.ok) throw Error(r2.data.error||r2.data.reason||'تعذر تشغيل التجربة');
+          toast('تم الإرسال، بانتظار GitHub Actions...'); scheduleTaskAdvance(taskId); return;
+        }
+      }
+      throw Error(r.data.error||r.data.reason||'تعذر تشغيل التجربة');
+    }
+    toast('تم الإرسال، بانتظار GitHub Actions...');
+    S.pendingExperimentId = r.data.experiment.id;
+    scheduleTaskAdvance(taskId);
+  }catch(e){ toast(e.message); refreshTaskDetail(taskId); }
+}
+async function rejectStepTool(taskId, stepId){
+  try{
+    const r = await api({action:'step_control', taskId, stepId, action:'fail_step', error:'رفض المستخدم تنفيذ الأمر المقترح'});
+    if(!r.ok) throw Error(r.data.error||'تعذر رفض الخطوة');
+    S.task=r.data.task; S.taskPlan=r.data.plan; renderTaskDetail();
+    toast('تم رفض تنفيذ الأمر');
+  }catch(e){ toast(e.message); }
+}
+function downloadTaskResult(){
+  if(!S.taskPlan) return;
+  const combined = S.taskPlan.steps.map(s=>`## ${s.title}\n${s.output||''}`).join('\n\n');
+  downloadText(`${(S.taskPlan.goal||'result').slice(0,40).replace(/[\\/:*?"<>|]/g,'')||'نتيجة'}.txt`, combined);
+}
+async function loadTaskEvents(taskId){
+  try{
+    const r = await api({action:'task_events', taskId});
+    if(!r.ok) throw Error(r.data.error||'تعذر تحميل السجل');
+    const panel = $('eventsPanel');
+    if(!panel) return;
+    panel.innerHTML = '<div class="recent-title" style="text-align:right">سجل الأحداث</div>' + (r.data.events.length ? r.data.events.map((e,i)=>
+      `<div class="event-card" onclick="this.classList.toggle('open')"><div class="ev-head"><b>${esc(e.type)}</b><span>${new Date(e.created_at).toLocaleTimeString('ar')}</span></div><pre>${esc(JSON.stringify(e.payload,null,2))}</pre></div>`
+    ).join('') : '<p style="text-align:center;color:var(--faint);padding:14px">لا توجد أحداث بعد</p>');
+  }catch(e){ toast(e.message); }
+}
+function openTaskMenu(event){
+  event.stopPropagation();
+  const t=S.task; if(!t) return;
+  openDropdown(event.clientX, event.clientY, [
+    {icon:SVG.pencil, label:'إعادة تسمية', action:`renameChat('${t.conversationId}')`},
+    {icon:SVG.copy, label:'سجل الأحداث', action:`loadTaskEvents('${t.id}')`},
+    {divider:true},
+    {icon:SVG.trash, label:'حذف نهائي', action:`deleteChat('${t.conversationId}')`, danger:true}
+  ]);
+}
+
+/* ============ المحادثة العادية ============ */
+function openChat(id) {
+  const c = S.chatHistory.find(c => String(c.id) === String(id));
+  if (!c) return;
+  S.currentChatId = id;
+  S.messages = [];
+  nav('chat');
+  hydrateChatMessages(id);
+}
+
+function newChat() {
+  S.messages = [];
+  S.currentChatId = 'ch'+Date.now();
+  nav('chat');
+}
+
+async function hydrateChatMessages(id){
+  try{
+    const r = await api({action:'get_messages', chatId:id});
+    if(r.ok && Array.isArray(r.data.messages)){
+      S.messages = r.data.messages.map(x=>({role:toLocalRole(x.role), content:x.content}));
+      if(S.screen==='chat') renderChat();
+    }
+  }catch(e){ toast(e.message); }
+}
+
+function renderChat() {
+  if (!S.messages.length) {
+    contentArea.innerHTML = `<div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">${SVG.robot}</div><h2>ابدأ محادثة جديدة</h2><p>اكتب رسالتك الأولى</p></div>`;
+    return;
+  }
+  contentArea.innerHTML = S.messages.map((m, i) => m.pending ? `
+    <div class="message agent"><div class="message-content"><div class="bubble"><span class="typing-dots">●●●</span></div></div></div>` : `
+    <div class="message ${m.role === 'user' ? 'user' : 'agent'}">
+      <div class="message-content">
+        <div class="bubble">${esc(m.content)}</div>
+        <button class="msg-options-btn" onclick="openMessageMenu(event, ${i})">${SVG.more}</button>
+      </div>
+    </div>
+  `).join('');
+  contentArea.scrollTop = contentArea.scrollHeight;
+}
+
+/* ============ قوائم الخيارات ============ */
+function openChatRowMenu(event, id) {
+  event.stopPropagation();
+  openDropdown(event.clientX, event.clientY, [
+    {icon: SVG.pencil, label: 'إعادة تسمية', action: `renameChat('${id}')`},
+    {icon: SVG.star, label: S.favorites.includes(id)?'إزالة من المفضلة':'إضافة للمفضلة', action: `toggleFavorite('${id}')`},
+    {icon: SVG.share, label: 'مشاركة', action: `shareChat('${id}')`},
+    {icon: SVG.copy, label: 'نسخ النص', action: `copyChat('${id}')`},
+    {divider: true},
+    {icon: SVG.trash, label: 'حذف', action: `deleteChat('${id}')`, danger: true}
+  ]);
+}
+
+function openMessageMenu(event, index) {
+  event.stopPropagation();
+  openDropdown(event.clientX, event.clientY, [
+    {icon: SVG.selectText, label: 'اختر النص', action: `selectMessageText(${index})`},
+    {icon: SVG.copy, label: 'نسخ', action: `copyMessage(${index})`},
+    {icon: SVG.share, label: 'مشاركة', action: `shareMessage(${index})`},
+    {icon: SVG.pencil, label: 'تعديل', action: `editMessage(${index})`},
+    {divider: true},
+    {icon: SVG.trash, label: 'حذف', action: `deleteMessage(${index})`, danger: true}
+  ]);
+}
+
+function openModelMenu(event) {
+  event.stopPropagation();
+  if(!S.models.length){ toast('جارٍ تحميل النماذج...'); return; }
+  openDropdown(event.clientX, event.clientY, S.models.map(m => ({
+    icon: SVG.spark,
+    label: `${m.name} · ${m.company}`,
+    action: `chooseModel('${m.id}')`
+  })));
+}
+
+function openChatMenu(event) {
+  event.stopPropagation();
+  const id = S.currentChatId;
+  openDropdown(event.clientX, event.clientY, [
+    {icon: SVG.star, label: S.favorites.includes(id)?'إزالة من المفضلة':'إضافة للمفضلة', action: `toggleFavorite('${id}')`},
+    {icon: SVG.pencil, label: 'إعادة تسمية', action: `renameChat('${id}')`},
+    {icon: SVG.file, label: 'عرض الملفات', action: "nav('library')"},
+    {divider: true},
+    {icon: SVG.trash, label: 'حذف المحادثة', action: `deleteChat('${id}')`, danger: true}
+  ]);
+}
+
+/* ============ إجراءات القوائم ============ */
+function selectMessageText(index) {
+  const m = S.messages[index];
+  if (!m) return;
+  closeDropdown();
+  setTimeout(() => {
+    const bubbles = document.querySelectorAll('.message .bubble');
+    if (bubbles[index]) {
+      const bubble = bubbles[index];
+      const range = document.createRange();
+      range.selectNodeContents(bubble);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      toast('تم تحديد النص');
+    }
+  }, 100);
+}
+
+async function renameChat(id) {
+  const c = S.chatHistory.find(c => String(c.id) === String(id));
+  const newName = prompt('أدخل الاسم الجديد:', c?.title||'');
+  if (!newName || !newName.trim()) return;
+  closeDropdown();
+  try{
+    const r = await api({action:'rename_conversation', chatId:id, title:newName.trim()});
+    if(!r.ok) throw Error(r.data.error||'تعذر إعادة التسمية');
+    if(c) c.title = newName.trim();
+    render(); toast('تمت إعادة التسمية');
+  }catch(e){ toast(e.message); }
+}
+
+function deleteChat(id) {
+  openModal(`<h3 style="color:#e74c3c">تأكيد الحذف</h3><p style="font-size:12px;color:var(--muted);text-align:center;margin:8px 0 14px;">سيُحذف نهائيًا من الخادم ولا يمكن استرجاعه.</p>
+    <button class="teach-btn" style="background:#e74c3c" onclick="doDeleteChat('${id}')">${SVG.trash} تأكيد الحذف نهائيًا</button>
+    <button class="teach-btn" style="background:var(--surface2);color:var(--ink);margin-top:8px" onclick="closeModal()">إلغاء</button>`);
+}
+async function doDeleteChat(id){
+  closeModal();
+  try{
+    const r = await api({action:'delete_conversation', chatId:id});
+    if(!r.ok) throw Error(r.data.error||'تعذر الحذف');
+    S.chatHistory = S.chatHistory.filter(c => String(c.id) !== String(id));
+    if(S.currentChatId===id){ S.currentChatId=null; S.messages=[]; }
+    render(); toast('تم الحذف نهائيًا');
+  }catch(e){ toast(e.message); }
+}
+
+async function copyChat(id) {
+  try{
+    const r = await api({action:'get_messages', chatId:id});
+    if(!r.ok) throw Error('تعذر تحميل المحادثة');
+    const text = r.data.messages.map(m => `${m.role === 'user' ? 'المستخدم' : 'الوكيل'}: ${m.content}`).join('\n');
+    navigator.clipboard?.writeText(text).catch(() => {});
+    toast('تم نسخ المحادثة');
+  }catch(e){ toast(e.message); }
+}
+
+function shareChat(id) {
+  const c = S.chatHistory.find(c => String(c.id) === String(id));
+  openSharePreview(c?.title||'محادثة FOX AI', ()=>{
+    if (navigator.share) navigator.share({text: c?.title||'محادثة FOX AI'}).catch(() => {});
+    else { navigator.clipboard?.writeText(c?.title||''); toast('تم نسخ العنوان (لا توجد مشاركة على هذا الجهاز)'); }
+  });
+}
+function openSharePreview(previewText, onConfirm){
+  window._shareConfirm = onConfirm;
+  openModal(`<h3>معاينة المشاركة</h3><div style="background:var(--surface2);border-radius:10px;padding:12px;margin:10px 0;font-size:12px;max-height:200px;overflow:auto;white-space:pre-wrap">${esc(previewText)}</div>
+    <button class="teach-btn" onclick="window._shareConfirm();closeModal()">${SVG.share} مشاركة</button>
+    <button class="teach-btn" style="background:var(--surface2);color:var(--ink);margin-top:8px" onclick="closeModal()">إلغاء</button>`);
+}
+
+function copyMessage(index) {
+  const m = S.messages[index];
+  if (m) { navigator.clipboard?.writeText(m.content).catch(() => {}); toast('تم النسخ'); }
+}
+
+function shareMessage(index) {
+  const m = S.messages[index];
+  if (!m) return;
+  openSharePreview(m.content, ()=>{
+    if(navigator.share) navigator.share({text:m.content}).catch(()=>{});
+    else { navigator.clipboard?.writeText(m.content); toast('تم النسخ (لا توجد مشاركة على هذا الجهاز)'); }
+  });
+}
+
+function editMessage(index) {
+  const m = S.messages[index];
+  if (m) {
+    const newText = prompt('عدل النص:', m.content);
+    if (newText && newText.trim()) {
+      m.content = newText.trim();
+      render();
+    }
+  }
+}
+
+function deleteMessage(index) {
+  S.messages.splice(index, 1);
+  render();
+}
+
+async function chooseModel(id) {
+  S.selectedModel = id;
+  localStorage.setItem('foxModel', id);
+  closeDropdown(); render();
+}
+
+/* ============ إرسال الرسائل ============ */
+async function sendMessage() {
+  const value = input.value.trim();
+  if (!value) return;
+
+  if (S.screen === 'task') { await steerSend(); return; }
+
+  if (!S.currentChatId) S.currentChatId = 'ch'+Date.now();
+  const chatId = S.currentChatId;
+  S.messages.push({role: 'user', content: value});
+  input.value = ''; updateSendBtn();
+  S.messages.push({role:'agent', content:'', pending:true});
+  render();
+
+  try{
+    if (S.mode === 'agent') {
+      const r = await api({action:'plan_task', chatId, model:S.selectedModel, task:value});
+      S.messages.pop();
+      if(!r.ok) throw Error(r.data.error||'تعذر بناء الخطة');
+      S.messages.push({role:'agent', content:`أنشأت خطة من ${r.data.plan.steps?.length||0} خطوة/خطوات. جارٍ فتح صفحة المهمة للمراجعة والاعتماد...`});
+      render();
+      await loadTaskIndex();
+      setTimeout(()=>openTask(r.data.task.id), 500);
+    } else {
+      const history = S.messages.filter(m=>!m.pending).map(m=>({role:toBackendRole(m.role), content:m.content}));
+      const r = await api({action:'chat', chatId, model:S.selectedModel, messages:history, attachments:S.pendingAttachments||[]});
+      S.messages.pop();
+      if(!r.ok||r.data.error) throw Error(r.data.error||'تعذر الاتصال');
+      S.messages.push({role:'agent', content:r.data.response||'لا يوجد رد'});
+      S.pendingAttachments=[];
+      render();
+      await loadTaskIndex();
+    }
+  }catch(e){
+    S.messages = S.messages.filter(m=>!m.pending);
+    S.messages.push({role:'agent', content:'تعذر إكمال الطلب: '+e.message});
+    render();
+  }
+}
+
+/* ============ الإعدادات ============ */
+function toggleTheme() {
+  S.theme = S.theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('foxTheme', S.theme);
+  document.documentElement.dataset.theme = S.theme;
+  render();
+}
+
+function setAccent(color) {
+  S.accent = color;
+  localStorage.setItem('foxAccent', color);
+  document.documentElement.dataset.accent = color;
+  render();
+}
+
+function renderSettings() {
+  contentArea.innerHTML = `
+    <div class="plan-card">
+      <h3 style="text-align:center;margin-bottom:10px;font-size:13px;">لون التطبيق</h3>
+      <div class="color-dots">
+        <div class="color-dot orange ${S.accent === 'orange' ? 'active' : ''}" onclick="setAccent('orange')"></div>
+        <div class="color-dot blue ${S.accent === 'blue' ? 'active' : ''}" onclick="setAccent('blue')"></div>
+        <div class="color-dot green ${S.accent === 'green' ? 'active' : ''}" onclick="setAccent('green')"></div>
+        <div class="color-dot red ${S.accent === 'red' ? 'active' : ''}" onclick="setAccent('red')"></div>
+      </div>
+    </div>
+    
+    <div class="settings-group">
+      <div class="settings-row" onclick="toggleTheme()">
+        <div class="s-icon">${SVG.moon}</div>
+        <div class="s-label">المظهر</div>
+        <div class="s-value">${S.theme === 'light' ? 'فاتح' : 'داكن'}</div>
+        <svg class="s-chevron" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+      </div>
+      <div class="settings-row" style="cursor:default">
+        <div class="s-icon">${SVG.spark}</div>
+        <div class="s-label">النموذج الافتراضي</div>
+        <select onchange="setDefaultModel(this.value)">${S.models.map(m=>`<option value="${m.id}" ${m.id===S.selectedModel?'selected':''}>${esc(m.name)} · ${esc(m.company)}</option>`).join('')}</select>
+      </div>
+      <div class="settings-row" onclick="openMemoryFromSettings()">
+        <div class="s-icon">${SVG.help}</div>
+        <div class="s-label">الذاكرة والسياق</div>
+        <div class="s-value">${S.currentChatId?'للمحادثة الحالية':'افتح محادثة أولًا'}</div>
+        <svg class="s-chevron" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+      </div>
+      <div class="settings-row" style="opacity:.55;cursor:default">
+        <div class="s-icon">${SVG.plug}</div>
+        <div class="s-label">التكاملات والموصلات</div>
+        <div class="s-value">غير متاحة بعد</div>
+      </div>
+    </div>
+    
+    <div class="from-footer">FOX AI<small>الإصدار 26.13.0</small></div>`;
+}
+async function setDefaultModel(id){
+  S.selectedModel=id; localStorage.setItem('foxModel', id);
+  try{ await api({action:'settings_set', key:'default_model', value:id}); }catch{}
+  toast('تم حفظ النموذج الافتراضي');
+}
+function openMemoryFromSettings(){
+  if(!S.currentChatId){ toast('افتح محادثة أولًا لعرض ذاكرتها'); return; }
+  openMemoryPanel(S.currentChatId);
+}
+async function openMemoryPanel(chatId){
+  try{
+    const r = await api({action:'get_memory', chatId});
+    if(!r.ok) throw Error(r.data.error||'تعذر تحميل الذاكرة');
+    openModal(`<h3>الذاكرة والسياق</h3><textarea id="memText" style="width:100%;min-height:160px;background:var(--surface2);border-radius:10px;padding:10px;font-size:12px;color:var(--ink);margin:10px 0">${esc(r.data.content||'')}</textarea>
+      <button class="teach-btn" onclick="saveMemoryFromModal('${chatId}')">${SVG.check} حفظ التعديل</button>`);
+  }catch(e){ toast(e.message); }
+}
+async function saveMemoryFromModal(chatId){
+  const v = $('memText')?.value||'';
+  try{
+    const r = await api({action:'memory_update', chatId, content:v});
+    if(!r.ok) throw Error(r.data.error||'تعذر الحفظ');
+    closeModal(); toast('تم حفظ الذاكرة');
+  }catch(e){ toast(e.message); }
+}
+
+/* ============ باقي الشاشات ============ */
+async function renderLibrary() {
+  contentArea.innerHTML = `<div class="recent-title">الملفات</div><div class="agent-activity"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="50 20"/></svg><span>جارٍ التحميل...</span></div>`;
+  if(!S.currentChatId && !S.chatHistory.length){ contentArea.innerHTML = `<div class="recent-title">الملفات</div><p style="text-align:center;color:var(--faint);margin-top:40px">افتح محادثة لعرض ملفاتها</p>`; return; }
+  const chatId = S.currentChatId || S.chatHistory[0]?.id;
+  if(!chatId) return;
+  try{
+    const r = await api({action:'workspace_status', chatId});
+    if(!r.ok) throw Error(r.data.error||'تعذر التحميل');
+    const files = r.data.workspace.files;
+    contentArea.innerHTML = `<div class="recent-title">الملفات</div>` + (files.length ? files.map(f=>`
+      <div class="file-card">${SVG.file}<div class="fc-info"><b>${esc(f.name)}</b><small>${esc(f.mime)} · ${Math.ceil(Number(f.size||0)/1024)}KB · ${f.storage==='github_release'?'GitHub Release':'D1'}</small></div>
+      ${f.asset_id?`<button class="more-btn" onclick="downloadWorkspaceFile('${f.asset_id}','${esc(f.name)}')">${SVG.arrowUp}</button>`:''}
+      </div>`).join('') : `<div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">${SVG.library}</div><h2>لا توجد ملفات</h2><p>ستظهر ملفاتك هنا</p></div>`);
+  }catch(e){ toast(e.message); }
+}
+async function downloadWorkspaceFile(assetId, name){
+  try{
+    const token = localStorage.getItem('foxToken')||'';
+    const r = await fetch(API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'download_file', assetId, sessionToken:token})});
+    if(!r.ok) throw Error('فشل التنزيل');
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=name; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+  }catch(e){ toast(e.message); }
+}
+function renderProjects() {
+  contentArea.innerHTML = `<div class="recent-title">المشاريع</div><div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">${SVG.folder}</div><h2>لا توجد مشاريع</h2><p>هذه الميزة غير مرتبطة بخادم بعد</p></div>`;
+}
+function renderScheduled() {
+  contentArea.innerHTML = `<div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">${SVG.clock}</div><h2>لا توجد مهام مجدولة</h2><p>هذه الميزة غير مرتبطة بخادم بعد</p></div>`;
+}
+function renderFavorites() {
+  contentArea.innerHTML = `<div class="empty-state" style="text-align:center;padding:60px 24px;"><div style="width:48px;height:48px;margin:0 auto 16px;opacity:.6;">${SVG.star}</div><h2>لا توجد مفضلات</h2><p>أضف عناصر للمفضلة من القائمة الرئيسية</p></div>`;
+}
+async function renderSearch(){
+  contentArea.innerHTML = `<div id="searchResults" style="margin-top:10px"><p style="text-align:center;color:var(--faint);margin-top:40px">اكتب للبحث في الرسائل والملفات والمحادثات</p></div>`;
+  setTimeout(()=>$('searchInput')?.focus(), 100);
+}
+let searchTimer;
+function runSearch(q){
+  clearTimeout(searchTimer);
+  if(q.trim().length<2){ $('searchResults').innerHTML = `<p style="text-align:center;color:var(--faint);margin-top:40px">اكتب حرفين على الأقل</p>`; return; }
+  searchTimer = setTimeout(async()=>{
+    try{
+      const r = await api({action:'search_all', query:q, chatId:S.currentChatId||null});
+      if(!r.ok) throw Error('تعذر البحث');
+      const d=r.data;
+      const rows = [
+        ...(d.conversations||[]).map(c=>`<div class="search-result" onclick="openChat('${c.id}');closeSearch()"><b>${esc(c.title)}</b><small>محادثة</small></div>`),
+        ...(d.messages||[]).map(m=>`<div class="search-result" onclick="openChat('${m.chat_id}');closeSearch()"><b>${esc(m.content).slice(0,70)}</b><small>رسالة</small></div>`),
+        ...(d.files||[]).map(f=>`<div class="search-result" onclick="openChat('${f.chat_id}');closeSearch()"><b>${esc(f.name)}</b><small>ملف</small></div>`)
+      ];
+      $('searchResults').innerHTML = rows.length ? rows.join('') : `<p style="text-align:center;color:var(--faint);margin-top:40px">لا توجد نتائج</p>`;
+    }catch(e){ toast(e.message); }
+  }, 300);
+}
+function closeSearch(){ nav('home'); }
+
+/* ============ العرض الرئيسي ============ */
+function render() {
+  renderTopNav();
+  updateComposerVisibility();
+  renderComposerIcons();
+  
+  switch (S.screen) {
+    case 'home': renderHome(); break;
+    case 'task': renderTaskDetail(); break;
+    case 'chat': renderChat(); break;
+    case 'settings': renderSettings(); break;
+    case 'library': renderLibrary(); break;
+    case 'projects': renderProjects(); break;
+    case 'scheduled': renderScheduled(); break;
+    case 'favorites': renderFavorites(); break;
+    case 'search': renderSearch(); break;
+  }
+}
+
+/* ============ الأحداث ============ */
+function bindEvents() {
+  sendBtn.addEventListener('click', sendMessage);
+  micBtn.addEventListener('click', startVoiceInput);
+  attachBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', handleFileAttach);
+  fab.innerHTML = SVG.plus;
+  fab.addEventListener('click', newChat);
+  input.addEventListener('input', updateSendBtn);
+  input.addEventListener('keydown', (e) => { 
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } 
+  });
+  ddBackdrop.addEventListener('click', closeDropdown);
+  $('modalBackdrop').addEventListener('click', closeModal);
+}
+function startVoiceInput(){
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!Rec){ toast('الصوت غير مدعوم في هذا المتصفح'); return; }
+  const r = new Rec(); r.lang='ar-SA';
+  r.onresult = e => { input.value += (input.value?' ':'') + e.results[0][0].transcript; updateSendBtn(); };
+  r.onerror = () => toast('تعذر التعرف على الصوت');
+  r.start(); toast('استمع الآن...');
+}
+async function readDataUrl(file){ return new Promise((resolve,reject)=>{ const r=new FileReader(); r.onload=()=>resolve(r.result); r.onerror=reject; r.readAsDataURL(file); }); }
+async function handleFileAttach(e){
+  const files = Array.from(e.target.files||[]);
+  if(!files.length) return;
+  S.pendingAttachments = S.pendingAttachments || [];
+  for(const f of files){
+    if(f.type.startsWith('image/') || f.type==='application/pdf' || !f.type.startsWith('text/')){
+      S.pendingAttachments.push({name:f.name, mime:f.type||'application/octet-stream', size:f.size, data: await readDataUrl(f)});
+    } else {
+      const tx = (await f.text()).slice(0,12000);
+      S.pendingAttachments.push({name:f.name, mime:f.type||'text/plain', size:f.size, text:tx});
+    }
+  }
+  toast(`تم إرفاق ${files.length} ملف`);
+  e.target.value = '';
+}
+
+/* ============ التشغيل ============ */
+async function init() {
+  document.documentElement.dataset.theme = S.theme;
+  document.documentElement.dataset.accent = S.accent;
+  bindEvents();
+  render();
+  await loadModels();
+  await loadTaskIndex();
+  render();
+}
+
+document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
 </html>
