@@ -7,8 +7,23 @@ import { uploadReleaseAsset, downloadReleaseAsset, MAX_DIRECT_UPLOAD } from './s
 import { multimodalMessages } from './src/media.js';
 import { advanceTask, addIntervention, taskEvents } from './src/orchestrator.js';
 
-const CORS = {'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type'};
-const json = (data, status = 200) => new Response(JSON.stringify(data), {status, headers:{'content-type':'application/json;charset=utf-8', ...CORS}});
+// ✅ CORS Headers - محدثة لتشمل كل شيء
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-FOX-Signature',
+  'Access-Control-Max-Age': '86400',
+  'Access-Control-Expose-Headers': 'Content-Type, Content-Length'
+};
+
+const json = (data, status = 200) => new Response(JSON.stringify(data), {
+  status,
+  headers: {
+    'content-type': 'application/json;charset=utf-8',
+    ...CORS
+  }
+});
+
 const text = x => String(x || '').trim();
 
 // Compatibility export
@@ -581,8 +596,12 @@ export { persistFiles };
 // ============ Main Fetch Handler ============
 export default {
   async fetch(request, env) {
+    // ✅ معالجة OPTIONS request مع CORS headers كاملة
     if (request.method === 'OPTIONS') {
-      return new Response(null, {headers: CORS});
+      return new Response(null, {
+        status: 204,
+        headers: CORS
+      });
     }
     
     const pathname = new URL(request.url).pathname;
