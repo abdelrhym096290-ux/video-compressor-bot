@@ -19,9 +19,13 @@ export const EVENT_TYPES = Object.freeze([
   'context_updated','model_called','user_intervention','task_paused','task_completed','task_failed',
   // أحداث التوليد (chat)
   'generation_started','generation_completed','generation_failed',
-  // أحداث الطرفية والميزانية
-  'tool_budget_exhausted','tool_correction_aborted','tool_correction_rejected','tool_auto_corrected',
-  'tool_result_ready'
+  // أحداث الطرفية
+  'tool_executed',
+  'tool_result_ready',
+  // أحداث الميزانية
+  'tool_budget_exhausted','tool_budget_renewed',
+  // أحداث التصحيح التلقائي
+  'tool_correction_proposed','tool_correction_aborted','tool_correction_rejected','tool_auto_corrected'
 ]);
 
 export const ROLES = Object.freeze(['system','user','assistant','tool']);
