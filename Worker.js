@@ -1,6 +1,6 @@
 // =====================================================================
-// FOX AI — Worker جامع نهائي v6.0.0
-// التعديلات: CORS موسّع، safeEvent، blocks في chat، poll endpoint
+// FOX AI — Worker جامع نهائي v6.0.1
+// التعديلات: safeEvent مُحصّن، توافق routeAuto الجديد، إصلاح D1 undefined
 // =====================================================================
 
 import { publicCatalog, getModel, chooseModel, scoreDifficulty, routeAuto } from './src/catalog.js';
@@ -79,10 +79,10 @@ function constantTimeEqual(a, b) {
 async function isSessionValid(env, token) {
   if (!token) return false;
   try {
-    const now = Date.now();
+    const nowMs = Date.now();
     const session = await env.DB.prepare('SELECT expires_at FROM sessions WHERE token = ?').bind(token).first();
     if (!session) return false;
-    if (session.expires_at <= now) {
+    if (session.expires_at <= nowMs) {
       env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run().catch(() => {});
       return false;
     }
@@ -90,19 +90,26 @@ async function isSessionValid(env, token) {
   } catch { return false; }
 }
 
-// ⭐ دالة الحدث الآمن — تمرّر النوع مباشرة إن لم يقبله eventRecord
+// ⭐ safeEvent مُحصّن بالكامل
 async function safeEvent(store, chatId, type, payload) {
+  const safePayload = payload === undefined ? {} : payload;
   try {
-    const evt = createContextEvent(chatId, type, payload);
+    const evt = createContextEvent(chatId, type, safePayload);
     await store.appendEvent(chatId, evt);
   } catch (e) {
-    await store.appendEvent(chatId, {
-      id: (crypto.randomUUID ? crypto.randomUUID() : ('evt_' + Math.random().toString(36).slice(2))),
-      taskId: chatId,
-      type,
-      payload,
-      createdAt: Date.now(),
-    });
+    console.error('safeEvent primary failed:', e.message);
+    try {
+      await store.appendEvent({
+        id: crypto.randomUUID ? crypto.randomUUID() : ('evt_' + Math.random().toString(36).slice(2)),
+        chatId,
+        taskId: chatId,
+        type,
+        payload: safePayload,
+        createdAt: Date.now(),
+      });
+    } catch (e2) {
+      console.error('safeEvent fallback failed:', e2.message);
+    }
   }
 }
 
@@ -111,9 +118,9 @@ async function getUsageFromGateway(env) {
     return { note: 'CF_ACCOUNT_ID أو CF_API_TOKEN غير مُعرّف', totals: { requests: 0, tokensIn: 0, tokensOut: 0, totalTokens: 0, cost: 0 }, byModel: {} };
   }
   const ACCOUNT_ID = env.CF_ACCOUNT_ID;
-  const now = new Date();
-  const startISO = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-  const endISO = now.toISOString();
+  const nowD = new Date();
+  const startISO = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate())).toISOString();
+  const endISO = nowD.toISOString();
   const query = `query { viewer { accounts(filter: { accountTag: "${ACCOUNT_ID}" }) { aiGatewayRequestsAdaptiveGroups(filter: { datetimeHour_geq: "${startISO}", datetimeHour_leq: "${endISO}" } limit: 1000) { count dimensions { model provider gateway datetimeHour } sum { tokensIn tokensOut totalTokens cost } } } } }`;
   try {
     const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
@@ -154,28 +161,28 @@ async function login(env, body, request) {
   const clientIP = request?.headers?.get('CF-Connecting-IP') || 'unknown';
   try {
     const lockCheck = await env.DB.prepare('SELECT attempts, locked_until FROM login_attempts WHERE ip = ?').bind(clientIP).first();
-    const now = Date.now();
-    if (lockCheck?.locked_until && lockCheck.locked_until > now) {
-      const remainingMin = Math.ceil((lockCheck.locked_until - now) / 60000);
+    const nowMs = Date.now();
+    if (lockCheck?.locked_until && lockCheck.locked_until > nowMs) {
+      const remainingMin = Math.ceil((lockCheck.locked_until - nowMs) / 60000);
       return json({ error: `تم حظرك مؤقتاً بسبب محاولات خاطئة متكررة. حاول بعد ${remainingMin} دقيقة.`, locked: true }, 429);
     }
     if (env.ACCESS_PASSWORD && body.accessPassword !== env.ACCESS_PASSWORD) {
       const currentAttempts = (lockCheck?.attempts || 0) + 1;
       const shouldLock = currentAttempts >= 5;
-      const lockedUntil = shouldLock ? now + 10 * 60 * 1000 : null;
+      const lockedUntil = shouldLock ? nowMs + 10 * 60 * 1000 : null;
       await env.DB.prepare(
         `INSERT INTO login_attempts (ip, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?)
          ON CONFLICT(ip) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?`
-      ).bind(clientIP, currentAttempts, lockedUntil, now, currentAttempts, lockedUntil, now).run();
+      ).bind(clientIP, currentAttempts, lockedUntil, nowMs, currentAttempts, lockedUntil, nowMs).run();
       return json({ error: shouldLock ? 'كلمة مرور خاطئة. تم حظرك 10 دقائق.' : `كلمة مرور خاطئة. المحاولات المتبقية: ${5 - currentAttempts}`, authRequired: true }, 401);
     }
     await env.DB.prepare(
       `INSERT INTO login_attempts (ip, attempts, locked_until, updated_at) VALUES (?, 0, NULL, ?)
        ON CONFLICT(ip) DO UPDATE SET attempts = 0, locked_until = NULL, updated_at = ?`
-    ).bind(clientIP, now, now).run();
+    ).bind(clientIP, nowMs, nowMs).run();
     const token = crypto.randomUUID();
-    const expiresAt = now + 86400000;
-    await env.DB.prepare('INSERT INTO sessions (token,created_at,expires_at) VALUES (?,?,?)').bind(token, now, expiresAt).run();
+    const expiresAt = nowMs + 86400000;
+    await env.DB.prepare('INSERT INTO sessions (token,created_at,expires_at) VALUES (?,?,?)').bind(token, nowMs, expiresAt).run();
     return json({ success: true, token, expiresAt });
   } catch (e) {
     return json({ error: 'خطأ في تسجيل الدخول: ' + e.message }, 500);
@@ -206,7 +213,7 @@ async function persistMessage(env, chatId, role, content, modelId = null) {
 
 async function persistFiles(env, chatId, files = []) {
   for (const f of Array.isArray(files) ? files : []) {
-    const id = crypto.randomUUID();
+    const fid = crypto.randomUUID();
     const name = text(f.name).slice(0, 180) || 'file';
     const mime = text(f.mime || f.type).slice(0, 120) || 'application/octet-stream';
     const size = Math.max(0, Number(f.size) || 0);
@@ -224,7 +231,7 @@ async function persistFiles(env, chatId, files = []) {
         } else data = raw;
       }
     }
-    await env.DB.prepare('INSERT INTO conversation_files (id,chat_id,name,mime,size,content_text,data_url,storage,asset_id,asset_url,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').bind(id, chatId, name, mime, size, content, data, storage, assetId, assetUrl, Date.now(), Date.now()).run();
+    await env.DB.prepare('INSERT INTO conversation_files (id,chat_id,name,mime,size,content_text,data_url,storage,asset_id,asset_url,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').bind(fid, chatId, name, mime, size, content, data, storage, assetId, assetUrl, Date.now(), Date.now()).run();
   }
 }
 
@@ -233,7 +240,6 @@ async function loadMessages(env, chatId) {
   return (r.results || []).map(x => ({ id: x.id, role: x.role, content: x.content, model: x.model_id || null, createdAt: x.created_at }));
 }
 
-// ⭐ بناء blocks من النص والأحداث
 function buildBlocks(responseText, events) {
   const blocks = [];
   if (responseText) blocks.push({ type: 'text', text: responseText });
@@ -341,9 +347,9 @@ async function plan(env, b) {
   let parsed;
   try { parsed = JSON.parse(raw); } catch { parsed = { goal: b.task, steps: [{ title: 'تحليل المتطلبات', description: b.task, verification: 'وجود خطة', tool: 'none' }] }; }
   const task = startPlanning(createTask({ conversationId: b.chatId, goal: parsed.goal || b.task }));
-  const plan = createPlan(task, { goal: parsed.goal || b.task, steps: Array.isArray(parsed.steps) && parsed.steps.length ? parsed.steps : [{ title: 'تحليل المتطلبات', description: b.task, verification: 'وجود خطة', tool: 'none' }] });
-  await env.DB.prepare('INSERT INTO tasks (id,chat_id,task_json,plan_json,created_at,updated_at) VALUES (?,?,?,?,?,?)').bind(task.id, b.chatId, JSON.stringify(task), JSON.stringify(plan), Date.now(), Date.now()).run();
-  return json({ task: { ...task, plan }, plan, model: r.actual });
+  const planObj = createPlan(task, { goal: parsed.goal || b.task, steps: Array.isArray(parsed.steps) && parsed.steps.length ? parsed.steps : [{ title: 'تحليل المتطلبات', description: b.task, verification: 'وجود خطة', tool: 'none' }] });
+  await env.DB.prepare('INSERT INTO tasks (id,chat_id,task_json,plan_json,created_at,updated_at) VALUES (?,?,?,?,?,?)').bind(task.id, b.chatId, JSON.stringify(task), JSON.stringify(planObj), Date.now(), Date.now()).run();
+  return json({ task: { ...task, plan: planObj }, plan: planObj, model: r.actual });
 }
 
 // ============ getRun / getTaskControl / stepControl ============
@@ -432,7 +438,7 @@ async function runTool(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
 
   let budget = await env.DB.prepare('SELECT chat_id,granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(b.chatId).first();
-  const now = Date.now();
+  const nowMs = Date.now();
 
   if (b.approved !== true) {
     return json({
@@ -441,23 +447,23 @@ async function runTool(env, b) {
       proposal,
       suggestedBudget: TOOL_BUDGET_GRANT,
       expiryMinutes: 15,
-      budget: budget ? { granted: budget.granted, used: budget.used, remaining: Math.max(0, budget.granted - budget.used), expiresAt: budget.expires_at, expired: !!(budget.expires_at && budget.expires_at < now) } : null,
+      budget: budget ? { granted: budget.granted, used: budget.used, remaining: Math.max(0, budget.granted - budget.used), expiresAt: budget.expires_at, expired: !!(budget.expires_at && budget.expires_at < nowMs) } : null,
     }, 403);
   }
 
   if (!budget) {
     await env.DB.prepare('INSERT INTO tool_budgets (chat_id,granted,used,expires_at,updated_at) VALUES (?,?,?,?,?)')
-      .bind(b.chatId, TOOL_BUDGET_GRANT, 0, now + TOOL_BUDGET_EXPIRY_MS, now).run();
-    budget = { chat_id: b.chatId, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: now + TOOL_BUDGET_EXPIRY_MS, updated_at: now };
+      .bind(b.chatId, TOOL_BUDGET_GRANT, 0, nowMs + TOOL_BUDGET_EXPIRY_MS, nowMs).run();
+    budget = { chat_id: b.chatId, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: nowMs + TOOL_BUDGET_EXPIRY_MS, updated_at: nowMs };
   } else {
-    const expired = budget.expires_at && Number(budget.expires_at) < now;
+    const expired = budget.expires_at && Number(budget.expires_at) < nowMs;
     const exhausted = Number(budget.used) >= Number(budget.granted);
     if (expired || exhausted) {
       if (b.renew === true) {
-        const newExpiry = now + TOOL_BUDGET_EXPIRY_MS;
+        const newExpiry = nowMs + TOOL_BUDGET_EXPIRY_MS;
         await env.DB.prepare('UPDATE tool_budgets SET granted=?,used=0,expires_at=?,updated_at=? WHERE chat_id=?')
-          .bind(TOOL_BUDGET_GRANT, newExpiry, now, b.chatId).run();
-        budget = { ...budget, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: newExpiry, updated_at: now };
+          .bind(TOOL_BUDGET_GRANT, newExpiry, nowMs, b.chatId).run();
+        budget = { ...budget, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: newExpiry, updated_at: nowMs };
       } else {
         return json({
           needsApproval: true,
@@ -493,7 +499,7 @@ async function workspaceStatus(env, b) {
   const files = await env.DB.prepare('SELECT id,name,mime,size,storage,asset_id,asset_url,created_at FROM conversation_files WHERE chat_id=? ORDER BY created_at DESC LIMIT 100').bind(b.chatId).all();
   const experiments = await env.DB.prepare('SELECT id,command,status,exit_code,created_at,updated_at FROM experiments WHERE chat_id=? ORDER BY created_at DESC LIMIT 30').bind(b.chatId).all();
   const budget = await env.DB.prepare('SELECT granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(b.chatId).first();
-  const now = Date.now();
+  const nowMs = Date.now();
   return json({
     workspace: {
       type: 'fox-session', persistentFiles: true, terminal: 'github-actions',
@@ -503,7 +509,7 @@ async function workspaceStatus(env, b) {
         granted: budget.granted, used: budget.used,
         remaining: Math.max(0, Number(budget.granted) - Number(budget.used)),
         expiresAt: budget.expires_at,
-        expired: !!(budget.expires_at && budget.expires_at < now),
+        expired: !!(budget.expires_at && budget.expires_at < nowMs),
       } : { granted: 0, used: 0, remaining: 0, expiresAt: null, expired: false },
     },
   });
@@ -559,11 +565,11 @@ async function receiveToolResult(env, request) {
 // ============ tryAutoCorrect ============
 async function tryAutoCorrect(env, originalRow, failedResult) {
   const chatId = originalRow.chat_id;
-  const now = Date.now();
+  const nowMs = Date.now();
 
   const budget = await env.DB.prepare('SELECT granted,used,expires_at FROM tool_budgets WHERE chat_id=?').bind(chatId).first();
   if (!budget) return null;
-  const expired = budget.expires_at && Number(budget.expires_at) < now;
+  const expired = budget.expires_at && Number(budget.expires_at) < nowMs;
   const exhausted = Number(budget.used) >= Number(budget.granted);
 
   if (expired || exhausted) {
@@ -572,7 +578,7 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
         experimentId: originalRow.id, reason: expired ? 'expired' : 'exhausted',
         granted: budget.granted, used: budget.used, expiresAt: budget.expires_at,
         message: 'يجب تجديد الحصة للمتابعة',
-      }), now).run();
+      }), nowMs).run();
     return { requiresRenewal: true, reason: expired ? 'انتهت صلاحية الحصة' : 'استُهلكت الحصة' };
   }
 
@@ -585,7 +591,7 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
       .bind(crypto.randomUUID(), chatId, 'tool_correction_aborted', JSON.stringify({
         experimentId: originalRow.id, reason: 'same_command_repeated',
         command: originalRow.command, message: 'النموذج يعيد نفس الأمر — أُوقفت الحلقة',
-      }), now).run();
+      }), nowMs).run();
     return { aborted: true, reason: 'نفس الأمر تكرر 3 مرات' };
   }
 
@@ -616,7 +622,7 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
     await env.DB.prepare('INSERT INTO context_events (id,chat_id,type,payload_json,created_at) VALUES (?,?,?,?,?)')
       .bind(crypto.randomUUID(), chatId, 'tool_correction_rejected', JSON.stringify({
         experimentId: originalRow.id, command: correction.command, reason: e.message,
-      }), now).run();
+      }), nowMs).run();
     return { rejected: true, reason: e.message };
   }
 
@@ -628,7 +634,7 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
   const newApproval = approvalRecord({ proposalId: newProposal.id, approved: true, scope: `auto_correction_${attempt}` });
   const newExperiment = { ...experimentRecord({ chatId, proposal: newProposal, approval: newApproval }), taskId: originalRow.task_id || null, stepId: originalRow.step_id || null };
 
-  await env.DB.prepare('UPDATE tool_budgets SET used=used+1,updated_at=? WHERE chat_id=?').bind(now, chatId).run();
+  await env.DB.prepare('UPDATE tool_budgets SET used=used+1,updated_at=? WHERE chat_id=?').bind(nowMs, chatId).run();
   await env.DB.prepare('INSERT INTO experiments (id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .bind(newExperiment.id, newExperiment.chatId, newExperiment.command, newExperiment.status, '', null, newExperiment.createdAt, newExperiment.updatedAt, newExperiment.taskId, newExperiment.stepId, null, attempt, originalRow.id).run();
 
@@ -641,7 +647,7 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
       originalId: originalRow.id, newId: newExperiment.id, attempt,
       oldCommand: originalRow.command, newCommand: safeCommand,
       explanation: correction.explanation || '',
-    }), now).run();
+    }), nowMs).run();
 
   return {
     originalId: originalRow.id,
@@ -678,13 +684,13 @@ async function searchAll(env, b) {
   if (!q) return json({ conversations: [], messages: [], files: [] });
   const like = `%${q}%`, chatId = b.chatId || null;
   const conversations = chatId ? { results: [] } : await env.DB.prepare('SELECT id,title,updated_at FROM conversations WHERE title LIKE ? ORDER BY updated_at DESC LIMIT 30').bind(like).all();
-  const messages = chatId
+  const msgs = chatId
     ? await env.DB.prepare('SELECT id,chat_id,role,content,created_at FROM messages WHERE chat_id=? AND content LIKE ? ORDER BY created_at DESC LIMIT 50').bind(chatId, like).all()
     : await env.DB.prepare('SELECT id,chat_id,role,content,created_at FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT 50').bind(like).all();
   const files = chatId
     ? await env.DB.prepare('SELECT id,chat_id,name,mime,size,content_text,created_at FROM conversation_files WHERE chat_id=? AND (name LIKE ? OR content_text LIKE ?) ORDER BY created_at DESC LIMIT 50').bind(chatId, like, like).all()
     : await env.DB.prepare('SELECT id,chat_id,name,mime,size,content_text,created_at FROM conversation_files WHERE name LIKE ? OR content_text LIKE ? ORDER BY created_at DESC LIMIT 50').bind(like, like).all();
-  return json({ query: q, conversations: conversations.results || [], messages: messages.results || [], files: files.results || [] });
+  return json({ query: q, conversations: conversations.results || [], messages: msgs.results || [], files: files.results || [] });
 }
 
 async function listConversations(env, b) {
@@ -805,7 +811,7 @@ export default {
       if ((pathname === '/' || pathname === '/index.html') && env.ASSETS) {
         return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
       }
-      return json({ name: 'FOX AI', status: 'ready', version: '6.0.0' });
+      return json({ name: 'FOX AI', status: 'ready', version: '6.0.1' });
     }
 
     if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
