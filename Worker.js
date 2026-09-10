@@ -1,10 +1,10 @@
 // =====================================================================
-// FOX AI — Worker جامع نهائي v7.0
-// التعديلات: حصة 10/20، renew endpoint، قفل التكرار، tryAutoCorrect يقترح فقط
+// FOX AI — Worker جامع نهائي v7.1
+// التعديلات: Streaming SSE، fallback الإحصاءات إلى D1، حصة 10/20
 // =====================================================================
 
 import { publicCatalog, getModel, chooseModel, scoreDifficulty, routeAuto } from './src/catalog.js';
-import { routeCompletion, ProviderError } from './src/providers.js';
+import { routeCompletion, streamCompletion, ProviderError } from './src/providers.js';
 import { d1ContextStore, contextPacket, renderHandoff, mergeContext, createContextEvent } from './src/context.js';
 import { createTask, startPlanning, createPlan, approvePlan, startStep, completeStep, failStep, retryStep, taskEvent } from './src/tasks.js';
 import { detectToolProposal, approvalRecord, experimentRecord, dispatchExperiment, cancelExperiment, verifyResult, retryExperiment, verifyWebhook, validateCommand } from './src/tools.js';
@@ -26,12 +26,12 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 });
 const text = x => String(x || '').trim();
 
-// ⭐ الحصة الجديدة
+// ⭐ الحصة
 const TOOL_BUDGET_GRANT = 10;
 const TOOL_BUDGET_EXPIRY_MS = 20 * 60 * 1000;
 const DUPLICATE_WINDOW_MS = 60 * 1000;
 
-// ⭐ الحدود الموسّعة
+// ⭐ الحدود
 const LIMITS = {
   MAX_MESSAGE_TEXT: 200000,
   MAX_FILE_TEXT: 2000000,
@@ -81,13 +81,6 @@ export class ExperimentState {
 }
 
 // ============ دوال مساعدة ============
-function constantTimeEqual(a, b) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
 async function isSessionValid(env, token) {
   if (!token) return false;
   try {
@@ -124,46 +117,72 @@ async function safeEvent(store, chatId, type, payload) {
   }
 }
 
+// ⭐ الإحصاءات: Gateway أو fallback إلى D1
 async function getUsageFromGateway(env) {
-  if (!env.CF_ACCOUNT_ID || !env.CF_API_TOKEN) {
-    return { note: 'CF_ACCOUNT_ID أو CF_API_TOKEN غير مُعرّف', totals: { requests: 0, tokensIn: 0, tokensOut: 0, totalTokens: 0, cost: 0 }, byModel: {} };
+  if (env.CF_ACCOUNT_ID && env.CF_API_TOKEN) {
+    try {
+      const ACCOUNT_ID = env.CF_ACCOUNT_ID;
+      const nowD = new Date();
+      const startISO = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate())).toISOString();
+      const endISO = nowD.toISOString();
+      const query = `query { viewer { accounts(filter: { accountTag: "${ACCOUNT_ID}" }) { aiGatewayRequestsAdaptiveGroups(filter: { datetimeHour_geq: "${startISO}", datetimeHour_leq: "${endISO}" } limit: 1000) { count dimensions { model provider gateway datetimeHour } sum { tokensIn tokensOut totalTokens cost } } } } }`;
+      const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + env.CF_API_TOKEN },
+        body: JSON.stringify({ query }),
+      });
+      const data = await response.json();
+      if (data.errors) throw new Error(data.errors[0]?.message || 'GraphQL error');
+      const groups = data.data?.viewer?.accounts?.[0]?.aiGatewayRequestsAdaptiveGroups || [];
+      let totalRequests = 0, totalTokensIn = 0, totalTokensOut = 0, totalTokens = 0, totalCost = 0;
+      const modelStats = {};
+      groups.forEach(g => {
+        totalRequests += g.count || 0;
+        totalTokensIn += g.sum?.tokensIn || 0;
+        totalTokensOut += g.sum?.tokensOut || 0;
+        totalTokens += g.sum?.totalTokens || 0;
+        totalCost += g.sum?.cost || 0;
+        const modelKey = g.dimensions?.model || 'unknown';
+        if (!modelStats[modelKey]) modelStats[modelKey] = { requests: 0, tokensIn: 0, tokensOut: 0 };
+        modelStats[modelKey].requests += g.count || 0;
+        modelStats[modelKey].tokensIn += g.sum?.tokensIn || 0;
+        modelStats[modelKey].tokensOut += g.sum?.tokensOut || 0;
+      });
+      return {
+        source: 'gateway',
+        period: { from: startISO, to: endISO },
+        totals: { requests: totalRequests, tokensIn: totalTokensIn, tokensOut: totalTokensOut, totalTokens, cost: totalCost },
+        byModel: modelStats,
+      };
+    } catch (e) {
+      console.warn('Gateway failed, falling back to D1:', e.message);
+      // نسقط إلى D1
+    }
   }
-  const ACCOUNT_ID = env.CF_ACCOUNT_ID;
-  const nowD = new Date();
-  const startISO = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate())).toISOString();
-  const endISO = nowD.toISOString();
-  const query = `query { viewer { accounts(filter: { accountTag: "${ACCOUNT_ID}" }) { aiGatewayRequestsAdaptiveGroups(filter: { datetimeHour_geq: "${startISO}", datetimeHour_leq: "${endISO}" } limit: 1000) { count dimensions { model provider gateway datetimeHour } sum { tokensIn tokensOut totalTokens cost } } } } }`;
+
+  // ⭐ fallback: من D1
   try {
-    const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + env.CF_API_TOKEN },
-      body: JSON.stringify({ query }),
-    });
-    const data = await response.json();
-    if (data.errors) throw new Error(data.errors[0]?.message || 'GraphQL error');
-    const groups = data.data?.viewer?.accounts?.[0]?.aiGatewayRequestsAdaptiveGroups || [];
-    let totalRequests = 0, totalTokensIn = 0, totalTokensOut = 0, totalTokens = 0, totalCost = 0;
-    const modelStats = {};
-    groups.forEach(g => {
-      totalRequests += g.count || 0;
-      totalTokensIn += g.sum?.tokensIn || 0;
-      totalTokensOut += g.sum?.tokensOut || 0;
-      totalTokens += g.sum?.totalTokens || 0;
-      totalCost += g.sum?.cost || 0;
-      const modelKey = g.dimensions?.model || 'unknown';
-      if (!modelStats[modelKey]) modelStats[modelKey] = { requests: 0, tokensIn: 0, tokensOut: 0 };
-      modelStats[modelKey].requests += g.count || 0;
-      modelStats[modelKey].tokensIn += g.sum?.tokensIn || 0;
-      modelStats[modelKey].tokensOut += g.sum?.tokensOut || 0;
-    });
+    const nowD = new Date();
+    const todayStart = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate())).getTime();
+    const [msgs, exps, convs] = await Promise.all([
+      env.DB.prepare('SELECT COUNT(*) as c FROM messages WHERE created_at > ?').bind(todayStart).first(),
+      env.DB.prepare('SELECT COUNT(*) as c FROM experiments WHERE created_at > ?').bind(todayStart).first(),
+      env.DB.prepare('SELECT COUNT(*) as c FROM conversations').first(),
+    ]);
     return {
-      period: { from: startISO, to: endISO },
-      totals: { requests: totalRequests, tokensIn: totalTokensIn, tokensOut: totalTokensOut, totalTokens, cost: totalCost },
-      byModel: modelStats,
-      note: 'بيانات الاستهلاك من AI Gateway',
+      source: 'd1',
+      period: { from: new Date(todayStart).toISOString(), to: nowD.toISOString() },
+      totals: {
+        requests: msgs?.c || 0,
+        tokensIn: 0, tokensOut: 0, totalTokens: 0, cost: 0,
+      },
+      byModel: {},
+      experiments: exps?.c || 0,
+      conversations: convs?.c || 0,
+      note: 'إحصاءات محلية من D1 — أضف CF_API_TOKEN للحصول على تكلفة AI Gateway',
     };
   } catch (e) {
-    return { error: e.message, totals: { requests: 0, tokensIn: 0, tokensOut: 0, totalTokens: 0, cost: 0 }, byModel: {} };
+    return { source: 'error', error: e.message, totals: { requests: 0, tokensIn: 0, tokensOut: 0, totalTokens: 0, cost: 0 }, byModel: {} };
   }
 }
 
@@ -175,7 +194,7 @@ async function login(env, body, request) {
     const nowMs = Date.now();
     if (lockCheck?.locked_until && lockCheck.locked_until > nowMs) {
       const remainingMin = Math.ceil((lockCheck.locked_until - nowMs) / 60000);
-      return json({ error: `تم حظرك مؤقتاً بسبب محاولات خاطئة متكررة. حاول بعد ${remainingMin} دقيقة.`, locked: true }, 429);
+      return json({ error: `تم حظرك مؤقتاً. حاول بعد ${remainingMin} دقيقة.`, locked: true }, 429);
     }
     if (env.ACCESS_PASSWORD && body.accessPassword !== env.ACCESS_PASSWORD) {
       const currentAttempts = (lockCheck?.attempts || 0) + 1;
@@ -185,7 +204,7 @@ async function login(env, body, request) {
         `INSERT INTO login_attempts (ip, attempts, locked_until, updated_at) VALUES (?, ?, ?, ?)
          ON CONFLICT(ip) DO UPDATE SET attempts = ?, locked_until = ?, updated_at = ?`
       ).bind(clientIP, currentAttempts, lockedUntil, nowMs, currentAttempts, lockedUntil, nowMs).run();
-      return json({ error: shouldLock ? 'كلمة مرور خاطئة. تم حظرك 10 دقائق.' : `كلمة مرور خاطئة. المحاولات المتبقية: ${5 - currentAttempts}`, authRequired: true }, 401);
+      return json({ error: shouldLock ? 'كلمة مرور خاطئة. تم حظرك 10 دقائق.' : `كلمة مرور خاطئة. المتبقي: ${5 - currentAttempts}`, authRequired: true }, 401);
     }
     await env.DB.prepare(
       `INSERT INTO login_attempts (ip, attempts, locked_until, updated_at) VALUES (?, 0, NULL, ?)
@@ -236,7 +255,7 @@ async function persistFiles(env, chatId, files = []) {
       const match = raw.match(/^data:([^;]+);base64,(.*)$/s);
       if (match) {
         const bytes = Uint8Array.from(atob(match[2]), c => c.charCodeAt(0));
-        if (bytes.byteLength > MAX_DIRECT_UPLOAD) throw new Error(`الملف يتجاوز حد الرفع المباشر: ${name}`);
+        if (bytes.byteLength > MAX_DIRECT_UPLOAD) throw new Error(`الملف يتجاوز الحد: ${name}`);
         if (bytes.byteLength > 700000) {
           const asset = await uploadReleaseAsset(env, { name, mime, bytes });
           storage = asset.storage; assetId = String(asset.assetId); assetUrl = asset.url;
@@ -252,15 +271,6 @@ async function loadMessages(env, chatId) {
   return (r.results || []).map(x => ({ id: x.id, role: x.role, content: x.content, model: x.model_id || null, createdAt: x.created_at }));
 }
 
-function buildBlocks(responseText, events) {
-  const blocks = [];
-  if (responseText) blocks.push({ type: 'text', text: responseText });
-  (events || []).forEach(e => {
-    blocks.push({ type: 'event', event: { id: e.id, type: e.type, payload: e.payload, createdAt: e.createdAt } });
-  });
-  return blocks;
-}
-
 // ============ deepAnswer ============
 async function deepAnswer(env, sysContent, packetRecent, media) {
   const modelA = getModel('cerebras-gpt-oss-120b'), modelB = getModel('cf-gpt-oss-120b');
@@ -269,79 +279,190 @@ async function deepAnswer(env, sysContent, packetRecent, media) {
     routeCompletion(env, modelA.id, baseMessages, { maxTokens: 4096 }),
     routeCompletion(env, modelB.id, baseMessages, { maxTokens: 4096 }),
   ]);
-  const reviewPrompt = `لديك إجابتان مستقلتان من نموذجين مختلفين لنفس السؤال. قارن بينهما بدقة. إن اتفقتا على النتيجة الجوهرية، أعد أفضل صياغة موحدة مع ذكر أنهما توافقتا. إن اختلفتا في نتيجة مهمة، وضّح نقطة الخلاف بدقة تامة وأيّهما أكثر اتساقًا مع المعطيات والدليل، ثم أعد إجابة نهائية موثوقة واحدة.\n\n## الإجابة الأولى (${modelA.name})\n${ra.text}\n\n## الإجابة الثانية (${modelB.name})\n${rb.text}`;
+  const reviewPrompt = `لديك إجابتان مستقلتان لنفس السؤال. قارن بينهما بدقة. إن اتفقتا، أعد أفضل صياغة موحدة. إن اختلفتا، وضّح نقطة الخلاف وأعد إجابة نهائية موثوقة.\n\n## الأولى (${modelA.name})\n${ra.text}\n\n## الثانية (${modelB.name})\n${rb.text}`;
   const reviewer = getModel('cerebras-qwen-3.8-27b');
   const rr = await routeCompletion(env, reviewer.id, [{ role: 'system', content: sysContent }, { role: 'user', content: reviewPrompt }], { maxTokens: 2200, temperature: 0.2 });
   const disagreed = /يختلف|تعارض|تناقض|اختلاف جوهري|خلاف/.test(rr.text.slice(0, 400));
   return { text: rr.text, actual: rr.actual, deep: { modelA: ra.actual.id, modelB: rb.actual.id, reviewer: rr.actual.id, agreed: !disagreed } };
 }
 
-// ============ chat ============
+// ============ SSE helpers ============
+function sseEncode(event, data) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function sseStream(handler) {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    async start(controller) {
+      const send = (event, data) => {
+        try { controller.enqueue(encoder.encode(sseEncode(event, data))); } catch {}
+      };
+      try {
+        await handler(send, controller);
+      } catch (e) {
+        try { send('error', { message: e.message || 'خطأ داخلي' }); } catch {}
+      } finally {
+        try { controller.close(); } catch {}
+      }
+    },
+  });
+}
+
+// ============ chat — Streaming SSE ============
 async function chat(env, b) {
-  if (!b.chatId || !Array.isArray(b.messages) || !b.messages.length) return json({ error: 'chatId والرسائل مطلوبان' }, 400);
-  const store = d1ContextStore(env.DB);
-  const state = await store.get(b.chatId);
-  const recent = b.messages.slice(-LIMITS.MAX_CONTEXT_MESSAGES);
-  const lastContent = recent.at(-1)?.content || '';
-  const hasImage = (b.attachments || []).some(x => String(x.mime || x.type || '').startsWith('image/'));
-
-  let requested, routeInfo = null;
-  if (!b.model || b.model === 'auto') {
-    const score = scoreDifficulty(lastContent, { fileCount: (b.attachments || []).length, priorFailures: b.priorFailures || 0 });
-    const routed = routeAuto(score);
-    routeInfo = { score, tier: routed.tier };
-    requested = routed.model;
-  } else {
-    requested = getModel(b.model);
-  }
-  const model = hasImage && requested.kind !== 'vision' ? getModel('cf-llama-vision') : requested;
-  const packet = contextPacket(state, recent);
-  const media = multimodalMessages([{ role: 'user', content: lastContent }], b.attachments || [], model.id);
-  const promptType = classifyQuestion(lastContent);
-  const sysContent = buildSystemPrompt(promptType, renderHandoff(state, recent), renderHandoff(state, []));
-
-  const wantsDeep = b.mode === 'deep' || (routeInfo && routeInfo.tier === 'deep' && !hasImage);
-
-  await safeEvent(store, b.chatId, 'generation_started', { requested: model.id, mode: b.mode || 'auto', route: routeInfo, deep: wantsDeep, contextMessages: packet.recent.length });
-
-  let result;
-  try {
-    result = wantsDeep
-      ? await deepAnswer(env, sysContent, packet.recent, media)
-      : await routeCompletion(env, model.id, [{ role: 'system', content: sysContent }, ...packet.recent.slice(0, -1), ...media.messages], { maxTokens: 4096 });
-  } catch (error) {
-    await safeEvent(store, b.chatId, 'generation_failed', { requested: model.id, error: error.message });
-    throw error;
+  if (!b.chatId || !Array.isArray(b.messages) || !b.messages.length) {
+    return json({ error: 'chatId والرسائل مطلوبان' }, 400);
   }
 
-  const answer = result.text;
-  const last = text(lastContent).slice(0, LIMITS.MAX_MESSAGE_TEXT);
-  await persistFiles(env, b.chatId, b.attachments || []);
-  await persistMessage(env, b.chatId, 'user', last, null);
-  await persistMessage(env, b.chatId, 'assistant', answer, result.actual.id);
-  const next = mergeContext(state, { summary: last.slice(0, 500), facts: state.facts, decisions: state.decisions, next: 'متابعة طلب المستخدم', constraints: state.constraints });
-  await store.put(b.chatId, next);
+  const stream = sseStream(async (send, controller) => {
+    const store = d1ContextStore(env.DB);
+    const state = await store.get(b.chatId);
+    const recent = b.messages.slice(-LIMITS.MAX_CONTEXT_MESSAGES);
+    const lastContent = recent.at(-1)?.content || '';
+    const hasImage = (b.attachments || []).some(x => String(x.mime || x.type || '').startsWith('image/'));
 
-  await safeEvent(store, b.chatId, 'model_called', { requested: model.id, actual: result.actual.id, fallback: result.fallback, fallbackReason: result.fallbackReason || null, media: !!b.attachments?.length, route: routeInfo, deep: result.deep || null });
-  await safeEvent(store, b.chatId, 'context_updated', { revision: next.revision });
-  await safeEvent(store, b.chatId, 'generation_completed', { actual: result.actual.id, provider: result.actual.provider, latencyMs: result.latencyMs || null });
+    let requested, routeInfo = null;
+    if (!b.model || b.model === 'auto') {
+      const score = scoreDifficulty(lastContent, { fileCount: (b.attachments || []).length, priorFailures: b.priorFailures || 0 });
+      const routed = routeAuto(score);
+      routeInfo = { score, tier: routed.tier };
+      requested = routed.model;
+    } else {
+      requested = getModel(b.model);
+    }
+    const model = hasImage && requested.kind !== 'vision' ? getModel('cf-llama-vision') : requested;
+    const packet = contextPacket(state, recent);
+    const media = multimodalMessages([{ role: 'user', content: lastContent }], b.attachments || [], model.id);
+    const promptType = classifyQuestion(lastContent);
+    const sysContent = buildSystemPrompt(promptType, renderHandoff(state, recent), renderHandoff(state, []));
 
-  const recentEvents = await env.DB.prepare('SELECT id,type,payload_json,created_at FROM context_events WHERE chat_id=? ORDER BY created_at DESC LIMIT 20').bind(b.chatId).all();
-  const events = (recentEvents.results || []).reverse().map(x => ({ id: x.id, type: x.type, payload: JSON.parse(x.payload_json || '{}'), createdAt: x.created_at }));
-  const blocks = buildBlocks(answer, events.filter(e => Date.now() - e.createdAt < 60000));
+    const wantsDeep = b.mode === 'deep' || (routeInfo && routeInfo.tier === 'deep' && !hasImage);
 
-  return json({
-    response: answer,
-    blocks,
-    model: result.actual,
-    requestedModel: requested,
-    pendingExecution: detectToolProposal(answer),
-    unsupportedAttachments: media.unsupported,
-    memory: renderHandoff(next, []),
-    route: routeInfo,
-    deep: result.deep || null,
-    trace: { provider: result.actual.provider, model: result.actual.model, fallback: result.fallback, contextMessages: packet.recent.length, media: !!b.attachments?.length, memoryUpdated: true },
-    events: [{ type: 'generation_completed', model: result.actual.id, fallback: !!result.fallback }],
+    await safeEvent(store, b.chatId, 'generation_started', {
+      requested: model.id, mode: b.mode || 'auto', route: routeInfo,
+      deep: wantsDeep, contextMessages: packet.recent.length,
+    });
+
+    // إعلام العميل أن البث بدأ
+    send('start', { requested: model.id, route: routeInfo, deep: wantsDeep });
+
+    const startTime = Date.now();
+    let fullText = '';
+    let actualModel = model;
+    let fallback = false;
+    let fallbackReason = null;
+    let deepMeta = null;
+
+    try {
+      if (wantsDeep && !hasImage) {
+        // deep: نستخدم non-streaming (لأنه يستدعي 3 نماذج)
+        const r = await deepAnswer(env, sysContent, packet.recent, media);
+        fullText = r.text;
+        actualModel = r.actual;
+        deepMeta = r.deep;
+        // نبثّ النص على شكل قطع صغيرة
+        const words = String(fullText).split(/(\s+)/);
+        let buffer = '';
+        for (const w of words) {
+          buffer += w;
+          if (buffer.length >= 12) {
+            send('chunk', { text: buffer });
+            buffer = '';
+            await new Promise(r => setTimeout(r, 15));
+          }
+        }
+        if (buffer) send('chunk', { text: buffer });
+      } else {
+        // streaming عادي
+        const result = await streamCompletion(env, model.id, [
+          { role: 'system', content: sysContent },
+          ...packet.recent.slice(0, -1),
+          ...media.messages,
+        ], { maxTokens: 4096 });
+
+        actualModel = result.actual;
+        fallback = result.fallback;
+        fallbackReason = result.fallbackReason;
+
+        const reader = result.stream.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          if (chunk) {
+            fullText += chunk;
+            send('chunk', { text: chunk });
+          }
+        }
+      }
+    } catch (err) {
+      await safeEvent(store, b.chatId, 'generation_failed', { requested: model.id, error: err.message });
+      send('error', { message: err.message || 'فشل التوليد' });
+      return;
+    }
+
+    // الحفظ والتحديث
+    const last = text(lastContent).slice(0, LIMITS.MAX_MESSAGE_TEXT);
+    await persistFiles(env, b.chatId, b.attachments || []);
+    await persistMessage(env, b.chatId, 'user', last, null);
+    await persistMessage(env, b.chatId, 'assistant', fullText, actualModel.id);
+
+    const next = mergeContext(state, {
+      summary: last.slice(0, 500),
+      facts: state.facts,
+      decisions: state.decisions,
+      next: 'متابعة طلب المستخدم',
+      constraints: state.constraints,
+    });
+    await store.put(b.chatId, next);
+
+    await safeEvent(store, b.chatId, 'model_called', {
+      requested: model.id, actual: actualModel.id,
+      fallback, fallbackReason: fallbackReason || null,
+      media: !!b.attachments?.length, route: routeInfo, deep: deepMeta,
+    });
+    await safeEvent(store, b.chatId, 'context_updated', { revision: next.revision });
+    await safeEvent(store, b.chatId, 'generation_completed', {
+      actual: actualModel.id, provider: actualModel.provider,
+      latencyMs: Date.now() - startTime,
+    });
+
+    // ⭐ إرسال meta (يحتوي pendingExecution والمعلومات النهائية)
+    const pendingExecution = detectToolProposal(fullText);
+    send('meta', {
+      response: fullText,
+      model: actualModel,
+      requestedModel: requested,
+      pendingExecution,
+      unsupportedAttachments: media.unsupported,
+      memory: renderHandoff(next, []),
+      route: routeInfo,
+      deep: deepMeta,
+      fallback,
+      fallbackReason,
+      latencyMs: Date.now() - startTime,
+      trace: {
+        provider: actualModel.provider,
+        model: actualModel.model,
+        contextMessages: packet.recent.length,
+        media: !!b.attachments?.length,
+        memoryUpdated: true,
+      },
+    });
+
+    send('done', { ok: true });
+  });
+
+  return new Response(stream, {
+    headers: {
+      'content-type': 'text/event-stream;charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      'connection': 'keep-alive',
+      'x-accel-buffering': 'no',
+      ...CORS,
+    },
   });
 }
 
@@ -438,15 +559,14 @@ async function toolBudget(env, b) {
   });
 }
 
-// ⭐ جديد: تجديد الحصة بدون إنشاء تجربة طرفية
 async function renewToolBudget(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
-  const now = Date.now();
-  const newExpiry = now + TOOL_BUDGET_EXPIRY_MS;
+  const nowMs = Date.now();
+  const newExpiry = nowMs + TOOL_BUDGET_EXPIRY_MS;
   await env.DB.prepare(
     'INSERT INTO tool_budgets (chat_id, granted, used, expires_at, updated_at) VALUES (?, ?, 0, ?, ?) ' +
     'ON CONFLICT(chat_id) DO UPDATE SET granted = ?, used = 0, expires_at = ?, updated_at = ?'
-  ).bind(b.chatId, TOOL_BUDGET_GRANT, newExpiry, now, TOOL_BUDGET_GRANT, newExpiry, now).run();
+  ).bind(b.chatId, TOOL_BUDGET_GRANT, newExpiry, nowMs, TOOL_BUDGET_GRANT, newExpiry, nowMs).run();
 
   const store = d1ContextStore(env.DB);
   await safeEvent(store, b.chatId, 'tool_budget_renewed', { granted: TOOL_BUDGET_GRANT, expiresAt: newExpiry });
@@ -469,13 +589,13 @@ async function runTool(env, b) {
   if (!proposal) return json({ error: 'proposal مطلوب' }, 400);
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
 
-  // 🚫 رفض صريح لأي "renew" قادم من الطريق القديم
+  // 🚫 رفض "renew" القديم
   if (proposal.command === 'renew' || proposal.id === 'renew') {
-    return json({ error: 'استخدم endpoint renew_tool_budget لتجديد الحصة' }, 400);
+    return json({ error: 'استخدم renew_tool_budget لتجديد الحصة' }, 400);
   }
 
   let budget = await env.DB.prepare('SELECT chat_id,granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(b.chatId).first();
-  const now = Date.now();
+  const nowMs = Date.now();
 
   if (b.approved !== true) {
     return json({
@@ -484,47 +604,45 @@ async function runTool(env, b) {
       proposal,
       suggestedBudget: TOOL_BUDGET_GRANT,
       expiryMinutes: Math.round(TOOL_BUDGET_EXPIRY_MS / 60000),
-      budget: budget ? { granted: budget.granted, used: budget.used, remaining: Math.max(0, budget.granted - budget.used), expiresAt: budget.expires_at, expired: !!(budget.expires_at && budget.expires_at < now) } : null,
+      budget: budget ? { granted: budget.granted, used: budget.used, remaining: Math.max(0, budget.granted - budget.used), expiresAt: budget.expires_at, expired: !!(budget.expires_at && budget.expires_at < nowMs) } : null,
     }, 403);
   }
 
-  // ⭐ قفل ضد الإرسال المتكرر (نفس الأمر خلال 60 ثانية)
+  // ⭐ قفل التكرار
   if (!b.force) {
     try {
       const cmdClean = validateCommand(proposal.command);
       const dup = await env.DB.prepare(
         'SELECT id FROM experiments WHERE chat_id = ? AND command = ? AND created_at > ? ORDER BY created_at DESC LIMIT 1'
-      ).bind(b.chatId, cmdClean, now - DUPLICATE_WINDOW_MS).first();
+      ).bind(b.chatId, cmdClean, nowMs - DUPLICATE_WINDOW_MS).first();
       if (dup) {
         return json({
           error: 'هذا الأمر أُرسل خلال آخر دقيقة',
           existingId: dup.id,
-          hint: 'انتظر اكتماله أو أضف force:true لإعادة الإرسال',
+          hint: 'انتظر اكتماله أو أضف force:true',
           duplicate: true,
         }, 409);
       }
-    } catch (e) {
-      // إن فشل التحقق بسبب أمر غير صالح، سنترك المعالجة اللاحقة ترفضه
-    }
+    } catch {}
   }
 
   if (!budget) {
     await env.DB.prepare('INSERT INTO tool_budgets (chat_id,granted,used,expires_at,updated_at) VALUES (?,?,?,?,?)')
-      .bind(b.chatId, TOOL_BUDGET_GRANT, 0, now + TOOL_BUDGET_EXPIRY_MS, now).run();
-    budget = { chat_id: b.chatId, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: now + TOOL_BUDGET_EXPIRY_MS, updated_at: now };
+      .bind(b.chatId, TOOL_BUDGET_GRANT, 0, nowMs + TOOL_BUDGET_EXPIRY_MS, nowMs).run();
+    budget = { chat_id: b.chatId, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: nowMs + TOOL_BUDGET_EXPIRY_MS, updated_at: nowMs };
   } else {
-    const expired = budget.expires_at && Number(budget.expires_at) < now;
+    const expired = budget.expires_at && Number(budget.expires_at) < nowMs;
     const exhausted = Number(budget.used) >= Number(budget.granted);
     if (expired || exhausted) {
       if (b.renew === true) {
-        const newExpiry = now + TOOL_BUDGET_EXPIRY_MS;
+        const newExpiry = nowMs + TOOL_BUDGET_EXPIRY_MS;
         await env.DB.prepare('UPDATE tool_budgets SET granted=?,used=0,expires_at=?,updated_at=? WHERE chat_id=?')
-          .bind(TOOL_BUDGET_GRANT, newExpiry, now, b.chatId).run();
-        budget = { ...budget, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: newExpiry, updated_at: now };
+          .bind(TOOL_BUDGET_GRANT, newExpiry, nowMs, b.chatId).run();
+        budget = { ...budget, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: newExpiry, updated_at: nowMs };
       } else {
         return json({
           needsApproval: true,
-          reason: expired ? `انتهت صلاحية الحصة (${Math.round(TOOL_BUDGET_EXPIRY_MS/60000)} دقيقة). هل تريد تجديدها؟` : `استُهلكت الحصة (${TOOL_BUDGET_GRANT} محاولات). هل تريد تجديدها؟`,
+          reason: expired ? `انتهت الحصة. جدّدها.` : `استُهلكت الحصة (${TOOL_BUDGET_GRANT}). جدّدها.`,
           proposal, canRenew: true, suggestedBudget: TOOL_BUDGET_GRANT, expiryMinutes: Math.round(TOOL_BUDGET_EXPIRY_MS/60000),
           budget: { granted: budget.granted, used: budget.used, remaining: 0, expiresAt: budget.expires_at, expired: !!expired },
         }, 403);
@@ -565,7 +683,7 @@ async function workspaceStatus(env, b) {
   const files = await env.DB.prepare('SELECT id,name,mime,size,storage,asset_id,asset_url,created_at FROM conversation_files WHERE chat_id=? ORDER BY created_at DESC LIMIT 100').bind(b.chatId).all();
   const experiments = await env.DB.prepare('SELECT id,command,status,exit_code,created_at,updated_at FROM experiments WHERE chat_id=? ORDER BY created_at DESC LIMIT 30').bind(b.chatId).all();
   const budget = await env.DB.prepare('SELECT granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(b.chatId).first();
-  const now = Date.now();
+  const nowMs = Date.now();
   return json({
     workspace: {
       type: 'fox-session', persistentFiles: true, terminal: 'github-actions',
@@ -575,7 +693,7 @@ async function workspaceStatus(env, b) {
         granted: budget.granted, used: budget.used,
         remaining: Math.max(0, Number(budget.granted) - Number(budget.used)),
         expiresAt: budget.expires_at,
-        expired: !!(budget.expires_at && budget.expires_at < now),
+        expired: !!(budget.expires_at && budget.expires_at < nowMs),
       } : { granted: 0, used: 0, remaining: 0, expiresAt: null, expired: false },
     },
   });
@@ -594,7 +712,6 @@ async function receiveToolResult(env, request) {
   await env.DB.prepare('UPDATE experiments SET status=?,output=?,exit_code=?,updated_at=? WHERE id=?')
     .bind(result.status, result.output, result.exitCode, result.updatedAt, result.id).run();
 
-  // حدث حي: نتيجة التجربة
   const store = d1ContextStore(env.DB);
   await safeEvent(store, row.chat_id, 'tool_result_ready', {
     experimentId: row.id,
@@ -637,7 +754,7 @@ async function receiveToolResult(env, request) {
   return json({ success: true, experiment: result });
 }
 
-// ============ tryAutoCorrect — v7: يقترح فقط، لا يُنفّذ ============
+// ============ tryAutoCorrect — v7.1: يقترح فقط ============
 async function tryAutoCorrect(env, originalRow, failedResult) {
   const chatId = originalRow.chat_id;
   const nowMs = Date.now();
@@ -653,7 +770,7 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
       experimentId: originalRow.id, reason: expired ? 'expired' : 'exhausted',
       granted: budget.granted, used: budget.used, expiresAt: budget.expires_at,
     });
-    return { requiresRenewal: true, reason: expired ? 'انتهت صلاحية الحصة' : 'استُهلكت الحصة' };
+    return { requiresRenewal: true, reason: expired ? 'انتهت الصلاحية' : 'استُهلكت الحصة' };
   }
 
   const recent = await env.DB.prepare(
@@ -663,8 +780,7 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
   if (sameCount >= 3) {
     const store = d1ContextStore(env.DB);
     await safeEvent(store, chatId, 'tool_correction_aborted', {
-      experimentId: originalRow.id, reason: 'same_command_repeated',
-      command: originalRow.command,
+      experimentId: originalRow.id, reason: 'same_command_repeated', command: originalRow.command,
     });
     return { aborted: true, reason: 'نفس الأمر تكرر 3 مرات' };
   }
@@ -678,17 +794,17 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
   let correction;
   try {
     const r = await routeCompletion(env, 'cf-qwen3-coder', [
-      { role: 'system', content: 'أنت مصحح أوامر terminal. حلّل الخطأ وأعد JSON فقط بالشكل: {"command":"الأمر الجديد","language":"bash|python","explanation":"سبب الفشل والحل"}. لا تكرر نفس الأمر الفاشل. حافظ على هدف المهمة.' },
+      { role: 'system', content: 'أنت مصحح أوامر terminal. حلّل الخطأ وأعد JSON فقط بالشكل: {"command":"الأمر الجديد","language":"bash|python","explanation":"سبب الفشل والحل"}. لا تكرر نفس الأمر الفاشل.' },
       { role: 'user', content: `الهدف: ${taskGoal || 'غير محدد'}\nالأمر الفاشل:\n${originalRow.command}\n\nالخطأ:\n${String(failedResult.output || '').slice(0, 3000)}\n\nأعد JSON فقط.` },
     ], { maxTokens: 1200, temperature: .2 });
 
     const raw = r.text.match(/\{[\s\S]*\}/)?.[0] || '{}';
     correction = JSON.parse(raw);
   } catch (e) {
-    return { error: 'فشل استدعاء النموذج للتصحيح: ' + e.message };
+    return { error: 'فشل التصحيح: ' + e.message };
   }
 
-  if (!correction.command) return { error: 'النموذج لم يقترح أمراً جديداً' };
+  if (!correction.command) return { error: 'النموذج لم يقترح أمراً' };
 
   let safeCommand;
   try { safeCommand = validateCommand(correction.command); }
@@ -700,9 +816,9 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
     return { rejected: true, reason: e.message };
   }
 
-  if (safeCommand === originalRow.command) return { aborted: true, reason: 'النموذج أعاد نفس الأمر' };
+  if (safeCommand === originalRow.command) return { aborted: true, reason: 'نفس الأمر' };
 
-  // ⭐ v7: لا ننفّذ. نقترح فقط.
+  // ⭐ اقتراح فقط
   const proposalId = 'proposal_correction_' + crypto.randomUUID();
   const store = d1ContextStore(env.DB);
   await safeEvent(store, chatId, 'tool_correction_proposed', {
@@ -849,7 +965,6 @@ async function downloadFile(env, b) {
   return new Response(r.body, { status: 200, headers: { 'content-type': r.headers.get('content-type') || 'application/octet-stream', 'cache-control': 'private, max-age=3600', ...CORS } });
 }
 
-// ⭐ poll endpoint
 async function poll(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
   const since = Number(b.since) || 0;
@@ -866,7 +981,7 @@ async function poll(env, b) {
   });
 }
 
-// ============ Router الرئيسي ============
+// ============ Router ============
 export { persistFiles };
 
 export default {
@@ -880,7 +995,7 @@ export default {
       if ((pathname === '/' || pathname === '/index.html') && env.ASSETS) {
         return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
       }
-      return json({ name: 'FOX AI', status: 'ready', version: '7.0.0' });
+      return json({ name: 'FOX AI', status: 'ready', version: '7.1.0' });
     }
 
     if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -896,7 +1011,7 @@ export default {
 
       if (!await session(env, b.sessionToken)) return json({ error: 'الجلسة غير صالحة', authRequired: true }, 401);
 
-      if (b.action === 'chat') return chat(env, b);
+      if (b.action === 'chat') return chat(env, b);   // ← يُعيد SSE
       if (b.action === 'poll') return poll(env, b);
       if (b.action === 'get_messages') return messages(env, b);
       if (b.action === 'list_conversations') return listConversations(env, b);
