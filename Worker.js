@@ -1,6 +1,6 @@
 // =====================================================================
-// FOX AI — Worker جامع نهائي v6.0.1
-// التعديلات: safeEvent مُحصّن، توافق routeAuto الجديد، إصلاح D1 undefined
+// FOX AI — Worker جامع نهائي v7.0
+// التعديلات: حصة 10/20، renew endpoint، قفل التكرار، tryAutoCorrect يقترح فقط
 // =====================================================================
 
 import { publicCatalog, getModel, chooseModel, scoreDifficulty, routeAuto } from './src/catalog.js';
@@ -26,8 +26,20 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 });
 const text = x => String(x || '').trim();
 
-const TOOL_BUDGET_GRANT = 5;
-const TOOL_BUDGET_EXPIRY_MS = 15 * 60 * 1000;
+// ⭐ الحصة الجديدة
+const TOOL_BUDGET_GRANT = 10;
+const TOOL_BUDGET_EXPIRY_MS = 20 * 60 * 1000;
+const DUPLICATE_WINDOW_MS = 60 * 1000;
+
+// ⭐ الحدود الموسّعة
+const LIMITS = {
+  MAX_MESSAGE_TEXT: 200000,
+  MAX_FILE_TEXT: 2000000,
+  MAX_CONTEXT_MESSAGES: 100,
+  MAX_MESSAGES_LOADED: 500,
+  MAX_OUTPUT_DISPLAY: 500000,
+  MAX_FILES_PER_MSG: 20,
+};
 
 // ============ Schema ============
 async function schema(env) {
@@ -90,7 +102,6 @@ async function isSessionValid(env, token) {
   } catch { return false; }
 }
 
-// ⭐ safeEvent مُحصّن بالكامل
 async function safeEvent(store, chatId, type, payload) {
   const safePayload = payload === undefined ? {} : payload;
   try {
@@ -207,8 +218,9 @@ async function session(env, token) {
 // ============ persist / load ============
 async function persistMessage(env, chatId, role, content, modelId = null) {
   const t = Date.now();
-  await env.DB.prepare('INSERT INTO messages (id,chat_id,role,content,model_id,created_at) VALUES (?,?,?,?,?,?)').bind(crypto.randomUUID(), chatId, role, String(content || ''), modelId, t).run();
-  await env.DB.prepare('INSERT INTO conversations (id,title,created_at,updated_at) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=?').bind(chatId, String(content || '').slice(0, 80) || 'محادثة جديدة', t, t, t).run();
+  const textContent = String(content || '').slice(0, LIMITS.MAX_MESSAGE_TEXT);
+  await env.DB.prepare('INSERT INTO messages (id,chat_id,role,content,model_id,created_at) VALUES (?,?,?,?,?,?)').bind(crypto.randomUUID(), chatId, role, textContent, modelId, t).run();
+  await env.DB.prepare('INSERT INTO conversations (id,title,created_at,updated_at) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=?').bind(chatId, textContent.slice(0, 80) || 'محادثة جديدة', t, t, t).run();
 }
 
 async function persistFiles(env, chatId, files = []) {
@@ -217,7 +229,7 @@ async function persistFiles(env, chatId, files = []) {
     const name = text(f.name).slice(0, 180) || 'file';
     const mime = text(f.mime || f.type).slice(0, 120) || 'application/octet-stream';
     const size = Math.max(0, Number(f.size) || 0);
-    const content = f.text != null ? String(f.text).slice(0, 120000) : null;
+    const content = f.text != null ? String(f.text).slice(0, LIMITS.MAX_FILE_TEXT) : null;
     let data = null, storage = null, assetId = null, assetUrl = null;
     if (f.data) {
       const raw = String(f.data);
@@ -236,7 +248,7 @@ async function persistFiles(env, chatId, files = []) {
 }
 
 async function loadMessages(env, chatId) {
-  const r = await env.DB.prepare('SELECT id,role,content,model_id,created_at FROM messages WHERE chat_id=? ORDER BY created_at ASC LIMIT 200').bind(chatId).all();
+  const r = await env.DB.prepare('SELECT id,role,content,model_id,created_at FROM messages WHERE chat_id=? ORDER BY created_at ASC LIMIT ?').bind(chatId, LIMITS.MAX_MESSAGES_LOADED).all();
   return (r.results || []).map(x => ({ id: x.id, role: x.role, content: x.content, model: x.model_id || null, createdAt: x.created_at }));
 }
 
@@ -269,7 +281,7 @@ async function chat(env, b) {
   if (!b.chatId || !Array.isArray(b.messages) || !b.messages.length) return json({ error: 'chatId والرسائل مطلوبان' }, 400);
   const store = d1ContextStore(env.DB);
   const state = await store.get(b.chatId);
-  const recent = b.messages.slice(-14);
+  const recent = b.messages.slice(-LIMITS.MAX_CONTEXT_MESSAGES);
   const lastContent = recent.at(-1)?.content || '';
   const hasImage = (b.attachments || []).some(x => String(x.mime || x.type || '').startsWith('image/'));
 
@@ -303,7 +315,7 @@ async function chat(env, b) {
   }
 
   const answer = result.text;
-  const last = text(lastContent);
+  const last = text(lastContent).slice(0, LIMITS.MAX_MESSAGE_TEXT);
   await persistFiles(env, b.chatId, b.attachments || []);
   await persistMessage(env, b.chatId, 'user', last, null);
   await persistMessage(env, b.chatId, 'assistant', answer, result.actual.id);
@@ -392,11 +404,12 @@ async function getExperiment(env, b) {
   if (!b.experimentId) return json({ error: 'experimentId مطلوب' }, 400);
   const r = await env.DB.prepare('SELECT id,chat_id,command,status,output,exit_code,created_at,updated_at FROM experiments WHERE id=?').bind(b.experimentId).first();
   if (!r) return json({ error: 'التجربة غير موجودة' }, 404);
-  return json({ experiment: { ...r, exitCode: r.exit_code, createdAt: r.created_at, updatedAt: r.updated_at } });
+  const output = (r.output || '').slice(0, LIMITS.MAX_OUTPUT_DISPLAY);
+  return json({ experiment: { ...r, output, exitCode: r.exit_code, createdAt: r.created_at, updatedAt: r.updated_at } });
 }
 
 async function getExperiments(env, b) {
-  const results = await env.DB.prepare('SELECT id,command,status,output,exit_code,created_at FROM experiments ORDER BY created_at DESC LIMIT 20').all();
+  const results = await env.DB.prepare('SELECT id,command,status,exit_code,created_at,updated_at FROM experiments ORDER BY created_at DESC LIMIT 20').all();
   return json({ experiments: results.results || [] });
 }
 
@@ -425,6 +438,25 @@ async function toolBudget(env, b) {
   });
 }
 
+// ⭐ جديد: تجديد الحصة بدون إنشاء تجربة طرفية
+async function renewToolBudget(env, b) {
+  if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
+  const now = Date.now();
+  const newExpiry = now + TOOL_BUDGET_EXPIRY_MS;
+  await env.DB.prepare(
+    'INSERT INTO tool_budgets (chat_id, granted, used, expires_at, updated_at) VALUES (?, ?, 0, ?, ?) ' +
+    'ON CONFLICT(chat_id) DO UPDATE SET granted = ?, used = 0, expires_at = ?, updated_at = ?'
+  ).bind(b.chatId, TOOL_BUDGET_GRANT, newExpiry, now, TOOL_BUDGET_GRANT, newExpiry, now).run();
+
+  const store = d1ContextStore(env.DB);
+  await safeEvent(store, b.chatId, 'tool_budget_renewed', { granted: TOOL_BUDGET_GRANT, expiresAt: newExpiry });
+
+  return json({
+    success: true,
+    budget: { granted: TOOL_BUDGET_GRANT, used: 0, remaining: TOOL_BUDGET_GRANT, expiresAt: newExpiry, expired: false },
+  });
+}
+
 // ============ toolProposal ============
 async function toolProposal(env, b) {
   const proposal = detectToolProposal(b.text || b.content || '');
@@ -437,8 +469,13 @@ async function runTool(env, b) {
   if (!proposal) return json({ error: 'proposal مطلوب' }, 400);
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
 
+  // 🚫 رفض صريح لأي "renew" قادم من الطريق القديم
+  if (proposal.command === 'renew' || proposal.id === 'renew') {
+    return json({ error: 'استخدم endpoint renew_tool_budget لتجديد الحصة' }, 400);
+  }
+
   let budget = await env.DB.prepare('SELECT chat_id,granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(b.chatId).first();
-  const nowMs = Date.now();
+  const now = Date.now();
 
   if (b.approved !== true) {
     return json({
@@ -446,29 +483,49 @@ async function runTool(env, b) {
       reason: 'لا يمكن تشغيل الطرفية دون موافقة',
       proposal,
       suggestedBudget: TOOL_BUDGET_GRANT,
-      expiryMinutes: 15,
-      budget: budget ? { granted: budget.granted, used: budget.used, remaining: Math.max(0, budget.granted - budget.used), expiresAt: budget.expires_at, expired: !!(budget.expires_at && budget.expires_at < nowMs) } : null,
+      expiryMinutes: Math.round(TOOL_BUDGET_EXPIRY_MS / 60000),
+      budget: budget ? { granted: budget.granted, used: budget.used, remaining: Math.max(0, budget.granted - budget.used), expiresAt: budget.expires_at, expired: !!(budget.expires_at && budget.expires_at < now) } : null,
     }, 403);
+  }
+
+  // ⭐ قفل ضد الإرسال المتكرر (نفس الأمر خلال 60 ثانية)
+  if (!b.force) {
+    try {
+      const cmdClean = validateCommand(proposal.command);
+      const dup = await env.DB.prepare(
+        'SELECT id FROM experiments WHERE chat_id = ? AND command = ? AND created_at > ? ORDER BY created_at DESC LIMIT 1'
+      ).bind(b.chatId, cmdClean, now - DUPLICATE_WINDOW_MS).first();
+      if (dup) {
+        return json({
+          error: 'هذا الأمر أُرسل خلال آخر دقيقة',
+          existingId: dup.id,
+          hint: 'انتظر اكتماله أو أضف force:true لإعادة الإرسال',
+          duplicate: true,
+        }, 409);
+      }
+    } catch (e) {
+      // إن فشل التحقق بسبب أمر غير صالح، سنترك المعالجة اللاحقة ترفضه
+    }
   }
 
   if (!budget) {
     await env.DB.prepare('INSERT INTO tool_budgets (chat_id,granted,used,expires_at,updated_at) VALUES (?,?,?,?,?)')
-      .bind(b.chatId, TOOL_BUDGET_GRANT, 0, nowMs + TOOL_BUDGET_EXPIRY_MS, nowMs).run();
-    budget = { chat_id: b.chatId, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: nowMs + TOOL_BUDGET_EXPIRY_MS, updated_at: nowMs };
+      .bind(b.chatId, TOOL_BUDGET_GRANT, 0, now + TOOL_BUDGET_EXPIRY_MS, now).run();
+    budget = { chat_id: b.chatId, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: now + TOOL_BUDGET_EXPIRY_MS, updated_at: now };
   } else {
-    const expired = budget.expires_at && Number(budget.expires_at) < nowMs;
+    const expired = budget.expires_at && Number(budget.expires_at) < now;
     const exhausted = Number(budget.used) >= Number(budget.granted);
     if (expired || exhausted) {
       if (b.renew === true) {
-        const newExpiry = nowMs + TOOL_BUDGET_EXPIRY_MS;
+        const newExpiry = now + TOOL_BUDGET_EXPIRY_MS;
         await env.DB.prepare('UPDATE tool_budgets SET granted=?,used=0,expires_at=?,updated_at=? WHERE chat_id=?')
-          .bind(TOOL_BUDGET_GRANT, newExpiry, nowMs, b.chatId).run();
-        budget = { ...budget, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: newExpiry, updated_at: nowMs };
+          .bind(TOOL_BUDGET_GRANT, newExpiry, now, b.chatId).run();
+        budget = { ...budget, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: newExpiry, updated_at: now };
       } else {
         return json({
           needsApproval: true,
-          reason: expired ? 'انتهت صلاحية الحصة (15 دقيقة). هل تريد تجديدها؟' : 'استُهلكت الحصة (5 محاولات). هل تريد تجديدها؟',
-          proposal, canRenew: true, suggestedBudget: TOOL_BUDGET_GRANT, expiryMinutes: 15,
+          reason: expired ? `انتهت صلاحية الحصة (${Math.round(TOOL_BUDGET_EXPIRY_MS/60000)} دقيقة). هل تريد تجديدها؟` : `استُهلكت الحصة (${TOOL_BUDGET_GRANT} محاولات). هل تريد تجديدها؟`,
+          proposal, canRenew: true, suggestedBudget: TOOL_BUDGET_GRANT, expiryMinutes: Math.round(TOOL_BUDGET_EXPIRY_MS/60000),
           budget: { granted: budget.granted, used: budget.used, remaining: 0, expiresAt: budget.expires_at, expired: !!expired },
         }, 403);
       }
@@ -487,6 +544,15 @@ async function runTool(env, b) {
   await env.DB.prepare('UPDATE experiments SET status=?,run_id=?,updated_at=? WHERE id=?')
     .bind(dispatched.status, dispatched.runId || null, dispatched.updatedAt, dispatched.id).run();
 
+  const store = d1ContextStore(env.DB);
+  await safeEvent(store, b.chatId, 'tool_executed', {
+    experimentId: dispatched.id,
+    command: dispatched.command,
+    language: dispatched.language,
+    runId: dispatched.runId,
+    status: dispatched.status,
+  });
+
   return json({
     experiment: dispatched,
     budget: { granted: budget.granted, used: Number(budget.used) + 1, remaining: remaining - 1, expiresAt: budget.expires_at },
@@ -499,7 +565,7 @@ async function workspaceStatus(env, b) {
   const files = await env.DB.prepare('SELECT id,name,mime,size,storage,asset_id,asset_url,created_at FROM conversation_files WHERE chat_id=? ORDER BY created_at DESC LIMIT 100').bind(b.chatId).all();
   const experiments = await env.DB.prepare('SELECT id,command,status,exit_code,created_at,updated_at FROM experiments WHERE chat_id=? ORDER BY created_at DESC LIMIT 30').bind(b.chatId).all();
   const budget = await env.DB.prepare('SELECT granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(b.chatId).first();
-  const nowMs = Date.now();
+  const now = Date.now();
   return json({
     workspace: {
       type: 'fox-session', persistentFiles: true, terminal: 'github-actions',
@@ -509,7 +575,7 @@ async function workspaceStatus(env, b) {
         granted: budget.granted, used: budget.used,
         remaining: Math.max(0, Number(budget.granted) - Number(budget.used)),
         expiresAt: budget.expires_at,
-        expired: !!(budget.expires_at && budget.expires_at < nowMs),
+        expired: !!(budget.expires_at && budget.expires_at < now),
       } : { granted: 0, used: 0, remaining: 0, expiresAt: null, expired: false },
     },
   });
@@ -527,6 +593,15 @@ async function receiveToolResult(env, request) {
   const result = verifyResult({ ...row, id: row.id }, { output: b.output || '', exitCode: b.exit_code ?? 1 });
   await env.DB.prepare('UPDATE experiments SET status=?,output=?,exit_code=?,updated_at=? WHERE id=?')
     .bind(result.status, result.output, result.exitCode, result.updatedAt, result.id).run();
+
+  // حدث حي: نتيجة التجربة
+  const store = d1ContextStore(env.DB);
+  await safeEvent(store, row.chat_id, 'tool_result_ready', {
+    experimentId: row.id,
+    status: result.status,
+    exitCode: result.exitCode,
+    outputPreview: String(result.output || '').slice(0, 500),
+  });
 
   if (row.task_id && row.step_id) {
     const tr = await env.DB.prepare('SELECT task_json,plan_json FROM tasks WHERE id=?').bind(row.task_id).first();
@@ -562,7 +637,7 @@ async function receiveToolResult(env, request) {
   return json({ success: true, experiment: result });
 }
 
-// ============ tryAutoCorrect ============
+// ============ tryAutoCorrect — v7: يقترح فقط، لا يُنفّذ ============
 async function tryAutoCorrect(env, originalRow, failedResult) {
   const chatId = originalRow.chat_id;
   const nowMs = Date.now();
@@ -573,12 +648,11 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
   const exhausted = Number(budget.used) >= Number(budget.granted);
 
   if (expired || exhausted) {
-    await env.DB.prepare('INSERT INTO context_events (id,chat_id,type,payload_json,created_at) VALUES (?,?,?,?,?)')
-      .bind(crypto.randomUUID(), chatId, 'tool_budget_exhausted', JSON.stringify({
-        experimentId: originalRow.id, reason: expired ? 'expired' : 'exhausted',
-        granted: budget.granted, used: budget.used, expiresAt: budget.expires_at,
-        message: 'يجب تجديد الحصة للمتابعة',
-      }), nowMs).run();
+    const store = d1ContextStore(env.DB);
+    await safeEvent(store, chatId, 'tool_budget_exhausted', {
+      experimentId: originalRow.id, reason: expired ? 'expired' : 'exhausted',
+      granted: budget.granted, used: budget.used, expiresAt: budget.expires_at,
+    });
     return { requiresRenewal: true, reason: expired ? 'انتهت صلاحية الحصة' : 'استُهلكت الحصة' };
   }
 
@@ -587,11 +661,11 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
   ).bind(chatId).all();
   const sameCount = (recent.results || []).filter(x => x.command === originalRow.command).length;
   if (sameCount >= 3) {
-    await env.DB.prepare('INSERT INTO context_events (id,chat_id,type,payload_json,created_at) VALUES (?,?,?,?,?)')
-      .bind(crypto.randomUUID(), chatId, 'tool_correction_aborted', JSON.stringify({
-        experimentId: originalRow.id, reason: 'same_command_repeated',
-        command: originalRow.command, message: 'النموذج يعيد نفس الأمر — أُوقفت الحلقة',
-      }), nowMs).run();
+    const store = d1ContextStore(env.DB);
+    await safeEvent(store, chatId, 'tool_correction_aborted', {
+      experimentId: originalRow.id, reason: 'same_command_repeated',
+      command: originalRow.command,
+    });
     return { aborted: true, reason: 'نفس الأمر تكرر 3 مرات' };
   }
 
@@ -605,7 +679,7 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
   try {
     const r = await routeCompletion(env, 'cf-qwen3-coder', [
       { role: 'system', content: 'أنت مصحح أوامر terminal. حلّل الخطأ وأعد JSON فقط بالشكل: {"command":"الأمر الجديد","language":"bash|python","explanation":"سبب الفشل والحل"}. لا تكرر نفس الأمر الفاشل. حافظ على هدف المهمة.' },
-      { role: 'user', content: `الهدف: ${taskGoal || 'غير محدد'}\nالأمر الفاشل:\n${originalRow.command}\n\nالخطأ:\n${failedResult.output.slice(0, 3000)}\n\nأعد JSON فقط.` },
+      { role: 'user', content: `الهدف: ${taskGoal || 'غير محدد'}\nالأمر الفاشل:\n${originalRow.command}\n\nالخطأ:\n${String(failedResult.output || '').slice(0, 3000)}\n\nأعد JSON فقط.` },
     ], { maxTokens: 1200, temperature: .2 });
 
     const raw = r.text.match(/\{[\s\S]*\}/)?.[0] || '{}';
@@ -619,44 +693,39 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
   let safeCommand;
   try { safeCommand = validateCommand(correction.command); }
   catch (e) {
-    await env.DB.prepare('INSERT INTO context_events (id,chat_id,type,payload_json,created_at) VALUES (?,?,?,?,?)')
-      .bind(crypto.randomUUID(), chatId, 'tool_correction_rejected', JSON.stringify({
-        experimentId: originalRow.id, command: correction.command, reason: e.message,
-      }), nowMs).run();
+    const store = d1ContextStore(env.DB);
+    await safeEvent(store, chatId, 'tool_correction_rejected', {
+      experimentId: originalRow.id, command: correction.command, reason: e.message,
+    });
     return { rejected: true, reason: e.message };
   }
 
   if (safeCommand === originalRow.command) return { aborted: true, reason: 'النموذج أعاد نفس الأمر' };
 
-  const newId = crypto.randomUUID();
-  const attempt = Number(originalRow.attempt || 1) + 1;
-  const newProposal = { id: 'proposal_' + newId, kind: 'terminal', language: correction.language || 'bash', command: safeCommand, requiresApproval: false };
-  const newApproval = approvalRecord({ proposalId: newProposal.id, approved: true, scope: `auto_correction_${attempt}` });
-  const newExperiment = { ...experimentRecord({ chatId, proposal: newProposal, approval: newApproval }), taskId: originalRow.task_id || null, stepId: originalRow.step_id || null };
-
-  await env.DB.prepare('UPDATE tool_budgets SET used=used+1,updated_at=? WHERE chat_id=?').bind(nowMs, chatId).run();
-  await env.DB.prepare('INSERT INTO experiments (id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .bind(newExperiment.id, newExperiment.chatId, newExperiment.command, newExperiment.status, '', null, newExperiment.createdAt, newExperiment.updatedAt, newExperiment.taskId, newExperiment.stepId, null, attempt, originalRow.id).run();
-
-  const dispatched = await dispatchExperiment(env, newExperiment);
-  await env.DB.prepare('UPDATE experiments SET status=?,run_id=?,updated_at=? WHERE id=?')
-    .bind(dispatched.status, dispatched.runId || null, dispatched.updatedAt, dispatched.id).run();
-
-  await env.DB.prepare('INSERT INTO context_events (id,chat_id,type,payload_json,created_at) VALUES (?,?,?,?,?)')
-    .bind(crypto.randomUUID(), chatId, 'tool_auto_corrected', JSON.stringify({
-      originalId: originalRow.id, newId: newExperiment.id, attempt,
-      oldCommand: originalRow.command, newCommand: safeCommand,
-      explanation: correction.explanation || '',
-    }), nowMs).run();
+  // ⭐ v7: لا ننفّذ. نقترح فقط.
+  const proposalId = 'proposal_correction_' + crypto.randomUUID();
+  const store = d1ContextStore(env.DB);
+  await safeEvent(store, chatId, 'tool_correction_proposed', {
+    originalId: originalRow.id,
+    proposalId,
+    proposedCommand: safeCommand,
+    explanation: correction.explanation || '',
+    requiresUserApproval: true,
+  });
 
   return {
-    originalId: originalRow.id,
-    newId: newExperiment.id,
-    attempt,
-    oldCommand: originalRow.command,
-    newCommand: safeCommand,
-    explanation: correction.explanation || '',
-    dispatched: dispatched.status,
+    needsApproval: true,
+    proposal: {
+      id: proposalId,
+      kind: 'terminal',
+      language: correction.language === 'python' ? 'python' : 'bash',
+      command: safeCommand,
+      explanation: String(correction.explanation || '').slice(0, 500),
+      requiresApproval: true,
+      isCorrection: true,
+      originalExperimentId: originalRow.id,
+    },
+    reason: 'التصحيح التلقائي يتطلب موافقتك',
   };
 }
 
@@ -721,7 +790,7 @@ async function settings(env, b) {
     return json({ settings: (r.results || []).map(x => ({ key: x.key, value: JSON.parse(x.value_json) })) });
   }
   if (!b.key) return json({ error: 'key مطلوب' }, 400);
-  if (b.key.includes('API_KEY') || b.key.includes('TOKEN') || b.key.includes('PASSWORD')) return json({ error: 'المفاتيح السرية تُدار من Cloudflare Secrets ولا تُحفظ في D1' }, 400);
+  if (b.key.includes('API_KEY') || b.key.includes('TOKEN') || b.key.includes('PASSWORD')) return json({ error: 'المفاتيح السرية تُدار من Cloudflare Secrets' }, 400);
   await env.DB.prepare('INSERT INTO settings (key,value_json,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=?,updated_at=?').bind(b.key, JSON.stringify(b.value ?? null), Date.now(), JSON.stringify(b.value ?? null), Date.now()).run();
   return json({ success: true });
 }
@@ -780,7 +849,7 @@ async function downloadFile(env, b) {
   return new Response(r.body, { status: 200, headers: { 'content-type': r.headers.get('content-type') || 'application/octet-stream', 'cache-control': 'private, max-age=3600', ...CORS } });
 }
 
-// ⭐ poll endpoint للأحداث الحية
+// ⭐ poll endpoint
 async function poll(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
   const since = Number(b.since) || 0;
@@ -811,7 +880,7 @@ export default {
       if ((pathname === '/' || pathname === '/index.html') && env.ASSETS) {
         return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
       }
-      return json({ name: 'FOX AI', status: 'ready', version: '6.0.1' });
+      return json({ name: 'FOX AI', status: 'ready', version: '7.0.0' });
     }
 
     if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -847,13 +916,14 @@ export default {
       if (b.action === 'download_file') return downloadFile(env, b);
       if (b.action === 'tool_proposal') return toolProposal(env, b);
       if (b.action === 'tool_budget') return toolBudget(env, b);
+      if (b.action === 'renew_tool_budget') return renewToolBudget(env, b);
       if (b.action === 'workspace_status') return workspaceStatus(env, b);
       if (b.action === 'run_tool') return runTool(env, b);
       if (b.action === 'usage') return json(await getUsageFromGateway(env));
       if (['settings_get', 'settings_set'].includes(b.action)) return settings(env, b);
       if (['rename_conversation', 'delete_conversation'].includes(b.action)) return conversationControl(env, b);
       if (['cancel_task', 'pause_task', 'resume_task'].includes(b.action)) return taskControl(env, b);
-      return json({ error: 'إجراء غير معروف' }, 400);
+      return json({ error: 'إجراء غير معروف' }, 404);
     } catch (e) {
       console.error(e);
       const status = e instanceof ProviderError ? e.status : 500;
