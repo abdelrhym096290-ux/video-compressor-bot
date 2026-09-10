@@ -9,13 +9,13 @@ export const MODEL_CATALOG = Object.freeze([
   ['cerebras-qwen-3.8-27b','qwen-3.8-27b','Qwen 3.8 27B','Cerebras','cerebras','برمجة وتحليل سريع','chat'],
   ['cerebras-gpt-oss-120b','gpt-oss-120b','GPT-OSS 120B','Cerebras','cerebras','مهام معقدة','chat'],
 
-  // ============ Google Gemini (الأسماء الصحيحة المتاحة) ============
+  // ============ Google Gemini ============
   ['gemini-5-flash-lite','gemini-3.5-flash','Flash 3.5','Google','gemini','محادثة عامة','chat'],
   ['gemini-5-flash','gemini-3.6-flash','Flash 3.6','Google','gemini','الافتراضي','chat'],
   ['gemini-6-flash','gemini-3.7-flash','Flash 3.7','Google','gemini','تحليل متقدم','chat'],
   ['gemini-7-flash','gemini-3.8-flash','Flash 3.8','Google','gemini','الأحدث','chat'],
 
-  // ============ Cloudflare Workers AI (تعمل) ============
+  // ============ Cloudflare Workers AI ============
   ['cf-glm-flash','@cf/zai-org/glm-4.7-flash','GLM 4.7 Flash','Cloudflare','workers-ai','ردود سريعة','chat'],
   ['cf-qwen3-coder','@cf/qwen/qwen2.5-coder-32b-instruct','Qwen Coder','Cloudflare','workers-ai','برمجة','chat'],
   ['cf-coder','@cf/qwen/qwen2.5-coder-32b-instruct','Qwen Coder','Cloudflare','workers-ai','كود وتصحيح','chat'],
@@ -34,14 +34,14 @@ export const MODEL_CATALOG = Object.freeze([
 ].map(([id,model,name,company,provider,description,kind]) => Object.freeze({id,model,name,company,provider,description,kind})));
 
 // ============================================================
-// getModel: جلب نموذج بواسطة المعرّف (أو الأول افتراضياً)
+// getModel
 // ============================================================
 export function getModel(id) {
   return MODEL_CATALOG.find(x => x.id === id) || MODEL_CATALOG[0];
 }
 
 // ============================================================
-// publicCatalog: نسخة آمنة للنشر (بدون تفاصيل داخلية)
+// publicCatalog
 // ============================================================
 export function publicCatalog() {
   return MODEL_CATALOG.map(({id,name,company,provider,description,kind}) => ({
@@ -52,7 +52,7 @@ export function publicCatalog() {
 }
 
 // ============================================================
-// chooseModel: اختيار سريع (منطق ثابت قديم)
+// chooseModel (منطق ثابت)
 // ============================================================
 export function chooseModel(text = '') {
   const t = String(text).toLowerCase();
@@ -64,61 +64,45 @@ export function chooseModel(text = '') {
 
 // ============================================================
 // scoreDifficulty: تقدير صعوبة السؤال (0 = سهل، 1 = صعب)
+// يقبل معاملاً ثانياً اختيارياً للسياق
 // ============================================================
-export function scoreDifficulty(text = '') {
+export function scoreDifficulty(text = '', extra = {}) {
   const raw = String(text);
   const t = raw.toLowerCase().trim();
-
-  // أسئلة قصيرة جداً = سهلة
   if (t.length < 15) return 0.1;
 
   let score = 0;
-
-  // الطول: كل 1000 حرف يضيف صعوبة (بحد أقصى 0.3)
   score += Math.min(t.length / 1000, 0.3);
 
-  // كلمات تدل على التعقيد
   if (/code|كود|برمج|debug|تصحيح|خوارزم|algorithm/.test(t)) score += 0.25;
   if (/math|رياض|معادلة|equation|احسب|calculate|integral|تفاضل/.test(t)) score += 0.25;
   if (/explain|اشرح|لماذا|why|حلل|analyze|قارن|compare/.test(t)) score += 0.15;
   if (/plan|خطة|استراتيج|strategy|تصميم|design/.test(t)) score += 0.15;
   if (/reason|استدلال|منطق|logic|استنتج|infer/.test(t)) score += 0.2;
 
-  // أسئلة متعددة الخطوات
   const questionMarks = (t.match(/[?؟]/g) || []).length;
   if (questionMarks > 2) score += 0.1;
 
-  // وجود قوائم أو خطوات
   if (/\n\d+[\.\)]|-\s|\*\s/.test(raw)) score += 0.05;
+
+  // إضافات من السياق (إن وُجدت)
+  if (Number(extra.fileCount) > 0) score += 0.1;
+  if (Number(extra.priorFailures) > 0) score += Math.min(Number(extra.priorFailures) * 0.1, 0.3);
 
   return Math.min(score, 1);
 }
 
 // ============================================================
-// routeAuto: اختيار النموذج تلقائياً حسب نوع السؤال وصعوبته
+// routeAuto: يقبل نصاً أو رقماً، ويُعيد { tier, model }
 // ============================================================
-export function routeAuto(text = '') {
-  const t = String(text).toLowerCase();
+export function routeAuto(input) {
+  const score = typeof input === 'number' ? input : scoreDifficulty(String(input || ''));
 
-  // 1) أولوية للمهام المتخصصة (كود / صور)
-  if (/code|كود|برمج|debug|تصحيح|terminal|طرفية/.test(t)) {
-    return getModel('cf-qwen3-coder');
+  if (score < 0.3) {
+    return { tier: 'fast', model: getModel('cf-gpt-oss-20b') };
   }
-  if (/image|صورة|vision|صوّر|رسم/.test(t)) {
-    return getModel('cf-llama-vision');
+  if (score < 0.65) {
+    return { tier: 'balanced', model: getModel('cf-qwen3') };
   }
-
-  // 2) حسب درجة الصعوبة
-  const d = scoreDifficulty(text);
-
-  if (d < 0.3) {
-    // سهل → نموذج اقتصادي وسريع
-    return getModel('cf-gpt-oss-20b');
-  }
-  if (d < 0.65) {
-    // متوسط → نموذج متوازن
-    return getModel('cf-qwen3');
-  }
-  // صعب → نموذج قوي
-  return getModel('cf-gpt-oss-120b');
+  return { tier: 'deep', model: getModel('cf-gpt-oss-120b') };
 }
