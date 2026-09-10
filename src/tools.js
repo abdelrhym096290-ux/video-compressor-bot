@@ -51,7 +51,6 @@ export function detectToolProposal(text = '') {
   }
 
   // ============ الصيغة 2: JSON مباشر (بدون fence) ============
-  // نلتقط أي كائن يحتوي "tool":"terminal"
   const jsonInlineMatches = source.match(/\{[^{}]*"tool"\s*:\s*"terminal"[^{}]*\}/g);
   if (jsonInlineMatches) {
     for (const candidate of jsonInlineMatches) {
@@ -117,7 +116,7 @@ export function experimentRecord({ chatId, proposal, approval }) {
 }
 
 // ============================================================
-// verifyResult — فحص نتيجة التنفيذ
+// verifyResult
 // ============================================================
 export function verifyResult(experiment, { output = '', exitCode = 1 } = {}) {
   const code = Number(exitCode);
@@ -174,6 +173,7 @@ export function memoryToolStore() {
 
 // ============================================================
 // github — طلب موحّد إلى GitHub API
+// ⭐ ملاحظة: User-Agent إلزامي وإلا GitHub يعيد 403
 // ============================================================
 async function github(env, path, init = {}) {
   if (!env.GITHUB_TOKEN) throw new Error('GITHUB_TOKEN غير مهيأ');
@@ -184,6 +184,7 @@ async function github(env, path, init = {}) {
       accept: 'application/vnd.github+json',
       'content-type': 'application/json',
       'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'FOX-AI-Worker/6.0',   // ⭐ إلزامي لـ GitHub API
       ...(init.headers || {}),
     },
   });
@@ -211,7 +212,26 @@ export async function dispatchExperiment(env, experiment) {
       },
     }),
   });
-  if (!response.ok) throw new Error(`فشل إرسال التجربة إلى GitHub: HTTP ${response.status}`);
+
+  if (!response.ok) {
+    // ⭐ نقرأ رسالة GitHub الكاملة لتشخيص السبب (403, 404, ... إلخ)
+    const errorBody = await response.text().catch(() => '');
+    let detail = errorBody || '(بدون تفاصيل)';
+    try {
+      const parsed = JSON.parse(errorBody);
+      detail = parsed.message || parsed.documentation_url || detail;
+    } catch { /* نُبقي النص الأصلي */ }
+
+    const hints = {
+      401: 'التوكن غير صالح أو منتهي',
+      403: 'صلاحيات ناقصة — تأكد من scope "workflow" في التوكن، و"Read and write permissions" في Settings → Actions → General',
+      404: 'اسم المستودع أو ملف الـ workflow أو الـ ref خطأ',
+      422: 'مدخلات workflow غير صحيحة — تأكد من تعريف workflow_dispatch inputs',
+    };
+    const hint = hints[response.status] ? ` | تلميح: ${hints[response.status]}` : '';
+
+    throw new Error(`فشل إرسال التجربة إلى GitHub: HTTP ${response.status} — ${detail}${hint}`);
+  }
 
   // البحث عن runId لمدة 5 ثوان
   let runId = null;
