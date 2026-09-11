@@ -1,6 +1,6 @@
 // =====================================================================
-// FOX AI — Worker جامع نهائي v7.1
-// التعديلات: Streaming SSE، fallback الإحصاءات إلى D1، حصة 10/20
+// FOX AI — Worker جامع نهائي v7.2
+// التعديلات: تعليق تلقائي على نتيجة الأداة + tool_proposed + schema caching
 // =====================================================================
 
 import { publicCatalog, getModel, chooseModel, scoreDifficulty, routeAuto } from './src/catalog.js';
@@ -11,7 +11,7 @@ import { detectToolProposal, approvalRecord, experimentRecord, dispatchExperimen
 import { uploadReleaseAsset, downloadReleaseAsset, MAX_DIRECT_UPLOAD } from './src/storage.js';
 import { multimodalMessages, modelCapabilities } from './src/media.js';
 import { advanceTask, addIntervention, taskEvents } from './src/orchestrator.js';
-import { buildSystemPrompt, classifyQuestion } from './src/prompts.js';
+import { buildSystemPrompt, buildToolCommentaryPrompt, classifyQuestion, toolResultMessage } from './src/prompts.js';
 
 // ============ ثوابت ============
 const CORS = {
@@ -41,8 +41,12 @@ const LIMITS = {
   MAX_FILES_PER_MSG: 20,
 };
 
+// ⭐ schema caching — مرة واحدة لكل Worker instance
+let _schemaReady = false;
+
 // ============ Schema ============
 async function schema(env) {
+  if (_schemaReady) return;
   const q = [
     'CREATE TABLE IF NOT EXISTS context_state (chat_id TEXT PRIMARY KEY, state_json TEXT NOT NULL, updated_at INTEGER NOT NULL)',
     'CREATE TABLE IF NOT EXISTS context_events (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, type TEXT NOT NULL, payload_json TEXT NOT NULL, created_at INTEGER NOT NULL)',
@@ -62,16 +66,25 @@ async function schema(env) {
     "CREATE TABLE IF NOT EXISTS task_runtime (task_id TEXT PRIMARY KEY, lease_id TEXT, lease_until INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'idle', last_error TEXT, next_run_at INTEGER, updated_at INTEGER NOT NULL)",
     'CREATE TABLE IF NOT EXISTS login_attempts (ip TEXT PRIMARY KEY, attempts INTEGER NOT NULL DEFAULT 0, locked_until INTEGER, updated_at INTEGER NOT NULL)',
   ];
-  for (const sql of q) await env.DB.prepare(sql).run();
-  try { await env.DB.prepare('ALTER TABLE experiments ADD COLUMN task_id TEXT').run(); } catch {}
-  try { await env.DB.prepare('ALTER TABLE experiments ADD COLUMN step_id TEXT').run(); } catch {}
-  try { await env.DB.prepare('ALTER TABLE experiments ADD COLUMN run_id TEXT').run(); } catch {}
-  try { await env.DB.prepare('ALTER TABLE experiments ADD COLUMN attempt INTEGER DEFAULT 1').run(); } catch {}
-  try { await env.DB.prepare('ALTER TABLE experiments ADD COLUMN parent_id TEXT').run(); } catch {}
-  try { await env.DB.prepare('ALTER TABLE conversation_files ADD COLUMN storage TEXT').run(); } catch {}
-  try { await env.DB.prepare('ALTER TABLE conversation_files ADD COLUMN asset_id TEXT').run(); } catch {}
-  try { await env.DB.prepare('ALTER TABLE conversation_files ADD COLUMN asset_url TEXT').run(); } catch {}
-  try { await env.DB.prepare('ALTER TABLE tool_budgets ADD COLUMN expires_at INTEGER').run(); } catch {}
+  for (const sql of q) {
+    try { await env.DB.prepare(sql).run(); } catch (e) { console.warn('schema:', e.message); }
+  }
+  // migrations
+  const migrations = [
+    'ALTER TABLE experiments ADD COLUMN task_id TEXT',
+    'ALTER TABLE experiments ADD COLUMN step_id TEXT',
+    'ALTER TABLE experiments ADD COLUMN run_id TEXT',
+    'ALTER TABLE experiments ADD COLUMN attempt INTEGER DEFAULT 1',
+    'ALTER TABLE experiments ADD COLUMN parent_id TEXT',
+    'ALTER TABLE conversation_files ADD COLUMN storage TEXT',
+    'ALTER TABLE conversation_files ADD COLUMN asset_id TEXT',
+    'ALTER TABLE conversation_files ADD COLUMN asset_url TEXT',
+    'ALTER TABLE tool_budgets ADD COLUMN expires_at INTEGER',
+  ];
+  for (const sql of migrations) {
+    try { await env.DB.prepare(sql).run(); } catch {}
+  }
+  _schemaReady = true;
 }
 
 // ============ Class توافق قديم ============
@@ -117,7 +130,7 @@ async function safeEvent(store, chatId, type, payload) {
   }
 }
 
-// ⭐ الإحصاءات: Gateway أو fallback إلى D1
+// ⭐ الإحصاءات
 async function getUsageFromGateway(env) {
   if (env.CF_ACCOUNT_ID && env.CF_API_TOKEN) {
     try {
@@ -156,11 +169,9 @@ async function getUsageFromGateway(env) {
       };
     } catch (e) {
       console.warn('Gateway failed, falling back to D1:', e.message);
-      // نسقط إلى D1
     }
   }
 
-  // ⭐ fallback: من D1
   try {
     const nowD = new Date();
     const todayStart = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth(), nowD.getUTCDate())).getTime();
@@ -271,16 +282,17 @@ async function loadMessages(env, chatId) {
   return (r.results || []).map(x => ({ id: x.id, role: x.role, content: x.content, model: x.model_id || null, createdAt: x.created_at }));
 }
 
-// ============ deepAnswer ============
+// ============ deepAnswer — v7.2: cf-* فقط ============
 async function deepAnswer(env, sysContent, packetRecent, media) {
-  const modelA = getModel('cerebras-gpt-oss-120b'), modelB = getModel('cf-gpt-oss-120b');
+  const modelA = getModel('cf-gpt-oss-120b');
+  const modelB = getModel('cf-qwen3');
   const baseMessages = [{ role: 'system', content: sysContent }, ...packetRecent.slice(0, -1), ...media.messages];
   const [ra, rb] = await Promise.all([
     routeCompletion(env, modelA.id, baseMessages, { maxTokens: 4096 }),
     routeCompletion(env, modelB.id, baseMessages, { maxTokens: 4096 }),
   ]);
   const reviewPrompt = `لديك إجابتان مستقلتان لنفس السؤال. قارن بينهما بدقة. إن اتفقتا، أعد أفضل صياغة موحدة. إن اختلفتا، وضّح نقطة الخلاف وأعد إجابة نهائية موثوقة.\n\n## الأولى (${modelA.name})\n${ra.text}\n\n## الثانية (${modelB.name})\n${rb.text}`;
-  const reviewer = getModel('cerebras-qwen-3.8-27b');
+  const reviewer = getModel('cf-qwen3');
   const rr = await routeCompletion(env, reviewer.id, [{ role: 'system', content: sysContent }, { role: 'user', content: reviewPrompt }], { maxTokens: 2200, temperature: 0.2 });
   const disagreed = /يختلف|تعارض|تناقض|اختلاف جوهري|خلاف/.test(rr.text.slice(0, 400));
   return { text: rr.text, actual: rr.actual, deep: { modelA: ra.actual.id, modelB: rb.actual.id, reviewer: rr.actual.id, agreed: !disagreed } };
@@ -344,7 +356,6 @@ async function chat(env, b) {
       deep: wantsDeep, contextMessages: packet.recent.length,
     });
 
-    // إعلام العميل أن البث بدأ
     send('start', { requested: model.id, route: routeInfo, deep: wantsDeep });
 
     const startTime = Date.now();
@@ -356,12 +367,10 @@ async function chat(env, b) {
 
     try {
       if (wantsDeep && !hasImage) {
-        // deep: نستخدم non-streaming (لأنه يستدعي 3 نماذج)
         const r = await deepAnswer(env, sysContent, packet.recent, media);
         fullText = r.text;
         actualModel = r.actual;
         deepMeta = r.deep;
-        // نبثّ النص على شكل قطع صغيرة
         const words = String(fullText).split(/(\s+)/);
         let buffer = '';
         for (const w of words) {
@@ -374,7 +383,6 @@ async function chat(env, b) {
         }
         if (buffer) send('chunk', { text: buffer });
       } else {
-        // streaming عادي
         const result = await streamCompletion(env, model.id, [
           { role: 'system', content: sysContent },
           ...packet.recent.slice(0, -1),
@@ -403,7 +411,6 @@ async function chat(env, b) {
       return;
     }
 
-    // الحفظ والتحديث
     const last = text(lastContent).slice(0, LIMITS.MAX_MESSAGE_TEXT);
     await persistFiles(env, b.chatId, b.attachments || []);
     await persistMessage(env, b.chatId, 'user', last, null);
@@ -429,8 +436,20 @@ async function chat(env, b) {
       latencyMs: Date.now() - startTime,
     });
 
-    // ⭐ إرسال meta (يحتوي pendingExecution والمعلومات النهائية)
+    // ⭐ إرسال meta + حفظ الاقتراح
     const pendingExecution = detectToolProposal(fullText);
+
+    // ⭐ حفظ الاقتراح في DB لاستمرارية البطاقة
+    if (pendingExecution) {
+      await safeEvent(store, b.chatId, 'tool_proposed', {
+        proposalId: pendingExecution.id,
+        command: pendingExecution.command,
+        language: pendingExecution.language,
+        explanation: pendingExecution.explanation || '',
+        requiresApproval: true,
+      });
+    }
+
     send('meta', {
       response: fullText,
       model: actualModel,
@@ -589,7 +608,6 @@ async function runTool(env, b) {
   if (!proposal) return json({ error: 'proposal مطلوب' }, 400);
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
 
-  // 🚫 رفض "renew" القديم
   if (proposal.command === 'renew' || proposal.id === 'renew') {
     return json({ error: 'استخدم renew_tool_budget لتجديد الحصة' }, 400);
   }
@@ -608,7 +626,6 @@ async function runTool(env, b) {
     }, 403);
   }
 
-  // ⭐ قفل التكرار
   if (!b.force) {
     try {
       const cmdClean = validateCommand(proposal.command);
@@ -699,11 +716,15 @@ async function workspaceStatus(env, b) {
   });
 }
 
-// ============ receiveToolResult ============
+// =====================================================================
+// ⭐ receiveToolResult — v7.2: تعليق تلقائي على النتيجة
+// =====================================================================
 async function receiveToolResult(env, request) {
   const raw = await request.text();
   const sig = request.headers.get('X-FOX-Signature') || '';
-  if (!await verifyWebhook(raw, sig, env.HMAC_SECRET)) return json({ error: 'توقيع النتيجة غير صالح' }, 403);
+  if (!await verifyWebhook(raw, sig, env.HMAC_SECRET)) {
+    return json({ error: 'توقيع النتيجة غير صالح' }, 403);
+  }
   const b = JSON.parse(raw);
   const row = await env.DB.prepare('SELECT id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id FROM experiments WHERE id=?').bind(b.experimentId).first();
   if (!row) return json({ error: 'التجربة غير موجودة' }, 404);
@@ -720,6 +741,7 @@ async function receiveToolResult(env, request) {
     outputPreview: String(result.output || '').slice(0, 500),
   });
 
+  // ⭐ حالة 1: مرتبط بمهمة → منطق المهام أولاً
   if (row.task_id && row.step_id) {
     const tr = await env.DB.prepare('SELECT task_json,plan_json FROM tasks WHERE id=?').bind(row.task_id).first();
     if (tr && tr.plan_json) {
@@ -746,15 +768,105 @@ async function receiveToolResult(env, request) {
     }
   }
 
+  // ⭐ حالة 2: تجربة حرة → التعليق التلقائي
+  let correctionResult = null;
   if (result.status === 'failed') {
-    const corrected = await tryAutoCorrect(env, row, result);
-    if (corrected) return json({ success: true, experiment: result, correction: corrected });
+    correctionResult = await tryAutoCorrect(env, row, result);
   }
 
-  return json({ success: true, experiment: result });
+  // ⭐ التعليق التلقائي على النتيجة
+  const commentary = await generateToolCommentary(env, row, result, correctionResult);
+
+  return json({
+    success: true,
+    experiment: result,
+    correction: correctionResult,
+    commentary,
+  });
 }
 
-// ============ tryAutoCorrect — v7.1: يقترح فقط ============
+// =====================================================================
+// ⭐ generateToolCommentary — يعلّق النموذج تلقائياً على النتيجة
+// ⭐ لا يستهلك من حصة tool_budget
+// =====================================================================
+async function generateToolCommentary(env, row, result, correctionResult) {
+  const chatId = row.chat_id;
+  const store = d1ContextStore(env.DB);
+
+  try {
+    // 1) اجلب آخر 20 رسالة من DB
+    const msgsRaw = await env.DB.prepare(
+      'SELECT role,content,created_at FROM messages WHERE chat_id=? ORDER BY created_at DESC LIMIT 20'
+    ).bind(chatId).all();
+    const history = (msgsRaw.results || []).reverse().map(x => ({
+      role: x.role === 'assistant' ? 'assistant' : 'user',
+      content: String(x.content || ''),
+    }));
+
+    // 2) ابنِ الـ System Prompt لوضع "التعليق"
+    const state = await store.get(chatId);
+    const sysContent = buildToolCommentaryPrompt('experiment');
+
+    // 3) صيغة نتيجة الأداة الموحّدة
+    const toolMsg = toolResultMessage({
+      command: row.command,
+      output: result.output,
+      exitCode: result.exitCode,
+      status: result.status,
+    });
+
+    // 4) رسائل نهائية
+    const finalMessages = [
+      { role: 'system', content: sysContent },
+      ...history.slice(-12),
+      toolMsg,
+    ];
+
+    // 5) اختر النموذج — cf-qwen3 متوازن
+    const model = getModel('cf-qwen3');
+
+    // 6) استدعاء غير streaming (أسرع، لا يحتاج stream لعرض فوري)
+    const r = await routeCompletion(env, model.id, finalMessages, { maxTokens: 1500, temperature: 0.3 });
+    const commentaryText = String(r.text || '').trim();
+    if (!commentaryText) return null;
+
+    // 7) احفظه كـ assistant message
+    await persistMessage(env, chatId, 'assistant', commentaryText, r.actual?.id || model.id);
+
+    // 8) حدث حي للواجهة (لعرضه عبر polling)
+    await safeEvent(store, chatId, 'tool_commentary_completed', {
+      experimentId: row.id,
+      text: commentaryText.slice(0, 4000),
+      model: r.actual?.id || model.id,
+      latencyMs: r.latencyMs || null,
+    });
+
+    // 9) حدّث السياق
+    const next = mergeContext(state, {
+      summary: commentaryText.slice(0, 500),
+      facts: state.facts,
+      decisions: state.decisions,
+      next: 'متابعة بعد نتيجة التنفيذ',
+      constraints: state.constraints,
+    });
+    await store.put(chatId, next);
+
+    return {
+      text: commentaryText,
+      model: r.actual?.id || model.id,
+      latencyMs: r.latencyMs || null,
+    };
+  } catch (e) {
+    console.error('generateToolCommentary failed:', e.message);
+    await safeEvent(store, chatId, 'tool_commentary_failed', {
+      experimentId: row.id,
+      error: e.message,
+    });
+    return { error: e.message };
+  }
+}
+
+// ============ tryAutoCorrect — v7.2 ============
 async function tryAutoCorrect(env, originalRow, failedResult) {
   const chatId = originalRow.chat_id;
   const nowMs = Date.now();
@@ -818,7 +930,6 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
 
   if (safeCommand === originalRow.command) return { aborted: true, reason: 'نفس الأمر' };
 
-  // ⭐ اقتراح فقط
   const proposalId = 'proposal_correction_' + crypto.randomUUID();
   const store = d1ContextStore(env.DB);
   await safeEvent(store, chatId, 'tool_correction_proposed', {
@@ -995,7 +1106,7 @@ export default {
       if ((pathname === '/' || pathname === '/index.html') && env.ASSETS) {
         return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
       }
-      return json({ name: 'FOX AI', status: 'ready', version: '7.1.0' });
+      return json({ name: 'FOX AI', status: 'ready', version: '7.2.0' });
     }
 
     if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -1011,7 +1122,7 @@ export default {
 
       if (!await session(env, b.sessionToken)) return json({ error: 'الجلسة غير صالحة', authRequired: true }, 401);
 
-      if (b.action === 'chat') return chat(env, b);   // ← يُعيد SSE
+      if (b.action === 'chat') return chat(env, b);
       if (b.action === 'poll') return poll(env, b);
       if (b.action === 'get_messages') return messages(env, b);
       if (b.action === 'list_conversations') return listConversations(env, b);
