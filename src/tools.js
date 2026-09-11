@@ -1,6 +1,6 @@
 // ============================================================
-// src/tools.js
-// أدوات الطرفية: اقتراح، تحقق، موافقة، تنفيذ عبر GitHub Actions
+// src/tools.js — v3.0
+// أدوات الطرفية + قائمة الأوامر الخطرة + تصنيف المخاطر
 // ============================================================
 import { id, now, eventRecord } from './contracts.js';
 
@@ -10,7 +10,7 @@ const KNOWN_COMMANDS = new Set([
   'ls','pwd','cd','echo','cat','grep','find','which','type','file','stat',
   'git','npm','yarn','pnpm','node','deno','bun',
   'python','python3','pip','pip3','uv','poetry',
-  'curl','wget','mkdir','rmdir','rm','cp','mv','touch','chmod','chown','ln','link',
+  'curl','wget','mkdir','rmdir','cp','mv','touch','chmod','chown','ln','link',
   'bash','sh','zsh','fish','date','time','uptime','whoami','id','groups','hostname',
   'uname','df','du','ps','top','htop','free','kill','pkill','head','tail','less','more',
   'wc','sort','uniq','awk','sed','tr','cut','paste','xargs','tee','diff','patch',
@@ -26,6 +26,7 @@ const KNOWN_COMMANDS = new Set([
   'env','export','set','unset','alias','source','exit','eval','exec','test','true','false',
 ]);
 
+// ⭐ الأوامر المحظورة نهائياً (لن تُنفَّذ حتى بموافقة)
 const BLOCKED_COMMANDS = [
   /(^|[;&|\n])\s*rm\s+-rf\s+\/\s*$/i,
   /(^|[;&|\n])\s*rm\s+-rf\s+\/\s+/i,
@@ -37,12 +38,69 @@ const BLOCKED_COMMANDS = [
   /rm\s+-rf\s+(~|\$HOME|\/\*)/i,
 ];
 
+// ⭐ الأوامر "الخطرة" — تحتاج موافقة حتى في الوضع التلقائي
+const DESTRUCTIVE_PATTERNS = [
+  // حذف شامل
+  { pattern: /\brm\s+-rf\b/i, label: 'حذف شامل (rm -rf)' },
+  { pattern: /\brm\s+-fr\b/i, label: 'حذف شامل (rm -fr)' },
+  { pattern: /\bgit\s+clean\s+-[a-z]*f[a-z]*d[a-z]*x?/i, label: 'git clean -fdx' },
+  { pattern: /\bgit\s+clean\s+-[a-z]*x[a-z]*d[a-z]*f?/i, label: 'git clean -xdf' },
+  // إعادة تعيين قسري
+  { pattern: /\bgit\s+reset\s+--hard\b/i, label: 'git reset --hard' },
+  { pattern: /\bgit\s+push\b[^\n]*--force\b/i, label: 'git push --force' },
+  { pattern: /\bgit\s+push\b[^\n]*--force-with-lease\b/i, label: 'git push --force-with-lease' },
+  { pattern: /\bgit\s+branch\s+-D\b/i, label: 'git branch -D' },
+  { pattern: /\bgit\s+tag\s+-d\b/i, label: 'git tag -d' },
+  // صلاحيات
+  { pattern: /\bchmod\s+-R\s+777\b/i, label: 'chmod -R 777' },
+  { pattern: /\bchmod\s+777\b/i, label: 'chmod 777' },
+  { pattern: /\bchown\s+-R\b/i, label: 'chown -R' },
+  // رفع صلاحيات
+  { pattern: /\bsudo\b/i, label: 'sudo' },
+  { pattern: /\bsu\s+-/i, label: 'su -' },
+  // نشر
+  { pattern: /\bnpm\s+publish\b/i, label: 'npm publish' },
+  { pattern: /\byarn\s+publish\b/i, label: 'yarn publish' },
+  { pattern: /\bdocker\s+push\b/i, label: 'docker push' },
+  // تدمير نظام
+  { pattern: /\bdd\s+if=/i, label: 'dd if=' },
+  { pattern: /\bkill\s+-9\s+-1\b/i, label: 'kill -9 -1' },
+  { pattern: /\bkillall\b/i, label: 'killall' },
+  { pattern: /\bpkill\s+-9\b/i, label: 'pkill -9' },
+  // تثبيت مع كسر النظام
+  { pattern: /\bpip\s+install\s+--break-system-packages\b/i, label: 'pip install --break-system-packages' },
+  // استبدال ملفات النظام
+  { pattern: />\s*\/etc\//i, label: 'كتابة في /etc/' },
+  { pattern: />\s*\/usr\//i, label: 'كتابة في /usr/' },
+  { pattern: />\s*\/bin\//i, label: 'كتابة في /bin/' },
+  { pattern: />\s*\/boot\//i, label: 'كتابة في /boot/' },
+];
+
 // ============================================================
-// detectToolProposal — يقبل 4 صيغ:
-//   1) ```terminal\n ... \n``` (مع newline)
-//   2) ```terminal ... ``` (بدون newline — سطر واحد)
-//   3) JSON fence/mباشر
-//   4) inline code مع أمر معروف فقط
+// commandRiskLevel
+// ============================================================
+export function commandRiskLevel(command = '') {
+  const value = String(command || '').trim();
+  if (!value) return { level: 'empty', label: 'أمر فارغ' };
+
+  // 1) محظور نهائياً
+  if (BLOCKED_COMMANDS.some(p => p.test(value))) {
+    return { level: 'blocked', label: 'أمر محظور نهائياً' };
+  }
+
+  // 2) خطر — يحتاج موافقة حتى في Auto-pilot
+  for (const { pattern, label } of DESTRUCTIVE_PATTERNS) {
+    if (pattern.test(value)) {
+      return { level: 'destructive', label };
+    }
+  }
+
+  // 3) آمن
+  return { level: 'safe', label: '' };
+}
+
+// ============================================================
+// detectToolProposal
 // ============================================================
 export function detectToolProposal(text = '') {
   const source = String(text);
@@ -50,26 +108,26 @@ export function detectToolProposal(text = '') {
 
   const build = (language, command, explanation = '') => {
     const lang = String(language || 'bash').toLowerCase();
+    const cmd = String(command || '').trim();
+    const risk = commandRiskLevel(cmd);
     return {
       id: id('proposal'),
       kind: 'terminal',
       language: lang,
-      command: String(command || '').trim(),
+      command: cmd,
       explanation: String(explanation || '').slice(0, 500),
       requiresApproval: true,
       safeLanguage: SAFE_LANGUAGES.has(lang),
+      risk,  // ⭐ جديد
       createdAt: now(),
     };
   };
 
-  // ⭐ الصيغة 1+2: ```lang ... ``` (مع أو بدون newline)
   const fenceMatch = source.match(/```(terminal|bash|sh|shell|command|python)\s*([\s\S]*?)```/i);
   if (fenceMatch) {
     const language = fenceMatch[1].toLowerCase();
-    // استبعد الكتل الفارغة أو التي تحتوي فقط على مسافات
     const rawCommand = fenceMatch[2].replace(/^\s+|\s+$/g, '');
     if (rawCommand && rawCommand.length < 5000) {
-      // أزل أي سطر يبدأ بـ # (تعليقات عربية)
       const cleaned = rawCommand.split('\n')
         .filter(line => !/^\s*#/.test(line) && !/^\s*\/\//.test(line))
         .join('\n')
@@ -78,7 +136,6 @@ export function detectToolProposal(text = '') {
     }
   }
 
-  // ⭐ الصيغة 3أ: ```json {"tool":"terminal",...} ```
   const jsonFence = source.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
   if (jsonFence) {
     try {
@@ -89,7 +146,6 @@ export function detectToolProposal(text = '') {
     } catch {}
   }
 
-  // ⭐ الصيغة 3ب: JSON مباشر بدون fence
   const jsonInlineMatches = source.match(/\{[^{}]*"tool"\s*:\s*"terminal"[^{}]*\}/g);
   if (jsonInlineMatches) {
     for (const candidate of jsonInlineMatches) {
@@ -102,22 +158,15 @@ export function detectToolProposal(text = '') {
     }
   }
 
-  // ⭐ الصيغة 4: inline code مع أمر معروف فقط
-  // مثال: `pwd` أو `ls -la` — فقط إن كان الكود كامل = أمر معروف
   const inlineMatches = source.match(/`([^`\n]{1,300})`/g);
   if (inlineMatches) {
     for (const m of inlineMatches) {
       const cmd = m.slice(1, -1).trim();
       if (!cmd) continue;
-      // تجاهل ما يحتوي حروف عربية (شرح)
       if (/[\u0600-\u06FF]/.test(cmd)) continue;
-      // تجاهل ما هو طويل جداً
       if (cmd.length > 300) continue;
-      // تجاهل ما يحتوي رموزاً غريبة
       if (!/^[a-zA-Z0-9_\-\.\/\s=:"'$&;|<>()\[\]{}*?~!@#%^+,]+$/.test(cmd)) continue;
-      // خذ أول كلمة
       const firstWord = cmd.split(/\s+/)[0].toLowerCase();
-      // إن كانت معروفة → اعتبرها اقتراحاً
       if (KNOWN_COMMANDS.has(firstWord)) {
         return build('bash', cmd, '');
       }
@@ -128,7 +177,7 @@ export function detectToolProposal(text = '') {
 }
 
 // ============================================================
-// validateCommand
+// validateCommand — يُعيد كائناً الآن
 // ============================================================
 export function validateCommand(command, { maxLength = 12000 } = {}) {
   const value = String(command || '').trim();
@@ -153,11 +202,12 @@ export function approvalRecord({ proposalId, approved, scope = 'single_run' }) {
 export function experimentRecord({ chatId, proposal, approval }) {
   if (!approval?.approved) throw new Error('لا يمكن إنشاء تجربة دون موافقة صريحة');
   if (approval.proposalId !== proposal.id) throw new Error('الموافقة لا تطابق الاقتراح');
+  const cmd = validateCommand(proposal.command);
   return {
     id: id('exp'),
     chatId,
     proposalId: proposal.id,
-    command: validateCommand(proposal.command),
+    command: cmd,
     language: proposal.language || 'bash',
     status: 'pending',
     output: '',
@@ -212,7 +262,7 @@ export function experimentEvent(experiment, type, payload = {}) {
 }
 
 // ============================================================
-// memoryToolStore — للاختبار المحلي
+// memoryToolStore
 // ============================================================
 export function memoryToolStore() {
   const items = new Map(), events = [];
