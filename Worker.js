@@ -1,17 +1,20 @@
 // =====================================================================
-// FOX AI — Worker جامع نهائي v7.2
-// التعديلات: تعليق تلقائي على نتيجة الأداة + tool_proposed + schema caching
+// FOX AI — Worker جامع نهائي v7.3
+// التعديلات: Auto-pilot mode + destructive patterns + حد 3 تفعيلات/ساعة
 // =====================================================================
 
 import { publicCatalog, getModel, chooseModel, scoreDifficulty, routeAuto } from './src/catalog.js';
 import { routeCompletion, streamCompletion, ProviderError } from './src/providers.js';
 import { d1ContextStore, contextPacket, renderHandoff, mergeContext, createContextEvent } from './src/context.js';
 import { createTask, startPlanning, createPlan, approvePlan, startStep, completeStep, failStep, retryStep, taskEvent } from './src/tasks.js';
-import { detectToolProposal, approvalRecord, experimentRecord, dispatchExperiment, cancelExperiment, verifyResult, retryExperiment, verifyWebhook, validateCommand } from './src/tools.js';
+import { detectToolProposal, approvalRecord, experimentRecord, dispatchExperiment, cancelExperiment, verifyResult, retryExperiment, verifyWebhook, validateCommand, commandRiskLevel } from './src/tools.js';
 import { uploadReleaseAsset, downloadReleaseAsset, MAX_DIRECT_UPLOAD } from './src/storage.js';
 import { multimodalMessages, modelCapabilities } from './src/media.js';
 import { advanceTask, addIntervention, taskEvents } from './src/orchestrator.js';
-import { buildSystemPrompt, buildToolCommentaryPrompt, classifyQuestion, toolResultMessage } from './src/prompts.js';
+import {
+  buildSystemPrompt, buildToolCommentaryPrompt, buildAutoPilotPrompt, buildAutoPilotCommentaryPrompt,
+  classifyQuestion, toolResultMessage
+} from './src/prompts.js';
 
 // ============ ثوابت ============
 const CORS = {
@@ -26,10 +29,12 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 });
 const text = x => String(x || '').trim();
 
-// ⭐ الحصة
+// ⭐ الحصة (بطاقة المرور)
 const TOOL_BUDGET_GRANT = 10;
 const TOOL_BUDGET_EXPIRY_MS = 20 * 60 * 1000;
 const DUPLICATE_WINDOW_MS = 60 * 1000;
+const AUTOPILOT_ACTIVATIONS_PER_HOUR = 5;
+const MAX_AUTO_CORRECTIONS = 5;
 
 // ⭐ الحدود
 const LIMITS = {
@@ -41,7 +46,7 @@ const LIMITS = {
   MAX_FILES_PER_MSG: 20,
 };
 
-// ⭐ schema caching — مرة واحدة لكل Worker instance
+// ⭐ schema caching
 let _schemaReady = false;
 
 // ============ Schema ============
@@ -58,6 +63,8 @@ async function schema(env) {
     'CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, created_at ASC)',
     'CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL)',
     'CREATE TABLE IF NOT EXISTS tool_budgets (chat_id TEXT PRIMARY KEY, granted INTEGER NOT NULL, used INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS autopilot_activations (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, activated_at INTEGER NOT NULL)',
+    'CREATE INDEX IF NOT EXISTS idx_autopilot_chat ON autopilot_activations(chat_id, activated_at DESC)',
     'CREATE TABLE IF NOT EXISTS conversation_files (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, content_text TEXT, data_url TEXT, storage TEXT, asset_id TEXT, asset_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
     'CREATE INDEX IF NOT EXISTS idx_files_chat ON conversation_files(chat_id,created_at DESC)',
     'CREATE TABLE IF NOT EXISTS task_control (task_id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at INTEGER NOT NULL)',
@@ -69,13 +76,13 @@ async function schema(env) {
   for (const sql of q) {
     try { await env.DB.prepare(sql).run(); } catch (e) { console.warn('schema:', e.message); }
   }
-  // migrations
   const migrations = [
     'ALTER TABLE experiments ADD COLUMN task_id TEXT',
     'ALTER TABLE experiments ADD COLUMN step_id TEXT',
     'ALTER TABLE experiments ADD COLUMN run_id TEXT',
     'ALTER TABLE experiments ADD COLUMN attempt INTEGER DEFAULT 1',
     'ALTER TABLE experiments ADD COLUMN parent_id TEXT',
+    'ALTER TABLE experiments ADD COLUMN mode TEXT',
     'ALTER TABLE conversation_files ADD COLUMN storage TEXT',
     'ALTER TABLE conversation_files ADD COLUMN asset_id TEXT',
     'ALTER TABLE conversation_files ADD COLUMN asset_url TEXT',
@@ -130,7 +137,25 @@ async function safeEvent(store, chatId, type, payload) {
   }
 }
 
-// ⭐ الإحصاءات
+// ⭐ فحص حالة الحصة
+async function getBudget(env, chatId) {
+  const r = await env.DB.prepare('SELECT granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(chatId).first();
+  if (!r) return { active: false, granted: 0, used: 0, remaining: 0, expiresAt: null, expired: false };
+  const nowMs = Date.now();
+  const expired = r.expires_at && Number(r.expires_at) < nowMs;
+  const exhausted = Number(r.used) >= Number(r.granted);
+  return {
+    active: !expired && !exhausted,
+    granted: r.granted,
+    used: r.used,
+    remaining: Math.max(0, Number(r.granted) - Number(r.used)),
+    expiresAt: r.expires_at,
+    expired: !!expired,
+    exhausted: !!exhausted,
+  };
+}
+
+// ============ الإحصاءات ============
 async function getUsageFromGateway(env) {
   if (env.CF_ACCOUNT_ID && env.CF_API_TOKEN) {
     try {
@@ -183,14 +208,11 @@ async function getUsageFromGateway(env) {
     return {
       source: 'd1',
       period: { from: new Date(todayStart).toISOString(), to: nowD.toISOString() },
-      totals: {
-        requests: msgs?.c || 0,
-        tokensIn: 0, tokensOut: 0, totalTokens: 0, cost: 0,
-      },
+      totals: { requests: msgs?.c || 0, tokensIn: 0, tokensOut: 0, totalTokens: 0, cost: 0 },
       byModel: {},
       experiments: exps?.c || 0,
       conversations: convs?.c || 0,
-      note: 'إحصاءات محلية من D1 — أضف CF_API_TOKEN للحصول على تكلفة AI Gateway',
+      note: 'إحصاءات محلية من D1',
     };
   } catch (e) {
     return { source: 'error', error: e.message, totals: { requests: 0, tokensIn: 0, tokensOut: 0, totalTokens: 0, cost: 0 }, byModel: {} };
@@ -282,7 +304,7 @@ async function loadMessages(env, chatId) {
   return (r.results || []).map(x => ({ id: x.id, role: x.role, content: x.content, model: x.model_id || null, createdAt: x.created_at }));
 }
 
-// ============ deepAnswer — v7.2: cf-* فقط ============
+// ============ deepAnswer ============
 async function deepAnswer(env, sysContent, packetRecent, media) {
   const modelA = getModel('cf-gpt-oss-120b');
   const modelB = getModel('cf-qwen3');
@@ -321,7 +343,14 @@ function sseStream(handler) {
   });
 }
 
-// ============ chat — Streaming SSE ============
+// ⭐ كشف طلب Auto-pilot في نص النموذج
+function detectAutopilotRequest(text = '') {
+  const m = String(text || '').match(/\[AUTOPILOT_REQUEST:\s*([^\]]+)\]/i);
+  if (!m) return null;
+  return { reason: m[1].trim().slice(0, 200) };
+}
+
+// ============ chat — SSE ============
 async function chat(env, b) {
   if (!b.chatId || !Array.isArray(b.messages) || !b.messages.length) {
     return json({ error: 'chatId والرسائل مطلوبان' }, 400);
@@ -333,6 +362,10 @@ async function chat(env, b) {
     const recent = b.messages.slice(-LIMITS.MAX_CONTEXT_MESSAGES);
     const lastContent = recent.at(-1)?.content || '';
     const hasImage = (b.attachments || []).some(x => String(x.mime || x.type || '').startsWith('image/'));
+
+    // ⭐ فحص حالة الحصة
+    const budget = await getBudget(env, b.chatId);
+    const inAutoPilot = budget.active;
 
     let requested, routeInfo = null;
     if (!b.model || b.model === 'auto') {
@@ -347,16 +380,20 @@ async function chat(env, b) {
     const packet = contextPacket(state, recent);
     const media = multimodalMessages([{ role: 'user', content: lastContent }], b.attachments || [], model.id);
     const promptType = classifyQuestion(lastContent);
-    const sysContent = buildSystemPrompt(promptType, renderHandoff(state, recent), renderHandoff(state, []));
 
-    const wantsDeep = b.mode === 'deep' || (routeInfo && routeInfo.tier === 'deep' && !hasImage);
+    // ⭐ اختر System Prompt حسب الوضع
+    const sysContent = inAutoPilot
+      ? buildAutoPilotPrompt(promptType, renderHandoff(state, recent), renderHandoff(state, []))
+      : buildSystemPrompt(promptType, renderHandoff(state, recent), renderHandoff(state, []));
+
+    const wantsDeep = !inAutoPilot && (b.mode === 'deep' || (routeInfo && routeInfo.tier === 'deep' && !hasImage));
 
     await safeEvent(store, b.chatId, 'generation_started', {
-      requested: model.id, mode: b.mode || 'auto', route: routeInfo,
-      deep: wantsDeep, contextMessages: packet.recent.length,
+      requested: model.id, mode: inAutoPilot ? 'autopilot' : (b.mode || 'auto'),
+      route: routeInfo, deep: wantsDeep, contextMessages: packet.recent.length,
     });
 
-    send('start', { requested: model.id, route: routeInfo, deep: wantsDeep });
+    send('start', { requested: model.id, route: routeInfo, deep: wantsDeep, autopilot: inAutoPilot, budget });
 
     const startTime = Date.now();
     let fullText = '';
@@ -429,6 +466,7 @@ async function chat(env, b) {
       requested: model.id, actual: actualModel.id,
       fallback, fallbackReason: fallbackReason || null,
       media: !!b.attachments?.length, route: routeInfo, deep: deepMeta,
+      autopilot: inAutoPilot,
     });
     await safeEvent(store, b.chatId, 'context_updated', { revision: next.revision });
     await safeEvent(store, b.chatId, 'generation_completed', {
@@ -436,17 +474,46 @@ async function chat(env, b) {
       latencyMs: Date.now() - startTime,
     });
 
-    // ⭐ إرسال meta + حفظ الاقتراح
     const pendingExecution = detectToolProposal(fullText);
 
-    // ⭐ حفظ الاقتراح في DB لاستمرارية البطاقة
-    if (pendingExecution) {
+    // ⭐ كشف طلب Auto-pilot
+    const autopilotRequest = detectAutopilotRequest(fullText);
+
+    // ⭐ في الوضع التلقائي: نفّذ الاقتراح تلقائياً
+    let autoExecuted = null;
+    if (inAutoPilot && pendingExecution) {
+      const risk = pendingExecution.risk || commandRiskLevel(pendingExecution.command);
+      const isSafe = risk.level === 'safe';
+
+      if (isSafe) {
+        // تنفيذ تلقائي
+        autoExecuted = await executeProposalAutomatically(env, b.chatId, pendingExecution, send);
+      } else {
+        // خطر → احفظ الاقتراح فقط واطلب موافقة
+        await safeEvent(store, b.chatId, 'tool_proposed', {
+          proposalId: pendingExecution.id,
+          command: pendingExecution.command,
+          language: pendingExecution.language,
+          explanation: pendingExecution.explanation || '',
+          requiresApproval: true,
+          risk,
+          reason: `أمر ${risk.level === 'destructive' ? 'خطر' : 'غير معروف'} — يحتاج موافقة حتى في الوضع التلقائي`,
+        });
+        send('autopilot_blocked', {
+          proposal: pendingExecution,
+          risk,
+          message: `🚫 تم إيقاف الوضع التلقائي مؤقتاً: ${risk.label || 'أمر خطر'}`,
+        });
+      }
+    } else if (pendingExecution) {
+      // وضع عادي: احفظ الاقتراح فقط
       await safeEvent(store, b.chatId, 'tool_proposed', {
         proposalId: pendingExecution.id,
         command: pendingExecution.command,
         language: pendingExecution.language,
         explanation: pendingExecution.explanation || '',
         requiresApproval: true,
+        risk: pendingExecution.risk || null,
       });
     }
 
@@ -455,6 +522,10 @@ async function chat(env, b) {
       model: actualModel,
       requestedModel: requested,
       pendingExecution,
+      autopilotRequest,
+      autoExecuted,
+      autopilot: inAutoPilot,
+      budget,
       unsupportedAttachments: media.unsupported,
       memory: renderHandoff(next, []),
       route: routeInfo,
@@ -483,6 +554,41 @@ async function chat(env, b) {
       ...CORS,
     },
   });
+}
+
+// ⭐ تنفيذ تلقائي داخل SSE
+async function executeProposalAutomatically(env, chatId, proposal, send) {
+  try {
+    const approval = approvalRecord({ proposalId: proposal.id, approved: true, scope: 'autopilot' });
+    const experiment = { ...experimentRecord({ chatId, proposal, approval }), taskId: null, stepId: null };
+
+    await env.DB.prepare('INSERT INTO experiments (id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id,mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(experiment.id, experiment.chatId, experiment.command, experiment.status, '', null, experiment.createdAt, experiment.updatedAt, experiment.taskId, experiment.stepId, null, 1, null, 'autopilot').run();
+
+    const dispatched = await dispatchExperiment(env, experiment);
+    await env.DB.prepare('UPDATE experiments SET status=?,run_id=?,updated_at=? WHERE id=?')
+      .bind(dispatched.status, dispatched.runId || null, dispatched.updatedAt, dispatched.id).run();
+
+    const store = d1ContextStore(env.DB);
+    await safeEvent(store, chatId, 'tool_executed', {
+      experimentId: dispatched.id,
+      command: dispatched.command,
+      language: dispatched.language,
+      runId: dispatched.runId,
+      status: dispatched.status,
+      autopilot: true,
+    });
+
+    send('auto_executed', {
+      experiment: dispatched,
+      proposal,
+    });
+
+    return { experiment: dispatched, proposal };
+  } catch (e) {
+    console.error('executeProposalAutomatically failed:', e.message);
+    return { error: e.message };
+  }
 }
 
 // ============ plan ============
@@ -566,16 +672,8 @@ async function cancelExperimentRun(env, b) {
 // ============ tool budget ============
 async function toolBudget(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
-  const r = await env.DB.prepare('SELECT chat_id,granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(b.chatId).first();
-  if (!r) return json({ budget: { granted: 0, used: 0, remaining: 0, expiresAt: null, expired: false } });
-  const expired = r.expires_at && Number(r.expires_at) < Date.now();
-  return json({
-    budget: {
-      granted: r.granted, used: r.used,
-      remaining: Math.max(0, Number(r.granted) - Number(r.used)),
-      expiresAt: r.expires_at, expired: !!expired,
-    },
-  });
+  const budget = await getBudget(env, b.chatId);
+  return json({ budget });
 }
 
 async function renewToolBudget(env, b) {
@@ -590,10 +688,67 @@ async function renewToolBudget(env, b) {
   const store = d1ContextStore(env.DB);
   await safeEvent(store, b.chatId, 'tool_budget_renewed', { granted: TOOL_BUDGET_GRANT, expiresAt: newExpiry });
 
+  const budget = await getBudget(env, b.chatId);
+  return json({ success: true, budget });
+}
+
+// =====================================================================
+// ⭐ request_autopilot — يُنشئ/يُجدّد بطاقة المرور مع حد 3/ساعة
+// =====================================================================
+async function requestAutopilot(env, b) {
+  if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
+  const nowMs = Date.now();
+  const hourAgo = nowMs - 60 * 60 * 1000;
+
+  // فحص حد التفعيلات خلال آخر ساعة
+  const activations = await env.DB.prepare(
+    'SELECT COUNT(*) as c FROM autopilot_activations WHERE chat_id = ? AND activated_at > ?'
+  ).bind(b.chatId, hourAgo).first();
+  const count = Number(activations?.c || 0);
+
+  if (count >= AUTOPILOT_ACTIVATIONS_PER_HOUR) {
+    return json({
+      error: `تم بلوغ الحد الأقصى (${AUTOPILOT_ACTIVATIONS_PER_HOUR} تفعيلات في الساعة). حاول بعد قليل.`,
+      limitReached: true,
+      activationsThisHour: count,
+      maxPerHour: AUTOPILOT_ACTIVATIONS_PER_HOUR,
+    }, 429);
+  }
+
+  const newExpiry = nowMs + TOOL_BUDGET_EXPIRY_MS;
+  await env.DB.prepare(
+    'INSERT INTO tool_budgets (chat_id, granted, used, expires_at, updated_at) VALUES (?, ?, 0, ?, ?) ' +
+    'ON CONFLICT(chat_id) DO UPDATE SET granted = ?, used = 0, expires_at = ?, updated_at = ?'
+  ).bind(b.chatId, TOOL_BUDGET_GRANT, newExpiry, nowMs, TOOL_BUDGET_GRANT, newExpiry, nowMs).run();
+
+  await env.DB.prepare('INSERT INTO autopilot_activations (id, chat_id, activated_at) VALUES (?, ?, ?)')
+    .bind(crypto.randomUUID(), b.chatId, nowMs).run();
+
+  const store = d1ContextStore(env.DB);
+  await safeEvent(store, b.chatId, 'autopilot_activated', {
+    granted: TOOL_BUDGET_GRANT,
+    expiresAt: newExpiry,
+    reason: b.reason || 'طلب من المستخدم',
+    activationsThisHour: count + 1,
+  });
+
+  const budget = await getBudget(env, b.chatId);
   return json({
     success: true,
-    budget: { granted: TOOL_BUDGET_GRANT, used: 0, remaining: TOOL_BUDGET_GRANT, expiresAt: newExpiry, expired: false },
+    budget,
+    activationsThisHour: count + 1,
+    maxPerHour: AUTOPILOT_ACTIVATIONS_PER_HOUR,
   });
+}
+
+// ⭐ إيقاف Auto-pilot يدوياً
+async function stopAutopilot(env, b) {
+  if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
+  await env.DB.prepare('UPDATE tool_budgets SET used = granted, updated_at = ? WHERE chat_id = ?').bind(Date.now(), b.chatId).run();
+  const store = d1ContextStore(env.DB);
+  await safeEvent(store, b.chatId, 'autopilot_stopped', { reason: b.reason || 'إيقاف يدوي' });
+  const budget = await getBudget(env, b.chatId);
+  return json({ success: true, budget });
 }
 
 // ============ toolProposal ============
@@ -609,23 +764,45 @@ async function runTool(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
 
   if (proposal.command === 'renew' || proposal.id === 'renew') {
-    return json({ error: 'استخدم renew_tool_budget لتجديد الحصة' }, 400);
+    return json({ error: 'استخدم request_autopilot لتجديد الحصة' }, 400);
   }
 
-  let budget = await env.DB.prepare('SELECT chat_id,granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(b.chatId).first();
+  const budget = await getBudget(env, b.chatId);
   const nowMs = Date.now();
 
-  if (b.approved !== true) {
+  // ⭐ فحص الأوامر الخطرة
+  const risk = proposal.risk || commandRiskLevel(proposal.command);
+  const isDestructive = risk.level === 'destructive';
+  const isBlocked = risk.level === 'blocked';
+
+  if (isBlocked) {
+    return json({ error: 'أمر محظور نهائياً', risk }, 403);
+  }
+
+  // ⭐ هل نطلب موافقة؟
+  let needsApproval = false;
+  let approvalReason = '';
+
+  if (!budget.active) {
+    needsApproval = true;
+    approvalReason = 'لا توجد بطاقة مرور نشطة — كل أمر يحتاج موافقة';
+  } else if (isDestructive) {
+    needsApproval = true;
+    approvalReason = `أمر خطر (${risk.label}) — يحتاج موافقة حتى في الوضع التلقائي`;
+  }
+
+  if (needsApproval && b.approved !== true) {
     return json({
       needsApproval: true,
-      reason: 'لا يمكن تشغيل الطرفية دون موافقة',
+      reason: approvalReason,
+      risk,
       proposal,
-      suggestedBudget: TOOL_BUDGET_GRANT,
-      expiryMinutes: Math.round(TOOL_BUDGET_EXPIRY_MS / 60000),
-      budget: budget ? { granted: budget.granted, used: budget.used, remaining: Math.max(0, budget.granted - budget.used), expiresAt: budget.expires_at, expired: !!(budget.expires_at && budget.expires_at < nowMs) } : null,
+      budget,
+      autopilotActive: budget.active,
     }, 403);
   }
 
+  // قفل التكرار
   if (!b.force) {
     try {
       const cmdClean = validateCommand(proposal.command);
@@ -643,37 +820,17 @@ async function runTool(env, b) {
     } catch {}
   }
 
-  if (!budget) {
-    await env.DB.prepare('INSERT INTO tool_budgets (chat_id,granted,used,expires_at,updated_at) VALUES (?,?,?,?,?)')
-      .bind(b.chatId, TOOL_BUDGET_GRANT, 0, nowMs + TOOL_BUDGET_EXPIRY_MS, nowMs).run();
-    budget = { chat_id: b.chatId, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: nowMs + TOOL_BUDGET_EXPIRY_MS, updated_at: nowMs };
-  } else {
-    const expired = budget.expires_at && Number(budget.expires_at) < nowMs;
-    const exhausted = Number(budget.used) >= Number(budget.granted);
-    if (expired || exhausted) {
-      if (b.renew === true) {
-        const newExpiry = nowMs + TOOL_BUDGET_EXPIRY_MS;
-        await env.DB.prepare('UPDATE tool_budgets SET granted=?,used=0,expires_at=?,updated_at=? WHERE chat_id=?')
-          .bind(TOOL_BUDGET_GRANT, newExpiry, nowMs, b.chatId).run();
-        budget = { ...budget, granted: TOOL_BUDGET_GRANT, used: 0, expires_at: newExpiry, updated_at: nowMs };
-      } else {
-        return json({
-          needsApproval: true,
-          reason: expired ? `انتهت الحصة. جدّدها.` : `استُهلكت الحصة (${TOOL_BUDGET_GRANT}). جدّدها.`,
-          proposal, canRenew: true, suggestedBudget: TOOL_BUDGET_GRANT, expiryMinutes: Math.round(TOOL_BUDGET_EXPIRY_MS/60000),
-          budget: { granted: budget.granted, used: budget.used, remaining: 0, expiresAt: budget.expires_at, expired: !!expired },
-        }, 403);
-      }
-    }
-  }
-
-  const remaining = Number(budget.granted) - Number(budget.used);
-  const approval = approvalRecord({ proposalId: proposal.id, approved: true, scope: `budget_${budget.granted}` });
+  const remaining = Math.max(0, budget.remaining - 1);
+  const approval = approvalRecord({ proposalId: proposal.id, approved: true, scope: budget.active ? 'autopilot' : 'manual' });
   const experiment = { ...experimentRecord({ chatId: b.chatId, proposal, approval }), taskId: b.taskId || null, stepId: b.stepId || null };
 
-  await env.DB.prepare('UPDATE tool_budgets SET used=used+1,updated_at=? WHERE chat_id=?').bind(Date.now(), b.chatId).run();
-  await env.DB.prepare('INSERT INTO experiments (id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .bind(experiment.id, experiment.chatId, experiment.command, experiment.status, '', null, experiment.createdAt, experiment.updatedAt, experiment.taskId, experiment.stepId, null, 1, null).run();
+  // ⭐ استهلاك من الحصة فقط إن كانت نشطة
+  if (budget.active) {
+    await env.DB.prepare('UPDATE tool_budgets SET used = used + 1, updated_at = ? WHERE chat_id = ?').bind(Date.now(), b.chatId).run();
+  }
+
+  await env.DB.prepare('INSERT INTO experiments (id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id,mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .bind(experiment.id, experiment.chatId, experiment.command, experiment.status, '', null, experiment.createdAt, experiment.updatedAt, experiment.taskId, experiment.stepId, null, 1, null, budget.active ? 'autopilot' : 'manual').run();
 
   const dispatched = await dispatchExperiment(env, experiment);
   await env.DB.prepare('UPDATE experiments SET status=?,run_id=?,updated_at=? WHERE id=?')
@@ -686,11 +843,15 @@ async function runTool(env, b) {
     language: dispatched.language,
     runId: dispatched.runId,
     status: dispatched.status,
+    autopilot: budget.active,
   });
+
+  const updatedBudget = await getBudget(env, b.chatId);
 
   return json({
     experiment: dispatched,
-    budget: { granted: budget.granted, used: Number(budget.used) + 1, remaining: remaining - 1, expiresAt: budget.expires_at },
+    budget: updatedBudget,
+    autopilotExecuted: budget.active && !isDestructive,
   });
 }
 
@@ -699,25 +860,19 @@ async function workspaceStatus(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
   const files = await env.DB.prepare('SELECT id,name,mime,size,storage,asset_id,asset_url,created_at FROM conversation_files WHERE chat_id=? ORDER BY created_at DESC LIMIT 100').bind(b.chatId).all();
   const experiments = await env.DB.prepare('SELECT id,command,status,exit_code,created_at,updated_at FROM experiments WHERE chat_id=? ORDER BY created_at DESC LIMIT 30').bind(b.chatId).all();
-  const budget = await env.DB.prepare('SELECT granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(b.chatId).first();
-  const nowMs = Date.now();
+  const budget = await getBudget(env, b.chatId);
   return json({
     workspace: {
       type: 'fox-session', persistentFiles: true, terminal: 'github-actions',
       storage: env.GITHUB_ASSET_REPO ? 'github-release+d1' : 'd1-only',
       files: files.results || [], experiments: experiments.results || [],
-      budget: budget ? {
-        granted: budget.granted, used: budget.used,
-        remaining: Math.max(0, Number(budget.granted) - Number(budget.used)),
-        expiresAt: budget.expires_at,
-        expired: !!(budget.expires_at && budget.expires_at < nowMs),
-      } : { granted: 0, used: 0, remaining: 0, expiresAt: null, expired: false },
+      budget,
     },
   });
 }
 
 // =====================================================================
-// ⭐ receiveToolResult — v7.2: تعليق تلقائي على النتيجة
+// ⭐ receiveToolResult — v7.3 مع Auto-pilot
 // =====================================================================
 async function receiveToolResult(env, request) {
   const raw = await request.text();
@@ -726,7 +881,7 @@ async function receiveToolResult(env, request) {
     return json({ error: 'توقيع النتيجة غير صالح' }, 403);
   }
   const b = JSON.parse(raw);
-  const row = await env.DB.prepare('SELECT id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id FROM experiments WHERE id=?').bind(b.experimentId).first();
+  const row = await env.DB.prepare('SELECT id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id,mode FROM experiments WHERE id=?').bind(b.experimentId).first();
   if (!row) return json({ error: 'التجربة غير موجودة' }, 404);
 
   const result = verifyResult({ ...row, id: row.id }, { output: b.output || '', exitCode: b.exit_code ?? 1 });
@@ -739,9 +894,14 @@ async function receiveToolResult(env, request) {
     status: result.status,
     exitCode: result.exitCode,
     outputPreview: String(result.output || '').slice(0, 500),
+    mode: row.mode || 'manual',
   });
 
-  // ⭐ حالة 1: مرتبط بمهمة → منطق المهام أولاً
+  // ⭐ فحص حالة الحصة
+  const budget = await getBudget(env, row.chat_id);
+  const inAutoPilot = budget.active && row.mode === 'autopilot';
+
+  // ⭐ حالت 1: مرتبط بمهمة
   if (row.task_id && row.step_id) {
     const tr = await env.DB.prepare('SELECT task_json,plan_json FROM tasks WHERE id=?').bind(row.task_id).first();
     if (tr && tr.plan_json) {
@@ -761,40 +921,39 @@ async function receiveToolResult(env, request) {
         return json({ success: true, experiment: result, run: t });
       }
       if (result.status === 'failed') {
-        const corrected = await tryAutoCorrect(env, row, result);
+        const corrected = await tryAutoCorrect(env, row, result, inAutoPilot, budget);
         if (corrected) return json({ success: true, experiment: result, correction: corrected });
       }
       return json({ success: true, experiment: result, run: { task: nextTask, plan: { ...plan, steps: nextSteps }, status: nextTask.status } });
     }
   }
 
-  // ⭐ حالة 2: تجربة حرة → التعليق التلقائي
+  // ⭐ حالة 2: تجربة حرة
   let correctionResult = null;
   if (result.status === 'failed') {
-    correctionResult = await tryAutoCorrect(env, row, result);
+    correctionResult = await tryAutoCorrect(env, row, result, inAutoPilot, budget);
   }
 
   // ⭐ التعليق التلقائي على النتيجة
-  const commentary = await generateToolCommentary(env, row, result, correctionResult);
+  const commentary = await generateToolCommentary(env, row, result, correctionResult, inAutoPilot);
 
   return json({
     success: true,
     experiment: result,
     correction: correctionResult,
     commentary,
+    autopilot: inAutoPilot,
   });
 }
 
 // =====================================================================
-// ⭐ generateToolCommentary — يعلّق النموذج تلقائياً على النتيجة
-// ⭐ لا يستهلك من حصة tool_budget
+// ⭐ generateToolCommentary — v7.3 مع وضع Auto-pilot
 // =====================================================================
-async function generateToolCommentary(env, row, result, correctionResult) {
+async function generateToolCommentary(env, row, result, correctionResult, inAutoPilot) {
   const chatId = row.chat_id;
   const store = d1ContextStore(env.DB);
 
   try {
-    // 1) اجلب آخر 20 رسالة من DB
     const msgsRaw = await env.DB.prepare(
       'SELECT role,content,created_at FROM messages WHERE chat_id=? ORDER BY created_at DESC LIMIT 20'
     ).bind(chatId).all();
@@ -803,45 +962,91 @@ async function generateToolCommentary(env, row, result, correctionResult) {
       content: String(x.content || ''),
     }));
 
-    // 2) ابنِ الـ System Prompt لوضع "التعليق"
     const state = await store.get(chatId);
-    const sysContent = buildToolCommentaryPrompt('experiment');
+    const sysContent = inAutoPilot
+      ? buildAutoPilotCommentaryPrompt()
+      : buildToolCommentaryPrompt('experiment');
 
-    // 3) صيغة نتيجة الأداة الموحّدة
     const toolMsg = toolResultMessage({
       command: row.command,
       output: result.output,
       exitCode: result.exitCode,
       status: result.status,
+      mode: inAutoPilot ? 'autopilot' : 'normal',
     });
 
-    // 4) رسائل نهائية
     const finalMessages = [
       { role: 'system', content: sysContent },
       ...history.slice(-12),
       toolMsg,
     ];
 
-    // 5) اختر النموذج — cf-qwen3 متوازن
     const model = getModel('cf-qwen3');
-
-    // 6) استدعاء غير streaming (أسرع، لا يحتاج stream لعرض فوري)
     const r = await routeCompletion(env, model.id, finalMessages, { maxTokens: 1500, temperature: 0.3 });
     const commentaryText = String(r.text || '').trim();
     if (!commentaryText) return null;
 
-    // 7) احفظه كـ assistant message
     await persistMessage(env, chatId, 'assistant', commentaryText, r.actual?.id || model.id);
 
-    // 8) حدث حي للواجهة (لعرضه عبر polling)
+    // ⭐ في الوضع التلقائي: نفّذ أي اقتراح جديد
+    let autoExecuted = null;
+    if (inAutoPilot) {
+      const newProposal = detectToolProposal(commentaryText);
+      if (newProposal) {
+        const risk = newProposal.risk || commandRiskLevel(newProposal.command);
+        const isSafe = risk.level === 'safe';
+
+        if (isSafe) {
+          // تنفيذ تلقائي (مع استهلاك الحصة)
+          const currentBudget = await getBudget(env, chatId);
+          if (currentBudget.active) {
+            try {
+              const approval = approvalRecord({ proposalId: newProposal.id, approved: true, scope: 'autopilot' });
+              const experiment = { ...experimentRecord({ chatId, proposal: newProposal, approval }), taskId: null, stepId: null };
+              await env.DB.prepare('UPDATE tool_budgets SET used = used + 1, updated_at = ? WHERE chat_id = ?').bind(Date.now(), chatId).run();
+              await env.DB.prepare('INSERT INTO experiments (id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id,mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+                .bind(experiment.id, experiment.chatId, experiment.command, experiment.status, '', null, experiment.createdAt, experiment.updatedAt, experiment.taskId, experiment.stepId, null, 1, null, 'autopilot').run();
+              const dispatched = await dispatchExperiment(env, experiment);
+              await env.DB.prepare('UPDATE experiments SET status=?,run_id=?,updated_at=? WHERE id=?')
+                .bind(dispatched.status, dispatched.runId || null, dispatched.updatedAt, dispatched.id).run();
+              await safeEvent(store, chatId, 'tool_executed', {
+                experimentId: dispatched.id,
+                command: dispatched.command,
+                language: dispatched.language,
+                runId: dispatched.runId,
+                status: dispatched.status,
+                autopilot: true,
+                autoFromCommentary: true,
+              });
+              autoExecuted = dispatched;
+            } catch (e) {
+              console.error('Auto-execute from commentary failed:', e.message);
+            }
+          }
+        } else {
+          // خطر → احفظ الاقتراح فقط
+          await safeEvent(store, chatId, 'tool_proposed', {
+            proposalId: newProposal.id,
+            command: newProposal.command,
+            language: newProposal.language,
+            explanation: newProposal.explanation || '',
+            requiresApproval: true,
+            risk,
+            reason: `أمر خطر — يحتاج موافقة حتى في الوضع التلقائي`,
+          });
+        }
+      }
+    }
+
     await safeEvent(store, chatId, 'tool_commentary_completed', {
       experimentId: row.id,
       text: commentaryText.slice(0, 4000),
       model: r.actual?.id || model.id,
       latencyMs: r.latencyMs || null,
+      autopilot: inAutoPilot,
+      autoExecuted: autoExecuted ? { id: autoExecuted.id, command: autoExecuted.command } : null,
     });
 
-    // 9) حدّث السياق
     const next = mergeContext(state, {
       summary: commentaryText.slice(0, 500),
       facts: state.facts,
@@ -855,6 +1060,7 @@ async function generateToolCommentary(env, row, result, correctionResult) {
       text: commentaryText,
       model: r.actual?.id || model.id,
       latencyMs: r.latencyMs || null,
+      autoExecuted,
     };
   } catch (e) {
     console.error('generateToolCommentary failed:', e.message);
@@ -866,35 +1072,35 @@ async function generateToolCommentary(env, row, result, correctionResult) {
   }
 }
 
-// ============ tryAutoCorrect — v7.2 ============
-async function tryAutoCorrect(env, originalRow, failedResult) {
+// =====================================================================
+// tryAutoCorrect — v7.3 مع Auto-pilot
+// =====================================================================
+async function tryAutoCorrect(env, originalRow, failedResult, inAutoPilot, budget) {
   const chatId = originalRow.chat_id;
   const nowMs = Date.now();
 
-  const budget = await env.DB.prepare('SELECT granted,used,expires_at FROM tool_budgets WHERE chat_id=?').bind(chatId).first();
-  if (!budget) return null;
-  const expired = budget.expires_at && Number(budget.expires_at) < nowMs;
-  const exhausted = Number(budget.used) >= Number(budget.granted);
-
-  if (expired || exhausted) {
-    const store = d1ContextStore(env.DB);
-    await safeEvent(store, chatId, 'tool_budget_exhausted', {
-      experimentId: originalRow.id, reason: expired ? 'expired' : 'exhausted',
-      granted: budget.granted, used: budget.used, expiresAt: budget.expires_at,
-    });
-    return { requiresRenewal: true, reason: expired ? 'انتهت الصلاحية' : 'استُهلكت الحصة' };
-  }
-
+  // فحص حد التصحيحات المتتالية
   const recent = await env.DB.prepare(
-    'SELECT command FROM experiments WHERE chat_id=? ORDER BY created_at DESC LIMIT 3'
+    'SELECT command FROM experiments WHERE chat_id=? ORDER BY created_at DESC LIMIT 5'
   ).bind(chatId).all();
   const sameCount = (recent.results || []).filter(x => x.command === originalRow.command).length;
-  if (sameCount >= 3) {
+  if (sameCount >= MAX_AUTO_CORRECTIONS) {
     const store = d1ContextStore(env.DB);
     await safeEvent(store, chatId, 'tool_correction_aborted', {
-      experimentId: originalRow.id, reason: 'same_command_repeated', command: originalRow.command,
+      experimentId: originalRow.id, reason: 'same_command_repeated',
+      command: originalRow.command, maxCorrections: MAX_AUTO_CORRECTIONS,
     });
-    return { aborted: true, reason: 'نفس الأمر تكرر 3 مرات' };
+    return { aborted: true, reason: `نفس الأمر تكرر ${MAX_AUTO_CORRECTIONS} مرات` };
+  }
+
+  // في الوضع التلقائي: هل الحصة نشطة؟
+  if (inAutoPilot && !budget.active) {
+    const store = d1ContextStore(env.DB);
+    await safeEvent(store, chatId, 'tool_budget_exhausted', {
+      experimentId: originalRow.id, reason: 'exhausted_during_autopilot',
+      granted: budget.granted, used: budget.used,
+    });
+    return { requiresRenewal: true, reason: 'انتهت الحصة أثناء الوضع التلقائي' };
   }
 
   let taskGoal = '';
@@ -930,6 +1136,59 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
 
   if (safeCommand === originalRow.command) return { aborted: true, reason: 'نفس الأمر' };
 
+  const risk = commandRiskLevel(safeCommand);
+
+  // ⭐ في الوضع التلقائي + الأمر آمن + الحصة نشطة → نفّذ تلقائياً
+  if (inAutoPilot && risk.level === 'safe' && budget.active) {
+    try {
+      const store = d1ContextStore(env.DB);
+      const proposalId = 'proposal_correction_' + crypto.randomUUID();
+      const newProposal = {
+        id: proposalId,
+        kind: 'terminal',
+        language: correction.language === 'python' ? 'python' : 'bash',
+        command: safeCommand,
+        explanation: String(correction.explanation || '').slice(0, 500),
+        requiresApproval: false,
+        isCorrection: true,
+        originalExperimentId: originalRow.id,
+        risk,
+      };
+
+      const approval = approvalRecord({ proposalId, approved: true, scope: 'autopilot_correction' });
+      const experiment = { ...experimentRecord({ chatId, proposal: newProposal, approval }), taskId: originalRow.task_id || null, stepId: originalRow.step_id || null };
+
+      await env.DB.prepare('UPDATE tool_budgets SET used = used + 1, updated_at = ? WHERE chat_id = ?').bind(Date.now(), chatId).run();
+      await env.DB.prepare('INSERT INTO experiments (id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id,mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .bind(experiment.id, experiment.chatId, experiment.command, experiment.status, '', null, experiment.createdAt, experiment.updatedAt, experiment.taskId, experiment.stepId, null, Number(originalRow.attempt || 1) + 1, originalRow.id, 'autopilot').run();
+
+      const dispatched = await dispatchExperiment(env, experiment);
+      await env.DB.prepare('UPDATE experiments SET status=?,run_id=?,updated_at=? WHERE id=?')
+        .bind(dispatched.status, dispatched.runId || null, dispatched.updatedAt, dispatched.id).run();
+
+      await safeEvent(store, chatId, 'tool_auto_corrected', {
+        originalId: originalRow.id,
+        newId: dispatched.id,
+        oldCommand: originalRow.command,
+        newCommand: safeCommand,
+        explanation: correction.explanation || '',
+        autopilot: true,
+      });
+
+      return {
+        autoExecuted: true,
+        originalId: originalRow.id,
+        newId: dispatched.id,
+        newCommand: safeCommand,
+        explanation: correction.explanation || '',
+        experiment: dispatched,
+      };
+    } catch (e) {
+      return { error: 'فشل التنفيذ التلقائي للتصحيح: ' + e.message };
+    }
+  }
+
+  // ⭐ وضع عادي أو أمر خطر → اقتراح فقط
   const proposalId = 'proposal_correction_' + crypto.randomUUID();
   const store = d1ContextStore(env.DB);
   await safeEvent(store, chatId, 'tool_correction_proposed', {
@@ -938,6 +1197,7 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
     proposedCommand: safeCommand,
     explanation: correction.explanation || '',
     requiresUserApproval: true,
+    risk,
   });
 
   return {
@@ -951,8 +1211,9 @@ async function tryAutoCorrect(env, originalRow, failedResult) {
       requiresApproval: true,
       isCorrection: true,
       originalExperimentId: originalRow.id,
+      risk,
     },
-    reason: 'التصحيح التلقائي يتطلب موافقتك',
+    reason: risk.level === 'destructive' ? `أمر خطر (${risk.label}) — يحتاج موافقتك` : 'التصحيح التلقائي يتطلب موافقتك',
   };
 }
 
@@ -1010,7 +1271,7 @@ async function chatEvents(env, b) {
   return json({ events: (r.results || []).map(x => ({ id: x.id, type: x.type, payload: JSON.parse(x.payload_json || '{}'), createdAt: x.created_at })) });
 }
 
-// ============ settings / conversationControl / taskControl / advance / intervene / events / downloadFile ============
+// ============ settings / conversationControl / taskControl ============
 async function settings(env, b) {
   if (b.action === 'settings_get') {
     const r = await env.DB.prepare('SELECT key,value_json FROM settings ORDER BY key').all();
@@ -1079,16 +1340,16 @@ async function downloadFile(env, b) {
 async function poll(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
   const since = Number(b.since) || 0;
-  const [eventsR, expR, budgetR] = await Promise.all([
+  const [eventsR, expR] = await Promise.all([
     env.DB.prepare('SELECT id,type,payload_json,created_at FROM context_events WHERE chat_id=? AND created_at > ? ORDER BY created_at ASC LIMIT 100').bind(b.chatId, since).all(),
     env.DB.prepare('SELECT id,command,status,exit_code,created_at,updated_at FROM experiments WHERE chat_id=? ORDER BY created_at DESC LIMIT 10').bind(b.chatId).all(),
-    env.DB.prepare('SELECT granted,used,expires_at FROM tool_budgets WHERE chat_id=?').bind(b.chatId).first(),
   ]);
+  const budget = await getBudget(env, b.chatId);
   return json({
     now: Date.now(),
     events: (eventsR.results || []).map(x => ({ id: x.id, type: x.type, payload: JSON.parse(x.payload_json || '{}'), createdAt: x.created_at })),
     experiments: expR.results || [],
-    budget: budgetR ? { granted: budgetR.granted, used: budgetR.used, remaining: Math.max(0, Number(budgetR.granted) - Number(budgetR.used)), expiresAt: budgetR.expires_at, expired: !!(budgetR.expires_at && budgetR.expires_at < Date.now()) } : null,
+    budget,
   });
 }
 
@@ -1106,7 +1367,7 @@ export default {
       if ((pathname === '/' || pathname === '/index.html') && env.ASSETS) {
         return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
       }
-      return json({ name: 'FOX AI', status: 'ready', version: '7.2.0' });
+      return json({ name: 'FOX AI', status: 'ready', version: '7.3.0' });
     }
 
     if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -1142,6 +1403,8 @@ export default {
       if (b.action === 'download_file') return downloadFile(env, b);
       if (b.action === 'tool_proposal') return toolProposal(env, b);
       if (b.action === 'tool_budget') return toolBudget(env, b);
+      if (b.action === 'request_autopilot') return requestAutopilot(env, b);
+      if (b.action === 'stop_autopilot') return stopAutopilot(env, b);
       if (b.action === 'renew_tool_budget') return renewToolBudget(env, b);
       if (b.action === 'workspace_status') return workspaceStatus(env, b);
       if (b.action === 'run_tool') return runTool(env, b);
