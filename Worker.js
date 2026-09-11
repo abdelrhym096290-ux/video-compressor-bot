@@ -1,6 +1,6 @@
 // =====================================================================
-// FOX AI — Worker جامع نهائي v7.4
-// التعديلات: media v3 — فصل النص/الصور، توحيد التنسيق
+// FOX AI — Worker جامع نهائي v8.0
+// التعديلات: جدول attachments موحّد + endpoints جديدة + رفع من الواجهة
 // =====================================================================
 
 import { publicCatalog, getModel, chooseModel, scoreDifficulty, routeAuto } from './src/catalog.js';
@@ -8,7 +8,7 @@ import { routeCompletion, streamCompletion, ProviderError } from './src/provider
 import { d1ContextStore, contextPacket, renderHandoff, mergeContext, createContextEvent } from './src/context.js';
 import { createTask, startPlanning, createPlan, approvePlan, startStep, completeStep, failStep, retryStep, taskEvent } from './src/tasks.js';
 import { detectToolProposal, approvalRecord, experimentRecord, dispatchExperiment, cancelExperiment, verifyResult, retryExperiment, verifyWebhook, validateCommand, commandRiskLevel } from './src/tools.js';
-import { uploadReleaseAsset, downloadReleaseAsset, MAX_DIRECT_UPLOAD } from './src/storage.js';
+import { uploadReleaseAsset, downloadReleaseAsset, MAX_DIRECT_UPLOAD, D1_THRESHOLD } from './src/storage.js';
 import { buildUserMessage, modelCapabilities } from './src/media.js';
 import { advanceTask, addIntervention, taskEvents } from './src/orchestrator.js';
 import {
@@ -44,6 +44,7 @@ const LIMITS = {
   MAX_MESSAGES_LOADED: 500,
   MAX_OUTPUT_DISPLAY: 500000,
   MAX_FILES_PER_MSG: 20,
+  PREVIEW_CHARS: 2000,
 };
 
 // ⭐ schema caching
@@ -59,14 +60,35 @@ async function schema(env) {
     'CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)',
     'CREATE TABLE IF NOT EXISTS experiments (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, command TEXT NOT NULL, status TEXT NOT NULL, output TEXT NOT NULL, exit_code INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
     'CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
-    'CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, model_id TEXT, created_at INTEGER NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, model_id TEXT, attachment_ref TEXT, created_at INTEGER NOT NULL)',
     'CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, created_at ASC)',
     'CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL)',
     'CREATE TABLE IF NOT EXISTS tool_budgets (chat_id TEXT PRIMARY KEY, granted INTEGER NOT NULL, used INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
     'CREATE TABLE IF NOT EXISTS autopilot_activations (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, activated_at INTEGER NOT NULL)',
     'CREATE INDEX IF NOT EXISTS idx_autopilot_chat ON autopilot_activations(chat_id, activated_at DESC)',
+
+    // ⭐ جدول attachments الموحّد — v8.0
+    `CREATE TABLE IF NOT EXISTS attachments (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      message_id TEXT,
+      source TEXT NOT NULL,
+      name TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      storage_kind TEXT NOT NULL,
+      storage_ref TEXT,
+      text_preview TEXT,
+      derived_from TEXT,
+      created_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_attachments_chat ON attachments(chat_id)',
+    'CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id)',
+
+    // الجدول القديم (للتوافق المؤقت)
     'CREATE TABLE IF NOT EXISTS conversation_files (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, content_text TEXT, data_url TEXT, storage TEXT, asset_id TEXT, asset_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
     'CREATE INDEX IF NOT EXISTS idx_files_chat ON conversation_files(chat_id,created_at DESC)',
+
     'CREATE TABLE IF NOT EXISTS task_control (task_id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at INTEGER NOT NULL)',
     'CREATE TABLE IF NOT EXISTS task_events (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, type TEXT NOT NULL, payload_json TEXT NOT NULL, created_at INTEGER NOT NULL)',
     'CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id,created_at ASC)',
@@ -76,16 +98,16 @@ async function schema(env) {
   for (const sql of q) {
     try { await env.DB.prepare(sql).run(); } catch (e) { console.warn('schema:', e.message); }
   }
+  // migrations
   const migrations = [
+    'ALTER TABLE messages ADD COLUMN attachment_ref TEXT',
     'ALTER TABLE experiments ADD COLUMN task_id TEXT',
     'ALTER TABLE experiments ADD COLUMN step_id TEXT',
     'ALTER TABLE experiments ADD COLUMN run_id TEXT',
     'ALTER TABLE experiments ADD COLUMN attempt INTEGER DEFAULT 1',
     'ALTER TABLE experiments ADD COLUMN parent_id TEXT',
     'ALTER TABLE experiments ADD COLUMN mode TEXT',
-    'ALTER TABLE conversation_files ADD COLUMN storage TEXT',
-    'ALTER TABLE conversation_files ADD COLUMN asset_id TEXT',
-    'ALTER TABLE conversation_files ADD COLUMN asset_url TEXT',
+    'ALTER TABLE attachments ADD COLUMN derived_from TEXT',
     'ALTER TABLE tool_budgets ADD COLUMN expires_at INTEGER',
   ];
   for (const sql of migrations) {
@@ -137,7 +159,6 @@ async function safeEvent(store, chatId, type, payload) {
   }
 }
 
-// ⭐ فحص حالة الحصة
 async function getBudget(env, chatId) {
   const r = await env.DB.prepare('SELECT granted,used,expires_at,updated_at FROM tool_budgets WHERE chat_id=?').bind(chatId).first();
   if (!r) return { active: false, granted: 0, used: 0, remaining: 0, expiresAt: null, expired: false };
@@ -153,6 +174,151 @@ async function getBudget(env, chatId) {
     expired: !!expired,
     exhausted: !!exhausted,
   };
+}
+
+// =====================================================================
+// ⭐ ATTACHMENTS HELPERS — v8.0
+// =====================================================================
+function guessMime(name, provided) {
+  if (provided) return String(provided).slice(0, 120);
+  const n = String(name || '').toLowerCase();
+  if (n.endsWith('.png')) return 'image/png';
+  if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+  if (n.endsWith('.gif')) return 'image/gif';
+  if (n.endsWith('.webp')) return 'image/webp';
+  if (n.endsWith('.svg')) return 'image/svg+xml';
+  if (n.endsWith('.pdf')) return 'application/pdf';
+  if (n.endsWith('.json')) return 'application/json';
+  if (n.endsWith('.csv')) return 'text/csv';
+  if (n.endsWith('.txt')) return 'text/plain';
+  if (n.endsWith('.md')) return 'text/markdown';
+  if (n.endsWith('.html')) return 'text/html';
+  if (n.endsWith('.css')) return 'text/css';
+  if (n.endsWith('.js')) return 'text/javascript';
+  if (n.endsWith('.ts')) return 'text/typescript';
+  if (n.endsWith('.py')) return 'text/x-python';
+  if (n.endsWith('.zip')) return 'application/zip';
+  return 'application/octet-stream';
+}
+
+function isTextMime(mime) {
+  return mime.startsWith('text/') ||
+    mime === 'application/json' ||
+    mime === 'application/xml' ||
+    mime === 'application/javascript' ||
+    mime === 'application/x-yaml';
+}
+
+/**
+ * يحفظ attachment في DB.
+ * - الملفات النصية الصغيرة → D1 مباشرة
+ * - الملفات الثنائية أو الكبيرة → GitHub Release
+ * يُعيد الـ attachment الكامل مع id.
+ */
+async function saveAttachment(env, {
+  chatId,
+  messageId = null,
+  source, // 'user_upload' | 'model_generated'
+  name,
+  mime,
+  size,
+  text = null,
+  dataUrl = null,
+  derivedFrom = null,
+}) {
+  const id = 'att_' + crypto.randomUUID();
+  const safeName = String(name || 'file').slice(0, 180);
+  const safeMime = guessMime(safeName, mime);
+  const safeSize = Math.max(0, Number(size) || 0);
+
+  let storageKind = 'd1';
+  let storageRef = null;
+  let preview = null;
+
+  // ⭐ أول 2000 حرف للعرض السريع
+  if (text != null) {
+    preview = String(text).slice(0, LIMITS.PREVIEW_CHARS);
+  }
+
+  // ⭐ قرار مكان التخزين
+  if (safeSize <= D1_THRESHOLD && (text != null || (dataUrl && safeMime.startsWith('image/')))) {
+    // صغير → D1
+    if (text != null) {
+      storageKind = 'd1';
+      storageRef = String(text).slice(0, LIMITS.MAX_FILE_TEXT);
+    } else if (dataUrl) {
+      storageKind = 'd1';
+      storageRef = String(dataUrl);
+    }
+  } else if (dataUrl) {
+    // كبير أو ثنائي → Release
+    try {
+      const base64Match = String(dataUrl).match(/^data:([^;]+);base64,(.+)$/s);
+      if (base64Match) {
+        const bytes = Uint8Array.from(atob(base64Match[2]), c => c.charCodeAt(0));
+        if (bytes.byteLength <= MAX_DIRECT_UPLOAD) {
+          const asset = await uploadReleaseAsset(env, { name: safeName, mime: safeMime, bytes });
+          storageKind = 'release';
+          storageRef = String(asset.assetId);
+        }
+      }
+    } catch (e) {
+      console.error('saveAttachment upload failed:', e.message);
+      // نبقى على D1 إن أمكن، وإلا null
+      if (text != null) {
+        storageKind = 'd1';
+        storageRef = String(text).slice(0, LIMITS.MAX_FILE_TEXT);
+      }
+    }
+  } else if (text != null) {
+    // نص كبير لكن لا يوجد dataUrl → نحفظه في D1 مقصوصاً
+    storageKind = 'd1';
+    storageRef = String(text).slice(0, LIMITS.MAX_FILE_TEXT);
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO attachments (id, chat_id, message_id, source, name, mime, size, storage_kind, storage_ref, text_preview, derived_from, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, chatId, messageId, source, safeName, safeMime, safeSize, storageKind, storageRef, preview, derivedFrom, Date.now()).run();
+
+  return { id, chatId, messageId, source, name: safeName, mime: safeMime, size: safeSize, storageKind, preview };
+}
+
+/**
+ * يجلب محتوى attachment كامل.
+ */
+async function getAttachmentContent(env, id) {
+  const att = await env.DB.prepare(
+    'SELECT id, chat_id, name, mime, size, storage_kind, storage_ref FROM attachments WHERE id = ?'
+  ).bind(id).first();
+  if (!att) return null;
+
+  if (att.storage_kind === 'd1') {
+    return { ...att, content: att.storage_ref };
+  }
+
+  if (att.storage_kind === 'release' && att.storage_ref) {
+    try {
+      const resp = await downloadReleaseAsset(env, att.storage_ref);
+      const buf = await resp.arrayBuffer();
+      return { ...att, content: buf, isBinary: true };
+    } catch (e) {
+      console.error('download release failed:', e.message);
+      return { ...att, content: null, error: e.message };
+    }
+  }
+
+  return { ...att, content: null };
+}
+
+/**
+ * يجلب قائمة attachments لمحادثة (بدون محتوى).
+ */
+async function listChatAttachments(env, chatId) {
+  const r = await env.DB.prepare(
+    'SELECT id, message_id, source, name, mime, size, storage_kind, text_preview, derived_from, created_at FROM attachments WHERE chat_id = ? ORDER BY created_at ASC'
+  ).bind(chatId).all();
+  return r.results || [];
 }
 
 // ============ الإحصاءات ============
@@ -268,40 +434,23 @@ async function session(env, token) {
 }
 
 // ============ persist / load ============
-async function persistMessage(env, chatId, role, content, modelId = null) {
+async function persistMessage(env, chatId, role, content, modelId = null, attachmentRef = null) {
   const t = Date.now();
   const textContent = String(content || '').slice(0, LIMITS.MAX_MESSAGE_TEXT);
-  await env.DB.prepare('INSERT INTO messages (id,chat_id,role,content,model_id,created_at) VALUES (?,?,?,?,?,?)').bind(crypto.randomUUID(), chatId, role, textContent, modelId, t).run();
+  await env.DB.prepare('INSERT INTO messages (id,chat_id,role,content,model_id,attachment_ref,created_at) VALUES (?,?,?,?,?,?,?)').bind(crypto.randomUUID(), chatId, role, textContent, modelId, attachmentRef, t).run();
   await env.DB.prepare('INSERT INTO conversations (id,title,created_at,updated_at) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=?').bind(chatId, textContent.slice(0, 80) || 'محادثة جديدة', t, t, t).run();
 }
 
-async function persistFiles(env, chatId, files = []) {
-  for (const f of Array.isArray(files) ? files : []) {
-    const fid = crypto.randomUUID();
-    const name = text(f.name).slice(0, 180) || 'file';
-    const mime = text(f.mime || f.type).slice(0, 120) || 'application/octet-stream';
-    const size = Math.max(0, Number(f.size) || 0);
-    const content = f.text != null ? String(f.text).slice(0, LIMITS.MAX_FILE_TEXT) : null;
-    let data = null, storage = null, assetId = null, assetUrl = null;
-    if (f.data) {
-      const raw = String(f.data);
-      const match = raw.match(/^data:([^;]+);base64,(.*)$/s);
-      if (match) {
-        const bytes = Uint8Array.from(atob(match[2]), c => c.charCodeAt(0));
-        if (bytes.byteLength > MAX_DIRECT_UPLOAD) throw new Error(`الملف يتجاوز الحد: ${name}`);
-        if (bytes.byteLength > 700000) {
-          const asset = await uploadReleaseAsset(env, { name, mime, bytes });
-          storage = asset.storage; assetId = String(asset.assetId); assetUrl = asset.url;
-        } else data = raw;
-      }
-    }
-    await env.DB.prepare('INSERT INTO conversation_files (id,chat_id,name,mime,size,content_text,data_url,storage,asset_id,asset_url,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').bind(fid, chatId, name, mime, size, content, data, storage, assetId, assetUrl, Date.now(), Date.now()).run();
-  }
-}
-
 async function loadMessages(env, chatId) {
-  const r = await env.DB.prepare('SELECT id,role,content,model_id,created_at FROM messages WHERE chat_id=? ORDER BY created_at ASC LIMIT ?').bind(chatId, LIMITS.MAX_MESSAGES_LOADED).all();
-  return (r.results || []).map(x => ({ id: x.id, role: x.role, content: x.content, model: x.model_id || null, createdAt: x.created_at }));
+  const r = await env.DB.prepare('SELECT id,role,content,model_id,attachment_ref,created_at FROM messages WHERE chat_id=? ORDER BY created_at ASC LIMIT ?').bind(chatId, LIMITS.MAX_MESSAGES_LOADED).all();
+  return (r.results || []).map(x => ({
+    id: x.id,
+    role: x.role,
+    content: x.content,
+    model: x.model_id || null,
+    attachment_ref: x.attachment_ref || null,
+    createdAt: x.created_at,
+  }));
 }
 
 // ============ deepAnswer ============
@@ -343,7 +492,6 @@ function sseStream(handler) {
   });
 }
 
-// ⭐ كشف طلب Auto-pilot في نص النموذج
 function detectAutopilotRequest(text = '') {
   const m = String(text || '').match(/\[AUTOPILOT_REQUEST:\s*([^\]]+)\]/i);
   if (!m) return null;
@@ -351,7 +499,7 @@ function detectAutopilotRequest(text = '') {
 }
 
 // =====================================================================
-// ⭐ chat — v7.4: يستخدم buildUserMessage بدل multimodalMessages
+// chat — v8.0
 // =====================================================================
 async function chat(env, b) {
   if (!b.chatId || !Array.isArray(b.messages) || !b.messages.length) {
@@ -362,22 +510,18 @@ async function chat(env, b) {
     const store = d1ContextStore(env.DB);
     const state = await store.get(b.chatId);
 
-    // ⭐ الرسائل التاريخية (كلها بدون مرفقات — من state.saved messages)
     const recent = b.messages.slice(-LIMITS.MAX_CONTEXT_MESSAGES);
     const lastContent = recent.at(-1)?.content || '';
-    const historyMessages = recent.slice(0, -1); // كل شيء قبل الأخيرة
+    const historyMessages = recent.slice(0, -1);
 
-    // ⭐ إزالة مرفقات قديمة من الرسائل التاريخية (تُخزّن كنص فقط)
     const cleanHistory = historyMessages.map(m => ({
       role: m.role === 'model' ? 'assistant' : (m.role || 'user'),
       content: typeof m.content === 'string' ? m.content : String(m.content || ''),
     }));
 
-    // ⭐ فحص حالة الحصة
     const budget = await getBudget(env, b.chatId);
     const inAutoPilot = budget.active;
 
-    // ⭐ اختيار النموذج
     let requested, routeInfo = null;
     if (!b.model || b.model === 'auto') {
       const score = scoreDifficulty(lastContent, { fileCount: (b.attachments || []).length, priorFailures: b.priorFailures || 0 });
@@ -390,20 +534,15 @@ async function chat(env, b) {
 
     const hasImage = (b.attachments || []).some(x => String(x.mime || x.type || '').startsWith('image/'));
 
-    // ⭐ معالجة الصور: إن وُجدت صور ونموذج الطلب ليس vision → نُحوّل لنموذج vision
     let model = requested;
     if (hasImage && requested.kind !== 'vision') {
       model = getModel('cf-llama-vision');
     }
 
-    // ⭐ بناء رسالة المستخدم الأخيرة
-    // ⭐ تُستخدم دالة buildUserMessage من media.js v3
-    //    - لا صور → content: string
-    //    - مع صور → content: array
+    // ⭐ بناء رسالة المستخدم
     const userMsg = buildUserMessage(lastContent, b.attachments || [], model.id);
     const unsupported = userMsg.unsupported || [];
 
-    // ⭐ بناء قائمة الرسائل الكاملة
     const sysContent = inAutoPilot
       ? buildAutoPilotPrompt(classifyQuestion(lastContent), renderHandoff(state, recent), renderHandoff(state, []))
       : buildSystemPrompt(classifyQuestion(lastContent), renderHandoff(state, recent), renderHandoff(state, []));
@@ -414,18 +553,13 @@ async function chat(env, b) {
     await safeEvent(store, b.chatId, 'generation_started', {
       requested: model.id, mode: inAutoPilot ? 'autopilot' : (b.mode || 'auto'),
       route: routeInfo, deep: wantsDeep, contextMessages: cleanHistory.length,
-      attachments: (b.attachments || []).length,
-      hasImage,
+      attachments: (b.attachments || []).length, hasImage,
     });
 
     send('start', {
       requested: model.id, route: routeInfo, deep: wantsDeep,
       autopilot: inAutoPilot, budget,
-      attachmentsInfo: {
-        count: (b.attachments || []).length,
-        hasImage,
-        unsupported,
-      },
+      attachmentsInfo: { count: (b.attachments || []).length, hasImage, unsupported },
     });
 
     const startTime = Date.now();
@@ -437,7 +571,6 @@ async function chat(env, b) {
 
     try {
       if (wantsDeep && !hasImage) {
-        // deep path (بدون صور، بالطريقة القديمة)
         const mediaPlaceholder = { messages: [userMsg] };
         const r = await deepAnswer(env, sysContent, packet.recent, mediaPlaceholder);
         fullText = r.text;
@@ -455,15 +588,13 @@ async function chat(env, b) {
         }
         if (buffer) send('chunk', { text: buffer });
       } else {
-        // ⭐ المسار العادي (streaming)
         const finalMessages = [
           { role: 'system', content: sysContent },
           ...packet.recent,
-          userMsg, // ← الرسالة الأخيرة (string أو array)
+          userMsg,
         ];
 
         const result = await streamCompletion(env, model.id, finalMessages, { maxTokens: 4096 });
-
         actualModel = result.actual;
         fallback = result.fallback;
         fallbackReason = result.fallbackReason;
@@ -486,11 +617,45 @@ async function chat(env, b) {
       return;
     }
 
-    // ⭐ حفظ
+    // ⭐ حفظ المرفقات أولاً ثم الرسائل
+    const attachmentIds = [];
+    if (b.attachments && b.attachments.length) {
+      for (const f of b.attachments) {
+        try {
+          const att = await saveAttachment(env, {
+            chatId: b.chatId,
+            source: 'user_upload',
+            name: f.name || 'file',
+            mime: f.mime || f.type,
+            size: f.size || 0,
+            text: f.text != null ? String(f.text) : null,
+            dataUrl: f.data != null ? String(f.data) : null,
+          });
+          attachmentIds.push(att.id);
+        } catch (e) {
+          console.error('saveAttachment failed:', e.message);
+        }
+      }
+    }
+
     const last = text(lastContent).slice(0, LIMITS.MAX_MESSAGE_TEXT);
-    await persistFiles(env, b.chatId, b.attachments || []);
-    await persistMessage(env, b.chatId, 'user', last || '📎 مرفق', null);
+    const userMessageContent = last || (attachmentIds.length ? '📎 ' + (b.attachments || []).length + ' مرفق' : '📎 مرفق');
+    const primaryAttachmentRef = attachmentIds.length === 1 ? attachmentIds[0] : (attachmentIds.length > 1 ? JSON.stringify(attachmentIds) : null);
+
+    await persistMessage(env, b.chatId, 'user', userMessageContent, null, primaryAttachmentRef);
     await persistMessage(env, b.chatId, 'assistant', fullText, actualModel.id);
+
+    // ربط الـ attachments بالرسالة
+    if (attachmentIds.length) {
+      const lastMsg = await env.DB.prepare(
+        'SELECT id FROM messages WHERE chat_id=? AND role=? ORDER BY created_at DESC LIMIT 1'
+      ).bind(b.chatId, 'user').first();
+      if (lastMsg) {
+        for (const aid of attachmentIds) {
+          await env.DB.prepare('UPDATE attachments SET message_id=? WHERE id=?').bind(lastMsg.id, aid).run();
+        }
+      }
+    }
 
     const next = mergeContext(state, {
       summary: last.slice(0, 500),
@@ -517,7 +682,6 @@ async function chat(env, b) {
     const pendingExecution = detectToolProposal(fullText);
     const autopilotRequest = detectAutopilotRequest(fullText);
 
-    // ⭐ تنفيذ تلقائي في الوضع Auto-pilot
     let autoExecuted = null;
     if (inAutoPilot && pendingExecution) {
       const risk = pendingExecution.risk || commandRiskLevel(pendingExecution.command);
@@ -562,6 +726,7 @@ async function chat(env, b) {
       autopilot: inAutoPilot,
       budget,
       unsupportedAttachments: unsupported,
+      attachmentIds, // ⭐ جديد — للواجهة
       memory: renderHandoff(next, []),
       route: routeInfo,
       deep: deepMeta,
@@ -592,7 +757,6 @@ async function chat(env, b) {
   });
 }
 
-// ⭐ تنفيذ تلقائي داخل SSE
 async function executeProposalAutomatically(env, chatId, proposal, send) {
   try {
     const approval = approvalRecord({ proposalId: proposal.id, approved: true, scope: 'autopilot' });
@@ -615,11 +779,7 @@ async function executeProposalAutomatically(env, chatId, proposal, send) {
       autopilot: true,
     });
 
-    send('auto_executed', {
-      experiment: dispatched,
-      proposal,
-    });
-
+    send('auto_executed', { experiment: dispatched, proposal });
     return { experiment: dispatched, proposal };
   } catch (e) {
     console.error('executeProposalAutomatically failed:', e.message);
@@ -720,10 +880,8 @@ async function renewToolBudget(env, b) {
     'INSERT INTO tool_budgets (chat_id, granted, used, expires_at, updated_at) VALUES (?, ?, 0, ?, ?) ' +
     'ON CONFLICT(chat_id) DO UPDATE SET granted = ?, used = 0, expires_at = ?, updated_at = ?'
   ).bind(b.chatId, TOOL_BUDGET_GRANT, newExpiry, nowMs, TOOL_BUDGET_GRANT, newExpiry, nowMs).run();
-
   const store = d1ContextStore(env.DB);
   await safeEvent(store, b.chatId, 'tool_budget_renewed', { granted: TOOL_BUDGET_GRANT, expiresAt: newExpiry });
-
   const budget = await getBudget(env, b.chatId);
   return json({ success: true, budget });
 }
@@ -805,13 +963,10 @@ async function runTool(env, b) {
   const isDestructive = risk.level === 'destructive';
   const isBlocked = risk.level === 'blocked';
 
-  if (isBlocked) {
-    return json({ error: 'أمر محظور نهائياً', risk }, 403);
-  }
+  if (isBlocked) return json({ error: 'أمر محظور نهائياً', risk }, 403);
 
   let needsApproval = false;
   let approvalReason = '';
-
   if (!budget.active) {
     needsApproval = true;
     approvalReason = 'لا توجد بطاقة مرور نشطة — كل أمر يحتاج موافقة';
@@ -821,14 +976,7 @@ async function runTool(env, b) {
   }
 
   if (needsApproval && b.approved !== true) {
-    return json({
-      needsApproval: true,
-      reason: approvalReason,
-      risk,
-      proposal,
-      budget,
-      autopilotActive: budget.active,
-    }, 403);
+    return json({ needsApproval: true, reason: approvalReason, risk, proposal, budget, autopilotActive: budget.active }, 403);
   }
 
   if (!b.force) {
@@ -838,12 +986,7 @@ async function runTool(env, b) {
         'SELECT id FROM experiments WHERE chat_id = ? AND command = ? AND created_at > ? ORDER BY created_at DESC LIMIT 1'
       ).bind(b.chatId, cmdClean, nowMs - DUPLICATE_WINDOW_MS).first();
       if (dup) {
-        return json({
-          error: 'هذا الأمر أُرسل خلال آخر دقيقة',
-          existingId: dup.id,
-          hint: 'انتظر اكتماله أو أضف force:true',
-          duplicate: true,
-        }, 409);
+        return json({ error: 'هذا الأمر أُرسل خلال آخر دقيقة', existingId: dup.id, hint: 'انتظر اكتماله أو أضف force:true', duplicate: true }, 409);
       }
     } catch {}
   }
@@ -885,21 +1028,22 @@ async function runTool(env, b) {
 // ============ workspaceStatus ============
 async function workspaceStatus(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
-  const files = await env.DB.prepare('SELECT id,name,mime,size,storage,asset_id,asset_url,created_at FROM conversation_files WHERE chat_id=? ORDER BY created_at DESC LIMIT 100').bind(b.chatId).all();
+  const files = await listChatAttachments(env, b.chatId);
   const experiments = await env.DB.prepare('SELECT id,command,status,exit_code,created_at,updated_at FROM experiments WHERE chat_id=? ORDER BY created_at DESC LIMIT 30').bind(b.chatId).all();
   const budget = await getBudget(env, b.chatId);
   return json({
     workspace: {
       type: 'fox-session', persistentFiles: true, terminal: 'github-actions',
       storage: env.GITHUB_ASSET_REPO ? 'github-release+d1' : 'd1-only',
-      files: files.results || [], experiments: experiments.results || [],
+      files: files.slice(0, 100),
+      experiments: experiments.results || [],
       budget,
     },
   });
 }
 
 // =====================================================================
-// receiveToolResult — v7.4 (كما في v7.3)
+// receiveToolResult — v8.0
 // =====================================================================
 async function receiveToolResult(env, request) {
   const raw = await request.text();
@@ -969,9 +1113,7 @@ async function receiveToolResult(env, request) {
   });
 }
 
-// =====================================================================
-// generateToolCommentary — v7.4
-// =====================================================================
+// ============ generateToolCommentary ============
 async function generateToolCommentary(env, row, result, correctionResult, inAutoPilot) {
   const chatId = row.chat_id;
   const store = d1ContextStore(env.DB);
@@ -1084,17 +1226,12 @@ async function generateToolCommentary(env, row, result, correctionResult, inAuto
     };
   } catch (e) {
     console.error('generateToolCommentary failed:', e.message);
-    await safeEvent(store, chatId, 'tool_commentary_failed', {
-      experimentId: row.id,
-      error: e.message,
-    });
+    await safeEvent(store, chatId, 'tool_commentary_failed', { experimentId: row.id, error: e.message });
     return { error: e.message };
   }
 }
 
-// =====================================================================
-// tryAutoCorrect — v7.4
-// =====================================================================
+// ============ tryAutoCorrect ============
 async function tryAutoCorrect(env, originalRow, failedResult, inAutoPilot, budget) {
   const chatId = originalRow.chat_id;
   const nowMs = Date.now();
@@ -1233,7 +1370,7 @@ async function tryAutoCorrect(env, originalRow, failedResult, inAutoPilot, budge
   };
 }
 
-// ============ memory / messages / searchAll / listConversations / chatEvents ============
+// ============ memory / messages / searchAll ============
 async function memory(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
   const store = d1ContextStore(env.DB);
@@ -1248,8 +1385,52 @@ async function memory(env, b) {
 
 async function messages(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
-  const files = await env.DB.prepare('SELECT id,name,mime,size,created_at FROM conversation_files WHERE chat_id=? ORDER BY created_at DESC').bind(b.chatId).all();
-  return json({ messages: await loadMessages(env, b.chatId), files: files.results || [] });
+  const [msgList, attachments] = await Promise.all([
+    loadMessages(env, b.chatId),
+    listChatAttachments(env, b.chatId),
+  ]);
+  return json({ messages: msgList, files: attachments });
+}
+
+// =====================================================================
+// ⭐ getAttachment — يجلب attachment كامل
+// =====================================================================
+async function getAttachmentFull(env, b) {
+  if (!b.attachmentId) return json({ error: 'attachmentId مطلوب' }, 400);
+  const att = await getAttachmentContent(env, b.attachmentId);
+  if (!att) return json({ error: 'المرفق غير موجود' }, 404);
+
+  let contentOut = att.content;
+  if (contentOut instanceof ArrayBuffer) {
+    // حوّل إلى base64
+    const bytes = new Uint8Array(contentOut);
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    }
+    contentOut = btoa(binary);
+  }
+
+  return json({
+    attachment: {
+      id: att.id,
+      name: att.name,
+      mime: att.mime,
+      size: att.size,
+      storageKind: att.storage_kind,
+      content: contentOut,
+      isBinary: att.isBinary || false,
+      error: att.error || null,
+    },
+  });
+}
+
+// ⭐ قائمة attachments لمحادثة
+async function getAttachmentsList(env, b) {
+  if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
+  const attachments = await listChatAttachments(env, b.chatId);
+  return json({ attachments });
 }
 
 async function searchAll(env, b) {
@@ -1261,8 +1442,8 @@ async function searchAll(env, b) {
     ? await env.DB.prepare('SELECT id,chat_id,role,content,created_at FROM messages WHERE chat_id=? AND content LIKE ? ORDER BY created_at DESC LIMIT 50').bind(chatId, like).all()
     : await env.DB.prepare('SELECT id,chat_id,role,content,created_at FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT 50').bind(like).all();
   const files = chatId
-    ? await env.DB.prepare('SELECT id,chat_id,name,mime,size,content_text,created_at FROM conversation_files WHERE chat_id=? AND (name LIKE ? OR content_text LIKE ?) ORDER BY created_at DESC LIMIT 50').bind(chatId, like, like).all()
-    : await env.DB.prepare('SELECT id,chat_id,name,mime,size,content_text,created_at FROM conversation_files WHERE name LIKE ? OR content_text LIKE ? ORDER BY created_at DESC LIMIT 50').bind(like, like).all();
+    ? await env.DB.prepare('SELECT id,chat_id,name,mime,size,text_preview,created_at FROM attachments WHERE chat_id=? AND (name LIKE ? OR text_preview LIKE ?) ORDER BY created_at DESC LIMIT 50').bind(chatId, like, like).all()
+    : await env.DB.prepare('SELECT id,chat_id,name,mime,size,text_preview,created_at FROM attachments WHERE name LIKE ? OR text_preview LIKE ? ORDER BY created_at DESC LIMIT 50').bind(like, like).all();
   return json({ query: q, conversations: conversations.results || [], messages: msgs.results || [], files: files.results || [] });
 }
 
@@ -1308,6 +1489,7 @@ async function conversationControl(env, b) {
     return json({ success: true, title });
   }
   if (b.action === 'delete_conversation') {
+    await env.DB.prepare('DELETE FROM attachments WHERE chat_id=?').bind(b.chatId).run();
     await env.DB.prepare('DELETE FROM conversation_files WHERE chat_id=?').bind(b.chatId).run();
     await env.DB.prepare('DELETE FROM messages WHERE chat_id=?').bind(b.chatId).run();
     await env.DB.prepare('DELETE FROM context_state WHERE chat_id=?').bind(b.chatId).run();
@@ -1348,9 +1530,31 @@ async function events(env, b) {
 }
 
 async function downloadFile(env, b) {
-  if (!b.assetId) return json({ error: 'assetId مطلوب' }, 400);
-  const r = await downloadReleaseAsset(env, b.assetId);
-  return new Response(r.body, { status: 200, headers: { 'content-type': r.headers.get('content-type') || 'application/octet-stream', 'cache-control': 'private, max-age=3600', ...CORS } });
+  if (!b.attachmentId) return json({ error: 'attachmentId مطلوب' }, 400);
+  const att = await getAttachmentContent(env, b.attachmentId);
+  if (!att) return json({ error: 'المرفق غير موجود' }, 404);
+
+  if (att.content instanceof ArrayBuffer) {
+    return new Response(att.content, {
+      status: 200,
+      headers: {
+        'content-type': att.mime || 'application/octet-stream',
+        'content-disposition': `attachment; filename="${att.name}"`,
+        'cache-control': 'private, max-age=3600',
+        ...CORS,
+      },
+    });
+  }
+
+  // نصي
+  return new Response(String(att.content || ''), {
+    status: 200,
+    headers: {
+      'content-type': att.mime || 'text/plain;charset=utf-8',
+      'content-disposition': `attachment; filename="${att.name}"`,
+      ...CORS,
+    },
+  });
 }
 
 async function poll(env, b) {
@@ -1370,7 +1574,7 @@ async function poll(env, b) {
 }
 
 // ============ Router ============
-export { persistFiles };
+export { persistMessage };
 
 export default {
   async fetch(request, env) {
@@ -1379,11 +1583,33 @@ export default {
 
     if (pathname === '/tool-result') return receiveToolResult(env, request);
 
+    // ⭐ endpoint مباشر للـ attachment (للاستخدام في iframe / img)
+    if (pathname.startsWith('/attachment/') && request.method === 'GET') {
+      const parts = pathname.split('/');
+      const id = parts[2];
+      const mode = parts[3]; // 'raw' أو undefined
+      if (!id) return new Response('Not found', { status: 404 });
+      try {
+        const att = await getAttachmentContent(env, id);
+        if (!att) return new Response('Not found', { status: 404 });
+        if (att.content instanceof ArrayBuffer) {
+          return new Response(att.content, {
+            headers: { 'content-type': att.mime || 'application/octet-stream', ...CORS },
+          });
+        }
+        return new Response(String(att.content || ''), {
+          headers: { 'content-type': att.mime || 'text/plain;charset=utf-8', ...CORS },
+        });
+      } catch (e) {
+        return new Response('Error: ' + e.message, { status: 500 });
+      }
+    }
+
     if (request.method === 'GET') {
       if ((pathname === '/' || pathname === '/index.html') && env.ASSETS) {
         return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
       }
-      return json({ name: 'FOX AI', status: 'ready', version: '7.4.0' });
+      return json({ name: 'FOX AI', status: 'ready', version: '8.0.0' });
     }
 
     if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -1417,6 +1643,8 @@ export default {
       if (b.action === 'get_experiments') return getExperiments(env, b);
       if (b.action === 'cancel_experiment') return cancelExperimentRun(env, b);
       if (b.action === 'download_file') return downloadFile(env, b);
+      if (b.action === 'get_attachment') return getAttachmentFull(env, b);
+      if (b.action === 'get_attachments') return getAttachmentsList(env, b);
       if (b.action === 'tool_proposal') return toolProposal(env, b);
       if (b.action === 'tool_budget') return toolBudget(env, b);
       if (b.action === 'request_autopilot') return requestAutopilot(env, b);
