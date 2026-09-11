@@ -1,6 +1,6 @@
 // ============================================================
-// src/providers.js — v7.1
-// دعم streaming حقيقي + fallback آمن
+// src/providers.js — v8
+// دعم streaming + تطبيع موحّد للرسائل + ترجمة الصور حسب المزوّد
 // ============================================================
 import { getModel } from './catalog.js';
 
@@ -14,14 +14,20 @@ export class ProviderError extends Error {
   }
 }
 
-export function normalizeMessages(messages = []) {
-  return messages.filter(Boolean).map(m => ({
-    role: m.role === 'model' ? 'assistant' : m.role,
-    content: typeof m.content === 'string' || Array.isArray(m.content) ? m.content : JSON.stringify(m.content),
-  })).filter(m => ['system','user','assistant','tool'].includes(m.role));
+// ============================================================
+// ⭐ getProviderKind — يُعيد نوع المزوّد للتحويل الصحيح
+// ============================================================
+export function getProviderKind(modelId) {
+  const m = getModel(modelId);
+  if (!m) return 'openai';
+  if (m.provider === 'gemini') return 'gemini';
+  if (m.provider === 'workers-ai') return 'workers-ai';
+  return 'openai'; // cerebras, openai-compatible, إلخ
 }
 
-// ⭐ ضمان أن الناتج string دائماً (يحل r.text.match is not a function)
+// ============================================================
+// ⭐ coerceToString — يضمن أن الناتج string
+// ============================================================
 function coerceToString(value) {
   if (value == null) return '';
   if (typeof value === 'string') return value;
@@ -35,6 +41,116 @@ function coerceToString(value) {
   return String(value);
 }
 
+// ============================================================
+// ⭐ translateImagePart — تحويل صورة حسب المزوّد
+// ============================================================
+function translateImagePart(part, providerKind) {
+  if (part.type !== 'image') return part;
+
+  if (providerKind === 'gemini') {
+    // Gemini: inline_data { mime_type, data (base64 بدون prefix) }
+    const dataClean = String(part.data || '').replace(/^data:[^,]+,/, '');
+    return {
+      inline_data: {
+        mime_type: part.mime || 'image/png',
+        data: dataClean,
+      },
+    };
+  }
+
+  // OpenAI-compatible (Cerebras, OpenAI, وغيرها): image_url
+  return {
+    type: 'image_url',
+    image_url: { url: part.data },
+  };
+}
+
+// ============================================================
+// ⭐ normalizeMessages — النقطة الوحيدة للتطبيع
+// ⭐ يقبل providerKind لتطبيق التحويلات الصحيحة
+// ============================================================
+export function normalizeMessages(messages = [], providerKind = 'openai') {
+  // هل توجد أي رسالة بـ content: array في المصفوفة؟
+  const hasArrayContent = messages.some(m => m && Array.isArray(m.content));
+
+  return messages
+    .filter(Boolean)
+    .map(m => {
+      const role = m.role === 'model' ? 'assistant' : m.role;
+      let content = m.content;
+
+      if (hasArrayContent) {
+        // ⭐ توحيد: كل الرسائل تصبح array
+        if (typeof content === 'string') {
+          content = [{ type: 'text', text: content }];
+        } else if (!Array.isArray(content)) {
+          content = [{ type: 'text', text: String(content || '') }];
+        }
+
+        // ترجمة كل part حسب المزوّد
+        content = content.map(part => {
+          if (part.type === 'image') return translateImagePart(part, providerKind);
+          if (part.type === 'image_url') return part; // بالفعل محوّل
+          if (part.type === 'text' || part.text) return { type: 'text', text: part.text || '' };
+          return part;
+        });
+      } else {
+        // ⭐ لا صور في المصفوفة → كلها string (الحالة الشائعة)
+        if (typeof content !== 'string') {
+          if (Array.isArray(content)) {
+            content = content.map(p => p?.text || '').join('\n');
+          } else {
+            content = String(content || '');
+          }
+        }
+      }
+
+      return { role, content };
+    })
+    .filter(m => ['system', 'user', 'assistant', 'tool'].includes(m.role));
+}
+
+// ============================================================
+// ⭐ toGeminiContents — تحويل خاص لـ Gemini
+// ============================================================
+function toGeminiContents(normalizedMessages) {
+  const system = normalizedMessages.find(x => x.role === 'system')?.content;
+  const contents = normalizedMessages
+    .filter(x => x.role !== 'system')
+    .map(x => {
+      const role = x.role === 'assistant' ? 'model' : 'user';
+      let parts;
+
+      if (Array.isArray(x.content)) {
+        parts = x.content.map(p => {
+          if (p.type === 'image_url') {
+            // نُعيد تحويلها إلى inline_data (قد تكون وصلت هكذا من normalize)
+            const url = p.image_url?.url || '';
+            const mimeMatch = url.match(/^data:([^;]+)/);
+            const dataClean = url.split(',')[1] || url;
+            return {
+              inline_data: {
+                mime_type: mimeMatch?.[1] || 'image/png',
+                data: dataClean,
+              },
+            };
+          }
+          if (p.inline_data) return p;
+          return { text: p.text || '' };
+        });
+      } else {
+        parts = [{ text: String(x.content || '') }];
+      }
+
+      return { role, parts };
+    });
+
+  return { system, contents };
+}
+
+// ============================================================
+// async readResponse
+// ============================================================
 async function readResponse(r, provider) {
   const d = await r.json().catch(() => ({}));
   if (!r.ok) {
@@ -49,17 +165,18 @@ async function readResponse(r, provider) {
 }
 
 // ============================================================
-// ============ Non-streaming (fallback) =====================
+// ============ Non-streaming ================================
 // ============================================================
 
 async function openAI({ key, endpoint, model, messages, provider, options = {} }) {
-  if (!key) throw new ProviderError(provider, `${provider} API key غير موجود في أسرار العامل`, 401);
+  if (!key) throw new ProviderError(provider, `${provider} API key غير موجود`, 401);
+  const normalized = normalizeMessages(messages, 'openai');
   const r = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
     body: JSON.stringify({
       model,
-      messages: normalizeMessages(messages),
+      messages: normalized,
       temperature: options.temperature ?? .2,
       max_tokens: options.maxTokens ?? 4096,
     }),
@@ -73,23 +190,19 @@ async function openAI({ key, endpoint, model, messages, provider, options = {} }
 
 async function gemini({ key, model, messages, options = {} }) {
   if (!key) throw new ProviderError('gemini', 'GEMINI_API_KEY غير موجود', 401);
-  const n = normalizeMessages(messages);
-  const system = n.find(x => x.role === 'system')?.content;
-  const contents = n.filter(x => x.role !== 'system').map(x => ({
-    role: x.role === 'assistant' ? 'model' : 'user',
-    parts: Array.isArray(x.content)
-      ? x.content.map(p => p.type === 'image_url'
-          ? { inline_data: { mime_type: p.image_url.url.match(/^data:([^;]+)/)?.[1] || 'image/png', data: p.image_url.url.split(',')[1] || '' } }
-          : { text: p.text || '' })
-      : [{ text: x.content }],
-  }));
+  const normalized = normalizeMessages(messages, 'gemini');
+  const { system, contents } = toGeminiContents(normalized);
+
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       contents,
-      ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-      generationConfig: { temperature: options.temperature ?? .2, maxOutputTokens: options.maxTokens ?? 4096 },
+      ...(system ? { systemInstruction: { parts: [{ text: typeof system === 'string' ? system : coerceToString(system) }] } } : {}),
+      generationConfig: {
+        temperature: options.temperature ?? .2,
+        maxOutputTokens: options.maxTokens ?? 4096,
+      },
     }),
   });
   const d = await readResponse(r, 'gemini');
@@ -101,8 +214,22 @@ async function gemini({ key, model, messages, options = {} }) {
 async function workers(env, model, messages, options = {}) {
   if (!env?.AI?.run) throw new ProviderError('workers-ai', 'ربط Workers AI غير موجود', 503);
   try {
+    // ⭐ Workers AI النصي لا يدعم array — نحوّله دائماً لـ string
+    const normalized = normalizeMessages(messages, 'workers-ai');
+    const safeMessages = normalized.map(m => {
+      if (Array.isArray(m.content)) {
+        // ادمج كل النص، تجاهل الصور (Workers AI النصي لا يدعمها)
+        const textOnly = m.content
+          .map(p => p.text || (p.type === 'image' ? '[صورة — غير مدعومة من هذا النموذج]' : ''))
+          .filter(Boolean)
+          .join('\n');
+        return { ...m, content: textOnly };
+      }
+      return m;
+    });
+
     const d = await env.AI.run(model, {
-      messages: normalizeMessages(messages),
+      messages: safeMessages,
       max_tokens: options.maxTokens ?? 4096,
       temperature: options.temperature ?? .2,
     });
@@ -143,18 +270,15 @@ export async function routeCompletion(env, requestedModelId, messages, { fallbac
 // ============ Streaming Providers ==========================
 // ============================================================
 
-/**
- * بث OpenAI-compatible (Cerebras)
- * يُعيد ReadableStream chunks من النص فقط
- */
 async function openAIStream({ key, endpoint, model, messages, provider, options = {} }) {
   if (!key) throw new ProviderError(provider, `${provider} API key غير موجود`, 401);
+  const normalized = normalizeMessages(messages, 'openai');
   const r = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
     body: JSON.stringify({
       model,
-      messages: normalizeMessages(messages),
+      messages: normalized,
       temperature: options.temperature ?? .2,
       max_tokens: options.maxTokens ?? 4096,
       stream: true,
@@ -164,7 +288,7 @@ async function openAIStream({ key, endpoint, model, messages, provider, options 
     const d = await r.json().catch(() => ({}));
     throw new ProviderError(provider, d?.error?.message || `${provider} HTTP ${r.status}`, r.status, r.status >= 500);
   }
-  if (!r.body) throw new ProviderError(provider, 'البث غير مدعوم من هذا المزود', 502);
+  if (!r.body) throw new ProviderError(provider, 'البث غير مدعوم', 502);
 
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
@@ -190,7 +314,7 @@ async function openAIStream({ key, endpoint, model, messages, provider, options 
                 const obj = JSON.parse(payload);
                 const delta = obj?.choices?.[0]?.delta?.content ?? obj?.choices?.[0]?.text ?? '';
                 if (delta) controller.enqueue(encoder.encode(delta));
-              } catch { /* تجاهل */ }
+              } catch {}
             }
           }
         }
@@ -203,29 +327,22 @@ async function openAIStream({ key, endpoint, model, messages, provider, options 
   });
 }
 
-/**
- * بث Gemini
- */
 async function geminiStream({ key, model, messages, options = {} }) {
   if (!key) throw new ProviderError('gemini', 'GEMINI_API_KEY غير موجود', 401);
-  const n = normalizeMessages(messages);
-  const system = n.find(x => x.role === 'system')?.content;
-  const contents = n.filter(x => x.role !== 'system').map(x => ({
-    role: x.role === 'assistant' ? 'model' : 'user',
-    parts: Array.isArray(x.content)
-      ? x.content.map(p => p.type === 'image_url'
-          ? { inline_data: { mime_type: p.image_url.url.match(/^data:([^;]+)/)?.[1] || 'image/png', data: p.image_url.url.split(',')[1] || '' } }
-          : { text: p.text || '' })
-      : [{ text: x.content }],
-  }));
+  const normalized = normalizeMessages(messages, 'gemini');
+  const { system, contents } = toGeminiContents(normalized);
+
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
   const r = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       contents,
-      ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-      generationConfig: { temperature: options.temperature ?? .2, maxOutputTokens: options.maxTokens ?? 4096 },
+      ...(system ? { systemInstruction: { parts: [{ text: typeof system === 'string' ? system : coerceToString(system) }] } } : {}),
+      generationConfig: {
+        temperature: options.temperature ?? .2,
+        maxOutputTokens: options.maxTokens ?? 4096,
+      },
     }),
   });
   if (!r.ok) {
@@ -257,7 +374,7 @@ async function geminiStream({ key, model, messages, options = {} }) {
               const parts = obj?.candidates?.[0]?.content?.parts || [];
               const delta = parts.map(x => x?.text || '').join('');
               if (delta) controller.enqueue(encoder.encode(delta));
-            } catch { /* تجاهل */ }
+            } catch {}
           }
         }
       } catch (e) {
@@ -269,14 +386,24 @@ async function geminiStream({ key, model, messages, options = {} }) {
   });
 }
 
-/**
- * بث Workers AI
- */
 async function workersStream(env, model, messages, options = {}) {
   if (!env?.AI?.run) throw new ProviderError('workers-ai', 'ربط Workers AI غير موجود', 503);
   try {
+    // ⭐ Workers AI النصي: تحويل array → string
+    const normalized = normalizeMessages(messages, 'workers-ai');
+    const safeMessages = normalized.map(m => {
+      if (Array.isArray(m.content)) {
+        const textOnly = m.content
+          .map(p => p.text || (p.type === 'image' ? '[صورة — غير مدعومة من هذا النموذج]' : ''))
+          .filter(Boolean)
+          .join('\n');
+        return { ...m, content: textOnly };
+      }
+      return m;
+    });
+
     const aiStream = await env.AI.run(model, {
-      messages: normalizeMessages(messages),
+      messages: safeMessages,
       max_tokens: options.maxTokens ?? 4096,
       temperature: options.temperature ?? .2,
       stream: true,
@@ -288,7 +415,6 @@ async function workersStream(env, model, messages, options = {}) {
     const reader = aiStream.getReader ? aiStream.getReader() : aiStream.body?.getReader();
 
     if (!reader) {
-      // بعض النماذج تُعيد stream بشكل مختلف
       const text = coerceToString(aiStream);
       return new ReadableStream({
         start(controller) {
@@ -305,9 +431,7 @@ async function workersStream(env, model, messages, options = {}) {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            buffer += chunk;
-            // SSE-style data:
+            buffer += decoder.decode(value, { stream: true });
             let idx;
             while ((idx = buffer.indexOf('\n')) !== -1) {
               const line = buffer.slice(0, idx).trim();
@@ -319,7 +443,7 @@ async function workersStream(env, model, messages, options = {}) {
                 const obj = JSON.parse(payload);
                 const delta = obj?.response ?? obj?.choices?.[0]?.delta?.content ?? '';
                 if (delta) controller.enqueue(encoder.encode(delta));
-              } catch { /* تجاهل */ }
+              } catch {}
             }
           }
         } catch (e) {
@@ -335,10 +459,6 @@ async function workersStream(env, model, messages, options = {}) {
   }
 }
 
-/**
- * ⭐ الدالة الرئيسية للـ streaming
- * @returns { stream: ReadableStream, actual: Model, fallback: boolean, requested: Model }
- */
 export async function streamCompletion(env, requestedModelId, messages, { fallbackModelId = 'cf-gpt-oss-20b', ...options } = {}) {
   const requested = getModel(requestedModelId);
   let actual = requested;
@@ -366,9 +486,7 @@ export async function streamCompletion(env, requestedModelId, messages, { fallba
       throw new ProviderError(requested.provider, 'مزود غير مدعوم', 400);
     }
   } catch (primary) {
-    // fallback
     if (!fallbackModelId || fallbackModelId === requested.id || !primary.retryable) {
-      // لا fallback متاح — نُحوّل إلى non-streaming
       const r = await routeCompletion(env, requested.id, messages, options);
       stream = textToStream(r.text);
       return { stream, requested, actual: r.actual, fallback: r.fallback, fallbackReason: r.fallbackReason, latencyMs: 0 };
@@ -396,7 +514,6 @@ export async function streamCompletion(env, requestedModelId, messages, { fallba
         throw new Error('fallback provider غير مدعوم');
       }
     } catch (fb) {
-      // fallback فشل أيضاً — آخر محاولة: non-streaming
       const r = await routeCompletion(env, actual.id, messages, options);
       stream = textToStream(r.text);
       return { stream, requested, actual: r.actual, fallback: true, fallbackReason: fallbackReason + ' | ' + fb.message, latencyMs: 0 };
@@ -406,19 +523,16 @@ export async function streamCompletion(env, requestedModelId, messages, { fallba
   return { stream, requested, actual, fallback, fallbackReason, latencyMs: 0 };
 }
 
-// يحوّل نصاً كاملاً إلى ReadableStream (يُستخدم في fallback)
 function textToStream(text) {
   const encoder = new TextEncoder();
   return new ReadableStream({
     start(controller) {
-      // نقسّمه لأجزاء صغيرة لتقليد البث
       const words = String(text || '').split(/(\s+)/);
       let i = 0;
       const pushNext = () => {
         if (i >= words.length) { controller.close(); return; }
         const chunk = words[i++];
         if (chunk) controller.enqueue(encoder.encode(chunk));
-        // تأخير بسيط
         setTimeout(pushNext, 20);
       };
       pushNext();
