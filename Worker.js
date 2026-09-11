@@ -1,6 +1,6 @@
 // =====================================================================
-// FOX AI — Worker جامع نهائي v7.3
-// التعديلات: Auto-pilot mode + destructive patterns + حد 3 تفعيلات/ساعة
+// FOX AI — Worker جامع نهائي v7.4
+// التعديلات: media v3 — فصل النص/الصور، توحيد التنسيق
 // =====================================================================
 
 import { publicCatalog, getModel, chooseModel, scoreDifficulty, routeAuto } from './src/catalog.js';
@@ -9,7 +9,7 @@ import { d1ContextStore, contextPacket, renderHandoff, mergeContext, createConte
 import { createTask, startPlanning, createPlan, approvePlan, startStep, completeStep, failStep, retryStep, taskEvent } from './src/tasks.js';
 import { detectToolProposal, approvalRecord, experimentRecord, dispatchExperiment, cancelExperiment, verifyResult, retryExperiment, verifyWebhook, validateCommand, commandRiskLevel } from './src/tools.js';
 import { uploadReleaseAsset, downloadReleaseAsset, MAX_DIRECT_UPLOAD } from './src/storage.js';
-import { multimodalMessages, modelCapabilities } from './src/media.js';
+import { buildUserMessage, modelCapabilities } from './src/media.js';
 import { advanceTask, addIntervention, taskEvents } from './src/orchestrator.js';
 import {
   buildSystemPrompt, buildToolCommentaryPrompt, buildAutoPilotPrompt, buildAutoPilotCommentaryPrompt,
@@ -29,12 +29,12 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 });
 const text = x => String(x || '').trim();
 
-// ⭐ الحصة (بطاقة المرور)
+// ⭐ الحصة
 const TOOL_BUDGET_GRANT = 10;
 const TOOL_BUDGET_EXPIRY_MS = 20 * 60 * 1000;
 const DUPLICATE_WINDOW_MS = 60 * 1000;
-const AUTOPILOT_ACTIVATIONS_PER_HOUR = 5;
-const MAX_AUTO_CORRECTIONS = 5;
+const AUTOPILOT_ACTIVATIONS_PER_HOUR = 3;
+const MAX_AUTO_CORRECTIONS = 3;
 
 // ⭐ الحدود
 const LIMITS = {
@@ -350,7 +350,9 @@ function detectAutopilotRequest(text = '') {
   return { reason: m[1].trim().slice(0, 200) };
 }
 
-// ============ chat — SSE ============
+// =====================================================================
+// ⭐ chat — v7.4: يستخدم buildUserMessage بدل multimodalMessages
+// =====================================================================
 async function chat(env, b) {
   if (!b.chatId || !Array.isArray(b.messages) || !b.messages.length) {
     return json({ error: 'chatId والرسائل مطلوبان' }, 400);
@@ -359,14 +361,23 @@ async function chat(env, b) {
   const stream = sseStream(async (send, controller) => {
     const store = d1ContextStore(env.DB);
     const state = await store.get(b.chatId);
+
+    // ⭐ الرسائل التاريخية (كلها بدون مرفقات — من state.saved messages)
     const recent = b.messages.slice(-LIMITS.MAX_CONTEXT_MESSAGES);
     const lastContent = recent.at(-1)?.content || '';
-    const hasImage = (b.attachments || []).some(x => String(x.mime || x.type || '').startsWith('image/'));
+    const historyMessages = recent.slice(0, -1); // كل شيء قبل الأخيرة
+
+    // ⭐ إزالة مرفقات قديمة من الرسائل التاريخية (تُخزّن كنص فقط)
+    const cleanHistory = historyMessages.map(m => ({
+      role: m.role === 'model' ? 'assistant' : (m.role || 'user'),
+      content: typeof m.content === 'string' ? m.content : String(m.content || ''),
+    }));
 
     // ⭐ فحص حالة الحصة
     const budget = await getBudget(env, b.chatId);
     const inAutoPilot = budget.active;
 
+    // ⭐ اختيار النموذج
     let requested, routeInfo = null;
     if (!b.model || b.model === 'auto') {
       const score = scoreDifficulty(lastContent, { fileCount: (b.attachments || []).length, priorFailures: b.priorFailures || 0 });
@@ -376,24 +387,46 @@ async function chat(env, b) {
     } else {
       requested = getModel(b.model);
     }
-    const model = hasImage && requested.kind !== 'vision' ? getModel('cf-llama-vision') : requested;
-    const packet = contextPacket(state, recent);
-    const media = multimodalMessages([{ role: 'user', content: lastContent }], b.attachments || [], model.id);
-    const promptType = classifyQuestion(lastContent);
 
-    // ⭐ اختر System Prompt حسب الوضع
+    const hasImage = (b.attachments || []).some(x => String(x.mime || x.type || '').startsWith('image/'));
+
+    // ⭐ معالجة الصور: إن وُجدت صور ونموذج الطلب ليس vision → نُحوّل لنموذج vision
+    let model = requested;
+    if (hasImage && requested.kind !== 'vision') {
+      model = getModel('cf-llama-vision');
+    }
+
+    // ⭐ بناء رسالة المستخدم الأخيرة
+    // ⭐ تُستخدم دالة buildUserMessage من media.js v3
+    //    - لا صور → content: string
+    //    - مع صور → content: array
+    const userMsg = buildUserMessage(lastContent, b.attachments || [], model.id);
+    const unsupported = userMsg.unsupported || [];
+
+    // ⭐ بناء قائمة الرسائل الكاملة
     const sysContent = inAutoPilot
-      ? buildAutoPilotPrompt(promptType, renderHandoff(state, recent), renderHandoff(state, []))
-      : buildSystemPrompt(promptType, renderHandoff(state, recent), renderHandoff(state, []));
+      ? buildAutoPilotPrompt(classifyQuestion(lastContent), renderHandoff(state, recent), renderHandoff(state, []))
+      : buildSystemPrompt(classifyQuestion(lastContent), renderHandoff(state, recent), renderHandoff(state, []));
 
+    const packet = contextPacket(state, cleanHistory);
     const wantsDeep = !inAutoPilot && (b.mode === 'deep' || (routeInfo && routeInfo.tier === 'deep' && !hasImage));
 
     await safeEvent(store, b.chatId, 'generation_started', {
       requested: model.id, mode: inAutoPilot ? 'autopilot' : (b.mode || 'auto'),
-      route: routeInfo, deep: wantsDeep, contextMessages: packet.recent.length,
+      route: routeInfo, deep: wantsDeep, contextMessages: cleanHistory.length,
+      attachments: (b.attachments || []).length,
+      hasImage,
     });
 
-    send('start', { requested: model.id, route: routeInfo, deep: wantsDeep, autopilot: inAutoPilot, budget });
+    send('start', {
+      requested: model.id, route: routeInfo, deep: wantsDeep,
+      autopilot: inAutoPilot, budget,
+      attachmentsInfo: {
+        count: (b.attachments || []).length,
+        hasImage,
+        unsupported,
+      },
+    });
 
     const startTime = Date.now();
     let fullText = '';
@@ -404,7 +437,9 @@ async function chat(env, b) {
 
     try {
       if (wantsDeep && !hasImage) {
-        const r = await deepAnswer(env, sysContent, packet.recent, media);
+        // deep path (بدون صور، بالطريقة القديمة)
+        const mediaPlaceholder = { messages: [userMsg] };
+        const r = await deepAnswer(env, sysContent, packet.recent, mediaPlaceholder);
         fullText = r.text;
         actualModel = r.actual;
         deepMeta = r.deep;
@@ -420,11 +455,14 @@ async function chat(env, b) {
         }
         if (buffer) send('chunk', { text: buffer });
       } else {
-        const result = await streamCompletion(env, model.id, [
+        // ⭐ المسار العادي (streaming)
+        const finalMessages = [
           { role: 'system', content: sysContent },
-          ...packet.recent.slice(0, -1),
-          ...media.messages,
-        ], { maxTokens: 4096 });
+          ...packet.recent,
+          userMsg, // ← الرسالة الأخيرة (string أو array)
+        ];
+
+        const result = await streamCompletion(env, model.id, finalMessages, { maxTokens: 4096 });
 
         actualModel = result.actual;
         fallback = result.fallback;
@@ -448,9 +486,10 @@ async function chat(env, b) {
       return;
     }
 
+    // ⭐ حفظ
     const last = text(lastContent).slice(0, LIMITS.MAX_MESSAGE_TEXT);
     await persistFiles(env, b.chatId, b.attachments || []);
-    await persistMessage(env, b.chatId, 'user', last, null);
+    await persistMessage(env, b.chatId, 'user', last || '📎 مرفق', null);
     await persistMessage(env, b.chatId, 'assistant', fullText, actualModel.id);
 
     const next = mergeContext(state, {
@@ -465,7 +504,8 @@ async function chat(env, b) {
     await safeEvent(store, b.chatId, 'model_called', {
       requested: model.id, actual: actualModel.id,
       fallback, fallbackReason: fallbackReason || null,
-      media: !!b.attachments?.length, route: routeInfo, deep: deepMeta,
+      attachments: (b.attachments || []).length,
+      hasImage, route: routeInfo, deep: deepMeta,
       autopilot: inAutoPilot,
     });
     await safeEvent(store, b.chatId, 'context_updated', { revision: next.revision });
@@ -475,21 +515,17 @@ async function chat(env, b) {
     });
 
     const pendingExecution = detectToolProposal(fullText);
-
-    // ⭐ كشف طلب Auto-pilot
     const autopilotRequest = detectAutopilotRequest(fullText);
 
-    // ⭐ في الوضع التلقائي: نفّذ الاقتراح تلقائياً
+    // ⭐ تنفيذ تلقائي في الوضع Auto-pilot
     let autoExecuted = null;
     if (inAutoPilot && pendingExecution) {
       const risk = pendingExecution.risk || commandRiskLevel(pendingExecution.command);
       const isSafe = risk.level === 'safe';
 
       if (isSafe) {
-        // تنفيذ تلقائي
         autoExecuted = await executeProposalAutomatically(env, b.chatId, pendingExecution, send);
       } else {
-        // خطر → احفظ الاقتراح فقط واطلب موافقة
         await safeEvent(store, b.chatId, 'tool_proposed', {
           proposalId: pendingExecution.id,
           command: pendingExecution.command,
@@ -506,7 +542,6 @@ async function chat(env, b) {
         });
       }
     } else if (pendingExecution) {
-      // وضع عادي: احفظ الاقتراح فقط
       await safeEvent(store, b.chatId, 'tool_proposed', {
         proposalId: pendingExecution.id,
         command: pendingExecution.command,
@@ -526,7 +561,7 @@ async function chat(env, b) {
       autoExecuted,
       autopilot: inAutoPilot,
       budget,
-      unsupportedAttachments: media.unsupported,
+      unsupportedAttachments: unsupported,
       memory: renderHandoff(next, []),
       route: routeInfo,
       deep: deepMeta,
@@ -536,8 +571,9 @@ async function chat(env, b) {
       trace: {
         provider: actualModel.provider,
         model: actualModel.model,
-        contextMessages: packet.recent.length,
-        media: !!b.attachments?.length,
+        contextMessages: cleanHistory.length,
+        attachments: (b.attachments || []).length,
+        hasImage,
         memoryUpdated: true,
       },
     });
@@ -692,15 +728,11 @@ async function renewToolBudget(env, b) {
   return json({ success: true, budget });
 }
 
-// =====================================================================
-// ⭐ request_autopilot — يُنشئ/يُجدّد بطاقة المرور مع حد 3/ساعة
-// =====================================================================
 async function requestAutopilot(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
   const nowMs = Date.now();
   const hourAgo = nowMs - 60 * 60 * 1000;
 
-  // فحص حد التفعيلات خلال آخر ساعة
   const activations = await env.DB.prepare(
     'SELECT COUNT(*) as c FROM autopilot_activations WHERE chat_id = ? AND activated_at > ?'
   ).bind(b.chatId, hourAgo).first();
@@ -741,7 +773,6 @@ async function requestAutopilot(env, b) {
   });
 }
 
-// ⭐ إيقاف Auto-pilot يدوياً
 async function stopAutopilot(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
   await env.DB.prepare('UPDATE tool_budgets SET used = granted, updated_at = ? WHERE chat_id = ?').bind(Date.now(), b.chatId).run();
@@ -770,7 +801,6 @@ async function runTool(env, b) {
   const budget = await getBudget(env, b.chatId);
   const nowMs = Date.now();
 
-  // ⭐ فحص الأوامر الخطرة
   const risk = proposal.risk || commandRiskLevel(proposal.command);
   const isDestructive = risk.level === 'destructive';
   const isBlocked = risk.level === 'blocked';
@@ -779,7 +809,6 @@ async function runTool(env, b) {
     return json({ error: 'أمر محظور نهائياً', risk }, 403);
   }
 
-  // ⭐ هل نطلب موافقة؟
   let needsApproval = false;
   let approvalReason = '';
 
@@ -802,7 +831,6 @@ async function runTool(env, b) {
     }, 403);
   }
 
-  // قفل التكرار
   if (!b.force) {
     try {
       const cmdClean = validateCommand(proposal.command);
@@ -824,7 +852,6 @@ async function runTool(env, b) {
   const approval = approvalRecord({ proposalId: proposal.id, approved: true, scope: budget.active ? 'autopilot' : 'manual' });
   const experiment = { ...experimentRecord({ chatId: b.chatId, proposal, approval }), taskId: b.taskId || null, stepId: b.stepId || null };
 
-  // ⭐ استهلاك من الحصة فقط إن كانت نشطة
   if (budget.active) {
     await env.DB.prepare('UPDATE tool_budgets SET used = used + 1, updated_at = ? WHERE chat_id = ?').bind(Date.now(), b.chatId).run();
   }
@@ -872,7 +899,7 @@ async function workspaceStatus(env, b) {
 }
 
 // =====================================================================
-// ⭐ receiveToolResult — v7.3 مع Auto-pilot
+// receiveToolResult — v7.4 (كما في v7.3)
 // =====================================================================
 async function receiveToolResult(env, request) {
   const raw = await request.text();
@@ -897,11 +924,9 @@ async function receiveToolResult(env, request) {
     mode: row.mode || 'manual',
   });
 
-  // ⭐ فحص حالة الحصة
   const budget = await getBudget(env, row.chat_id);
   const inAutoPilot = budget.active && row.mode === 'autopilot';
 
-  // ⭐ حالت 1: مرتبط بمهمة
   if (row.task_id && row.step_id) {
     const tr = await env.DB.prepare('SELECT task_json,plan_json FROM tasks WHERE id=?').bind(row.task_id).first();
     if (tr && tr.plan_json) {
@@ -928,13 +953,11 @@ async function receiveToolResult(env, request) {
     }
   }
 
-  // ⭐ حالة 2: تجربة حرة
   let correctionResult = null;
   if (result.status === 'failed') {
     correctionResult = await tryAutoCorrect(env, row, result, inAutoPilot, budget);
   }
 
-  // ⭐ التعليق التلقائي على النتيجة
   const commentary = await generateToolCommentary(env, row, result, correctionResult, inAutoPilot);
 
   return json({
@@ -947,7 +970,7 @@ async function receiveToolResult(env, request) {
 }
 
 // =====================================================================
-// ⭐ generateToolCommentary — v7.3 مع وضع Auto-pilot
+// generateToolCommentary — v7.4
 // =====================================================================
 async function generateToolCommentary(env, row, result, correctionResult, inAutoPilot) {
   const chatId = row.chat_id;
@@ -988,7 +1011,6 @@ async function generateToolCommentary(env, row, result, correctionResult, inAuto
 
     await persistMessage(env, chatId, 'assistant', commentaryText, r.actual?.id || model.id);
 
-    // ⭐ في الوضع التلقائي: نفّذ أي اقتراح جديد
     let autoExecuted = null;
     if (inAutoPilot) {
       const newProposal = detectToolProposal(commentaryText);
@@ -997,7 +1019,6 @@ async function generateToolCommentary(env, row, result, correctionResult, inAuto
         const isSafe = risk.level === 'safe';
 
         if (isSafe) {
-          // تنفيذ تلقائي (مع استهلاك الحصة)
           const currentBudget = await getBudget(env, chatId);
           if (currentBudget.active) {
             try {
@@ -1024,7 +1045,6 @@ async function generateToolCommentary(env, row, result, correctionResult, inAuto
             }
           }
         } else {
-          // خطر → احفظ الاقتراح فقط
           await safeEvent(store, chatId, 'tool_proposed', {
             proposalId: newProposal.id,
             command: newProposal.command,
@@ -1073,13 +1093,12 @@ async function generateToolCommentary(env, row, result, correctionResult, inAuto
 }
 
 // =====================================================================
-// tryAutoCorrect — v7.3 مع Auto-pilot
+// tryAutoCorrect — v7.4
 // =====================================================================
 async function tryAutoCorrect(env, originalRow, failedResult, inAutoPilot, budget) {
   const chatId = originalRow.chat_id;
   const nowMs = Date.now();
 
-  // فحص حد التصحيحات المتتالية
   const recent = await env.DB.prepare(
     'SELECT command FROM experiments WHERE chat_id=? ORDER BY created_at DESC LIMIT 5'
   ).bind(chatId).all();
@@ -1093,7 +1112,6 @@ async function tryAutoCorrect(env, originalRow, failedResult, inAutoPilot, budge
     return { aborted: true, reason: `نفس الأمر تكرر ${MAX_AUTO_CORRECTIONS} مرات` };
   }
 
-  // في الوضع التلقائي: هل الحصة نشطة؟
   if (inAutoPilot && !budget.active) {
     const store = d1ContextStore(env.DB);
     await safeEvent(store, chatId, 'tool_budget_exhausted', {
@@ -1138,7 +1156,6 @@ async function tryAutoCorrect(env, originalRow, failedResult, inAutoPilot, budge
 
   const risk = commandRiskLevel(safeCommand);
 
-  // ⭐ في الوضع التلقائي + الأمر آمن + الحصة نشطة → نفّذ تلقائياً
   if (inAutoPilot && risk.level === 'safe' && budget.active) {
     try {
       const store = d1ContextStore(env.DB);
@@ -1188,7 +1205,6 @@ async function tryAutoCorrect(env, originalRow, failedResult, inAutoPilot, budge
     }
   }
 
-  // ⭐ وضع عادي أو أمر خطر → اقتراح فقط
   const proposalId = 'proposal_correction_' + crypto.randomUUID();
   const store = d1ContextStore(env.DB);
   await safeEvent(store, chatId, 'tool_correction_proposed', {
@@ -1367,7 +1383,7 @@ export default {
       if ((pathname === '/' || pathname === '/index.html') && env.ASSETS) {
         return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
       }
-      return json({ name: 'FOX AI', status: 'ready', version: '7.3.0' });
+      return json({ name: 'FOX AI', status: 'ready', version: '7.4.0' });
     }
 
     if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
