@@ -1,6 +1,6 @@
 // ============================================================
-// src/media.js
-// إدارة الوسائط + توحيد تنسيق الرسائل
+// src/media.js — v2
+// إدارة الوسائط + توحيد التنسيق (قرار ذكي)
 // ============================================================
 import { getModel } from './catalog.js';
 
@@ -39,59 +39,99 @@ export function validateAttachments(files = []) {
   });
 }
 
-export function attachmentParts(files = [], modelId) {
+// ⭐ استخراج نصوص الملفات (للدمج في string)
+export function extractTextParts(files = [], modelId) {
   const caps = modelCapabilities(modelId);
   const valid = validateAttachments(files);
-  const parts = [], unsupported = [];
+  const texts = [], images = [], unsupported = [];
 
   for (const f of valid) {
     if (f.mime.startsWith('image/')) {
       if (!caps.images || !f.data) unsupported.push(f.name);
-      else parts.push({ type: 'image_url', image_url: { url: f.data } });
+      else images.push({ type: 'image_url', image_url: { url: f.data } });
     } else if (f.text != null) {
-      parts.push({
-        type: 'text',
-        text: `\n[محتوى الملف: ${f.name}]\n${String(f.text).slice(0, MEDIA_LIMITS.maxTextChars)}`,
-      });
+      texts.push(`\n---\n[📎 محتوى الملف: ${f.name}]\n${String(f.text).slice(0, MEDIA_LIMITS.maxTextChars)}\n---\n`);
     } else {
-      parts.push({
-        type: 'text',
-        text: `[ملف مرفق غير قابل للقراءة المباشرة: ${f.name}]`,
-      });
+      texts.push(`\n---\n[📎 ملف مرفق: ${f.name} — ${f.mime} — لا يمكن قراءته مباشرة]\n---\n`);
     }
   }
+  return { texts, images, unsupported };
+}
+
+// ⭐ النسخة القديمة (تُستخدم في حالات خاصة)
+export function attachmentParts(files = [], modelId) {
+  const { texts, images, unsupported } = extractTextParts(files, modelId);
+  const parts = [];
+  for (const t of texts) parts.push({ type: 'text', text: t });
+  for (const img of images) parts.push(img);
   return { parts, unsupported };
 }
 
-// ⭐ نسخة موحّدة: كل الرسائل content: array عند وجود مرفقات
+// ============================================================
+// ⭐ multimodalMessages — v2
+// قرار ذكي:
+//   - لا صور → كل الرسائل string (بسيط + متوافق)
+//   - توجد صور → كل الرسائل array (يفتح Vision)
+// ============================================================
 export function multimodalMessages(messages, files, modelId) {
-  // إن لم يكن هناك مرفقات → اترك الرسائل كما هي (string)
+  // 1) لا مرفقات → لا تغيير
   if (!files?.length) return { messages, unsupported: [] };
 
-  const { parts, unsupported } = attachmentParts(files, modelId);
+  const { texts, images, unsupported } = extractTextParts(files, modelId);
+  const hasImages = images.length > 0;
 
-  // حوّل كل رسالة إلى content: array[text]
-  const copy = messages.map(x => {
+  // 2) استخراج النص من المرفقات (يُدمج في الرسالة الأخيرة)
+  const attachText = texts.join('\n');
+  const lastIdx = messages.length - 1;
+  if (lastIdx < 0) return { messages: messages.slice(), unsupported };
+
+  // 3) نسخة معدّلة
+  const copy = messages.map(x => ({ ...x }));
+
+  if (!hasImages) {
+    // ✅ المسار البسيط: string فقط
+    // - الرسائل القديمة: كما هي (string)
+    // - الرسالة الأخيرة: نصها + المرفقات
+    const lastContent = copy[lastIdx].content;
+    const baseText = typeof lastContent === 'string' ? lastContent : String(lastContent || '');
+    copy[lastIdx] = {
+      ...copy[lastIdx],
+      content: baseText + attachText,
+    };
+    return { messages: copy, unsupported };
+  }
+
+  // ✅ المسار المتقدم: array (يحتوي صور)
+  // - كل الرسائل → array
+  // - الرسالة الأخيرة: نصها + نصوص المرفقات + الصور
+  const arrayCopy = copy.map(x => {
     if (typeof x.content === 'string') {
       return { ...x, content: [{ type: 'text', text: x.content || '' }] };
     }
     if (Array.isArray(x.content)) {
-      return { ...x, content: x.content };
+      return { ...x, content: x.content.slice() };
     }
     return { ...x, content: [{ type: 'text', text: String(x.content || '') }] };
   });
 
-  const last = copy.length - 1;
-  if (last < 0) return { messages: copy, unsupported };
+  const lastMsg = arrayCopy[lastIdx];
+  const baseTextParts = lastMsg.content.filter(p => p.type === 'text');
+  const otherParts = lastMsg.content.filter(p => p.type !== 'text');
 
-  // الرسالة الأخيرة: نصها الأصلي + المرفقات
-  const baseText = copy[last].content.find(p => p.type === 'text')?.text || '';
-  const otherParts = copy[last].content.filter(p => p.type !== 'text');
-
-  copy[last] = {
-    ...copy[last],
-    content: [{ type: 'text', text: baseText }, ...otherParts, ...parts],
+  arrayCopy[lastIdx] = {
+    ...lastMsg,
+    content: [
+      ...baseTextParts,
+      ...(attachText ? [{ type: 'text', text: attachText }] : []),
+      ...otherParts,
+      ...images,
+    ],
   };
 
-  return { messages: copy, unsupported };
+  return { messages: arrayCopy, unsupported };
+}
+
+// ⭐ دالة مساعدة: هل الرسالة الأخيرة تحتوي صور؟
+export function hasImages(files = []) {
+  return Array.isArray(files) && files.some(f => String(f.mime || f.type || '').startsWith('image/'));
 }
