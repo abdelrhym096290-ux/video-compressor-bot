@@ -4,10 +4,7 @@
 // ============================================================
 
 export const MODEL_CATALOG = Object.freeze([
-  // ============ Cerebras (غير مفعل - Payment required) ============
-  ['cerebras-gemma-4-31b','gemma-4-31b','Gemma 4 31B','Cerebras','cerebras','استدلال سريع','chat'],
-  ['cerebras-qwen-3.8-27b','qwen-3.8-27b','Qwen 3.8 27B','Cerebras','cerebras','برمجة وتحليل سريع','chat'],
-  ['cerebras-gpt-oss-120b','gpt-oss-120b','GPT-OSS 120B','Cerebras','cerebras','مهام معقدة','chat'],
+  // ⭐ Cerebras — حُذفت بالكامل (تتطلب وسيلة دفع مفعّلة على الحساب، ولا تتوفر حالياً)
 
   // ============ Google Gemini ============
   ['gemini-5-flash-lite','gemini-3.5-flash','Flash 3.5','Google','gemini','محادثة عامة','chat'],
@@ -15,7 +12,7 @@ export const MODEL_CATALOG = Object.freeze([
   ['gemini-6-flash','gemini-3.7-flash','Flash 3.7','Google','gemini','تحليل متقدم','chat'],
   ['gemini-7-flash','gemini-3.8-flash','Flash 3.8','Google','gemini','الأحدث','chat'],
 
-  // ============ Cloudflare Workers AI ============
+  // ============ Cloudflare Workers AI — محادثة نصية ============
   ['cf-glm-flash','@cf/zai-org/glm-4.7-flash','GLM 4.7 Flash','Cloudflare','workers-ai','ردود سريعة','chat'],
   ['cf-qwen3-coder','@cf/qwen/qwen2.5-coder-32b-instruct','Qwen Coder','Cloudflare','workers-ai','برمجة','chat'],
   ['cf-coder','@cf/qwen/qwen2.5-coder-32b-instruct','Qwen Coder','Cloudflare','workers-ai','كود وتصحيح','chat'],
@@ -29,9 +26,29 @@ export const MODEL_CATALOG = Object.freeze([
   ['cf-llama-4','@cf/meta/llama-4-scout-17b-16e-instruct','Llama 4','Cloudflare','workers-ai','عام','chat'],
   ['cf-mistral','@cf/mistralai/mistral-small-3.1-24b-instruct','Mistral','Cloudflare','workers-ai','كتابة','chat'],
   ['cf-llama-70b','@cf/meta/llama-3.3-70b-instruct-fp8-fast','Llama 70B','Cloudflare','workers-ai','قوي','chat'],
-  ['cf-llama-vision','@cf/meta/llama-3.2-11b-vision-instruct','Llama Vision','Cloudflare','workers-ai','تحليل الصور','vision'],
-  ['cf-granite','@cf/ibm-granite/granite-4.0-h-micro','Granite','Cloudflare','workers-ai','استخراج وتحليل','chat']
+  ['cf-granite','@cf/ibm-granite/granite-4.0-h-micro','Granite','Cloudflare','workers-ai','استخراج وتحليل','chat'],
+
+  // ============ Cloudflare Workers AI — رؤية (ترتيب حسب الأقل تكلفة Neuron) ============
+  // ⭐ مستبعدة عمداً: kimi-k2.6 / kimi-k2.7-code / عائلة glm-5.x — تتطلب خطة Workers Paid
+  // حتى ضمن الحصة اليومية المجانية (موثّق صراحة من Cloudflare)، فهي غير صالحة هنا.
+  ['cf-llama-vision','@cf/meta/llama-3.2-11b-vision-instruct','Llama Vision','Cloudflare','workers-ai','تحليل الصور (أساسي)','vision'],
+  ['cf-gemma-vision','@cf/google/gemma-4-26b-a4b-it','Gemma Vision','Cloudflare','workers-ai','تحليل الصور (احتياطي 1)','vision'],
+  ['cf-llama4-vision','@cf/meta/llama-4-scout-17b-16e-instruct','Llama 4 Vision','Cloudflare','workers-ai','تحليل الصور (احتياطي 2)','vision'],
+  ['cf-moondream-vision','@cf/moondream/moondream3.1-9B-A2B','Moondream','Cloudflare','workers-ai','تحليل الصور (خفيف وسريع، احتياطي 3)','vision'],
+  ['cf-mistral-vision','@cf/mistralai/mistral-small-3.1-24b-instruct','Mistral Vision','Cloudflare','workers-ai','تحليل الصور (احتياطي 4)','vision'],
+  ['cf-qwen-vision','@cf/qwen/qwen3.8-27b','Qwen Vision','Cloudflare','workers-ai','تحليل الصور (احتياطي 5 — الأغلى)','vision'],
 ].map(([id,model,name,company,provider,description,kind]) => Object.freeze({id,model,name,company,provider,description,kind})));
+
+// ⭐ سلسلة الرؤية الاحتياطية — يُجرَّب كل معرّف بالترتيب حتى ينجح أحدها.
+// (لم تُربط بعد في Worker.js — إضافة لاحقة عند الاتفاق على منطق التبديل التلقائي)
+export const VISION_FALLBACK_CHAIN = Object.freeze([
+  'cf-llama-vision',
+  'cf-gemma-vision',
+  'cf-llama4-vision',
+  'cf-moondream-vision',
+  'cf-mistral-vision',
+  'cf-qwen-vision',
+]);
 
 // ============================================================
 // getModel
