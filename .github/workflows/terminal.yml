@@ -15,6 +15,10 @@ on:
         description: 'معرّف التجربة'
         required: true
         default: ''
+      attachmentIds:
+        description: 'tokens موقّعة لمرفقات لاسترجاعها قبل التنفيذ — الصيغة: id|exp|sig مفصولة بفواصل (اختياري)'
+        required: false
+        default: ''
 
 run-name: FOX AI experiment ${{ inputs.experimentId }}
 
@@ -36,6 +40,45 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3 git curl jq openssl
 
+      # ⭐ STAGE6 — استرجاع مرفقات سابقة (لتعديل ملف مرفوع من المستخدم)
+      # attachmentIds هنا عبارة عن tokens موقّعة "id|exp|sig" (وليست معرّفات مجرّدة)،
+      # لأن /attachment/:id/raw أصبح يتطلب رابطاً موقّعاً — بلا توقيع سيُرفض الطلب بـ 401.
+      - name: استرجاع المرفقات (إن وُجدت)
+        if: ${{ github.event.inputs.attachmentIds != '' }}
+        env:
+          WORKER_URL: ${{ vars.FOX_WORKER_URL || 'https://fox1-ai.abdelrhym096290.workers.dev' }}
+        run: |
+          echo "::group::STAGE6_RESTORE"
+          : > /tmp/fox_restore_map.txt
+          IFS=',' read -ra TOKENS <<< "${{ github.event.inputs.attachmentIds }}"
+          for TOKEN in "${TOKENS[@]}"; do
+            [ -z "$TOKEN" ] && continue
+            AID=$(echo "$TOKEN" | cut -d'|' -f1)
+            EXP=$(echo "$TOKEN" | cut -d'|' -f2)
+            SIG=$(echo "$TOKEN" | cut -d'|' -f3)
+            if [ -z "$AID" ] || [ -z "$EXP" ] || [ -z "$SIG" ]; then
+              echo "STAGE6_RESTORE_ERROR: malformed token, skipping" >&2
+              continue
+            fi
+            echo "STAGE6_RESTORE: fetching $AID"
+            if curl -sS -D /tmp/fox_headers.txt -o /tmp/fox_dl_body "$WORKER_URL/attachment/$AID/raw?exp=$EXP&sig=$SIG"; then
+              FNAME=$(grep -i '^content-disposition:' /tmp/fox_headers.txt | sed -n 's/.*filename="\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' | tr -d '\r')
+              if [ -z "$FNAME" ]; then FNAME="restored_${AID}"; fi
+              cp /tmp/fox_dl_body "$FNAME"
+              printf '%s\t%s\n' "$FNAME" "$AID" >> /tmp/fox_restore_map.txt
+              echo "STAGE6_RESTORE_OK: $FNAME <- $AID"
+            else
+              echo "STAGE6_RESTORE_ERROR: failed to fetch $AID" >&2
+            fi
+          done
+          echo "::endgroup::"
+
+      # ⭐ STAGE4 — علامة زمنية لاكتشاف الملفات الجديدة/المعدَّلة لاحقاً
+      - name: وضع علامة زمنية قبل التنفيذ
+        run: |
+          sleep 1
+          touch /tmp/fox_marker
+
       - name: تنفيذ الأمر المصرح به
         id: execute
         env:
@@ -51,6 +94,57 @@ jobs:
           printf '%s' "$EXIT_CODE" > exit_code.txt
           cat output.txt
           exit 0
+
+      # ⭐ STAGE4 — اكتشاف الملفات الجديدة أو المعدَّلة بعد التنفيذ
+      - name: اكتشاف الملفات الجديدة/المعدَّلة
+        if: ${{ always() }}
+        run: |
+          echo "::group::STAGE4_DETECT"
+          find . -maxdepth 4 -type f -newer /tmp/fox_marker -size -20M \
+            ! -name 'output.txt' ! -name 'exit_code.txt' ! -name 'payload.json' \
+            2>/dev/null | sed 's|^\./||' | head -n 20 > /tmp/fox_generated_files.txt || true
+          echo "STAGE4_DETECT: found $(wc -l < /tmp/fox_generated_files.txt) file(s)"
+          cat /tmp/fox_generated_files.txt || true
+          echo "::endgroup::"
+
+      # ⭐ STAGE4/6 — رفع الملفات المُولَّدة أو المعدَّلة إلى العامل (بتوقيع HMAC على البصمة + البيانات الوصفية)
+      - name: رفع الملفات المُولَّدة/المعدَّلة
+        if: ${{ always() }}
+        env:
+          HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+          WORKER_URL: ${{ vars.FOX_WORKER_URL || 'https://fox1-ai.abdelrhym096290.workers.dev' }}
+        run: |
+          echo "::group::STAGE4_UPLOAD"
+          test -n "$HMAC_SECRET"
+          EXPERIMENT_ID="${{ github.event.inputs.experimentId }}"
+          if [ -f /tmp/fox_generated_files.txt ]; then
+            while IFS= read -r FPATH; do
+              [ -z "$FPATH" ] && continue
+              [ -f "$FPATH" ] || continue
+              FNAME=$(basename "$FPATH")
+              FSIZE=$(stat -c%s "$FPATH")
+              FSHA=$(sha256sum "$FPATH" | awk '{print $1}')
+              TS=$(date +%s%3N)
+              DERIVED=""
+              if [ -f /tmp/fox_restore_map.txt ]; then
+                DERIVED=$(awk -F'\t' -v f="$FNAME" '$1==f{print $2}' /tmp/fox_restore_map.txt | head -n1)
+              fi
+              META="${EXPERIMENT_ID}.${FNAME}.${FSIZE}.${FSHA}.${TS}"
+              SIG=$(printf '%s' "$META" | openssl dgst -sha256 -hmac "$HMAC_SECRET" | awk '{print $2}')
+              echo "STAGE4_UPLOAD: $FNAME (${FSIZE}b)${DERIVED:+ derivedFrom=$DERIVED}"
+              curl --silent --show-error --fail-with-body -X POST "$WORKER_URL/upload-from-runner" \
+                -F "experimentId=$EXPERIMENT_ID" \
+                -F "fileName=$FNAME" \
+                -F "fileSize=$FSIZE" \
+                -F "sha256=$FSHA" \
+                -F "timestamp=$TS" \
+                -F "signature=$SIG" \
+                ${DERIVED:+-F "derivedFrom=$DERIVED"} \
+                -F "file=@${FPATH};filename=${FNAME}" \
+                || echo "STAGE4_UPLOAD_ERROR: failed to upload $FNAME" >&2
+            done < /tmp/fox_generated_files.txt
+          fi
+          echo "::endgroup::"
 
       - name: إرسال النتيجة الموقعة إلى العامل
         if: ${{ always() }}
