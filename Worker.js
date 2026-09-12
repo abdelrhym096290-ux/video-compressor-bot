@@ -7,7 +7,7 @@ import { publicCatalog, getModel, chooseModel, scoreDifficulty, routeAuto } from
 import { routeCompletion, streamCompletion, ProviderError } from './src/providers.js';
 import { d1ContextStore, contextPacket, renderHandoff, mergeContext, createContextEvent } from './src/context.js';
 import { createTask, startPlanning, createPlan, approvePlan, startStep, completeStep, failStep, retryStep, taskEvent } from './src/tasks.js';
-import { detectToolProposal, approvalRecord, experimentRecord, dispatchExperiment, cancelExperiment, verifyResult, retryExperiment, verifyWebhook, validateCommand, commandRiskLevel } from './src/tools.js';
+import { detectToolProposal, approvalRecord, experimentRecord, dispatchExperiment, cancelExperiment, verifyResult, retryExperiment, verifyWebhook, validateCommand, commandRiskLevel, findReferencedAttachments } from './src/tools.js';
 import { uploadReleaseAsset, downloadReleaseAsset, MAX_DIRECT_UPLOAD, D1_THRESHOLD } from './src/storage.js';
 import { buildUserMessage, modelCapabilities } from './src/media.js';
 import { advanceTask, addIntervention, taskEvents } from './src/orchestrator.js';
@@ -321,6 +321,165 @@ async function listChatAttachments(env, chatId) {
   return r.results || [];
 }
 
+/**
+ * ⭐ stage 4/5 — تحويل bytes إلى base64 بأمان (بدون spread قد يكسر المكدس على ملفات كبيرة).
+ */
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+/**
+ * ⭐ أمان — توقيع HMAC عام (بالإضافة إلى verifyWebhook المستخدمة للتحقق من الطلبات الواردة).
+ * يُستخدم هنا لتوليد روابط موقّعة قصيرة الأجل لمسار /attachment/:id/raw، الذي يجب أن يبقى
+ * قابلاً للاستدعاء المباشر من <img>/<iframe>/curl (بلا رؤوس مخصّصة)، فالتوقيع يكون في الرابط نفسه.
+ */
+async function hmacHex(message, secret) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(sig)).map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * يُنشئ رابطاً موقّعاً لمسار /attachment/:id/raw صالحاً لمدة ttlSeconds فقط.
+ */
+async function signedAttachmentUrl(env, attachmentId, ttlSeconds = 600) {
+  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const sig = await hmacHex(`${attachmentId}.${exp}`, env.HMAC_SECRET);
+  return `/attachment/${attachmentId}/raw?exp=${exp}&sig=${sig}`;
+}
+
+/**
+ * يحوّل معرّفات مرفقات عادية إلى tokens موقّعة (id|exp|sig) تُمرَّر إلى terminal.yml،
+ * بحيث يقدر runner استرجاع الملف عبر رابط موقّع بدل معرّف مجرّد بلا مصادقة.
+ */
+async function signAttachmentTokens(env, ids) {
+  if (!ids || !ids.length) return [];
+  const ttlSeconds = 20 * 60; // كافية لبدء الـ workflow وتنفيذ خطوة الاسترجاع
+  return Promise.all(ids.map(async id => {
+    const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+    const sig = await hmacHex(`${id}.${exp}`, env.HMAC_SECRET);
+    return `${id}|${exp}|${sig}`;
+  }));
+}
+
+/**
+ * ⭐ stage 4/5/6 — استقبال ملف مُولَّد أو مُعدَّل من بيئة التشغيل (GitHub Actions runner).
+ * يتحقق من: (1) توقيع HMAC على البيانات الوصفية، (2) عمر الطلب، (3) تطابق بصمة SHA-256
+ * الفعلية للبايتات المستلمة مع البصمة المُعلَنة والموقَّعة — هذا يمنع استبدال المحتوى
+ * بعد التوقيع، وليس فقط التحقق من البيانات الوصفية.
+ */
+async function uploadFromRunner(env, request) {
+  try {
+    await schema(env);
+    const form = await request.formData();
+    const experimentId = String(form.get('experimentId') || '');
+    const fileName = String(form.get('fileName') || 'file').slice(0, 180);
+    const declaredSize = Number(form.get('fileSize') || 0);
+    const declaredSha256 = String(form.get('sha256') || '').toLowerCase();
+    const timestamp = String(form.get('timestamp') || '');
+    const signature = String(form.get('signature') || '');
+    const derivedFromInput = form.get('derivedFrom') ? String(form.get('derivedFrom')) : null;
+    const file = form.get('file');
+
+    if (!experimentId || !declaredSha256 || !timestamp || !signature || !file || typeof file === 'string') {
+      console.error('STAGE4_UPLOAD_ERROR: missing fields');
+      return json({ error: 'حقول ناقصة' }, 400);
+    }
+
+    // ⭐ تحقق HMAC على البيانات الوصفية فقط (نفس اتفاقية /tool-result)
+    const metaString = `${experimentId}.${fileName}.${declaredSize}.${declaredSha256}.${timestamp}`;
+    const validSig = await verifyWebhook(metaString, signature.startsWith('sha256=') ? signature : `sha256=${signature}`, env.HMAC_SECRET);
+    if (!validSig) {
+      console.error('STAGE4_UPLOAD_ERROR: invalid signature for', experimentId, fileName);
+      return json({ error: 'توقيع غير صالح' }, 403);
+    }
+
+    // ⭐ يمنع إعادة استخدام توقيع قديم مُسرَّب
+    const ts = Number(timestamp) || 0;
+    if (!ts || Math.abs(Date.now() - ts) > 10 * 60 * 1000) {
+      console.error('STAGE4_UPLOAD_ERROR: signature expired for', experimentId, fileName);
+      return json({ error: 'الطلب منتهي الصلاحية' }, 403);
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+
+    if (bytes.byteLength !== declaredSize) {
+      console.error('STAGE4_UPLOAD_ERROR: size mismatch for', fileName);
+      return json({ error: 'حجم الملف لا يطابق المُعلَن' }, 403);
+    }
+    if (bytes.byteLength > MAX_DIRECT_UPLOAD) {
+      console.error('STAGE4_UPLOAD_ERROR: file too large:', fileName, bytes.byteLength);
+      return json({ error: 'الملف أكبر من الحد المسموح' }, 413);
+    }
+
+    // ⭐ تحقق البصمة الفعلية — يمنع استبدال المحتوى بعد التوقيع
+    const digestBuf = await crypto.subtle.digest('SHA-256', bytes);
+    const actualSha256 = Array.from(new Uint8Array(digestBuf)).map(x => x.toString(16).padStart(2, '0')).join('');
+    if (actualSha256 !== declaredSha256) {
+      console.error('STAGE4_UPLOAD_ERROR: sha256 mismatch for', fileName);
+      return json({ error: 'محتوى الملف لا يطابق البصمة الموقّعة' }, 403);
+    }
+
+    // ⭐ ربط التجربة بمحادثتها — يمنع رفع ملفات لمحادثة غير مرتبطة
+    // ⭐ فحص الحالة: التجربة يجب أن تكون لا تزال جارية (وليست قديمة/مكتملة/ملغاة) —
+    // هذا يمنع إعادة استخدام توقيع صالح بعد انتهاء التجربة فعلياً بنتيجة نهائية.
+    const exp = await env.DB.prepare(
+      "SELECT chat_id FROM experiments WHERE id = ? AND status IN ('pending','dispatched')"
+    ).bind(experimentId).first();
+    if (!exp) {
+      console.error('STAGE4_UPLOAD_ERROR: unknown or finished experiment', experimentId);
+      return json({ error: 'تجربة غير معروفة أو انتهت بالفعل' }, 404);
+    }
+    const chatId = exp.chat_id;
+
+    // ⭐ stage 6 — تحقق أن الملف الأصلي (إن كان تعديلاً) يخص نفس المحادثة
+    let derivedFrom = null;
+    if (derivedFromInput) {
+      const origin = await env.DB.prepare('SELECT id FROM attachments WHERE id=? AND chat_id=?').bind(derivedFromInput, chatId).first();
+      if (origin) derivedFrom = origin.id;
+      else console.warn('STAGE6_RESTORE: derivedFrom not owned by chat, ignoring', derivedFromInput);
+    }
+
+    const mimeField = form.get('mime') ? String(form.get('mime')) : null;
+    const mime = guessMime(fileName, mimeField);
+
+    let att;
+    if (isTextMime(mime) && bytes.byteLength <= LIMITS.MAX_FILE_TEXT) {
+      const textContent = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      att = await saveAttachment(env, {
+        chatId, source: 'model_generated', name: fileName, mime, size: bytes.byteLength,
+        text: textContent, derivedFrom,
+      });
+    } else {
+      const dataUrl = `data:${mime};base64,${bytesToBase64(bytes)}`;
+      att = await saveAttachment(env, {
+        chatId, source: 'model_generated', name: fileName, mime, size: bytes.byteLength,
+        dataUrl, derivedFrom,
+      });
+    }
+
+    const content = derivedFrom ? `✏️ تم تعديل الملف: ${att.name}` : `📄 ملف جديد من الطرفية: ${att.name}`;
+    await persistMessage(env, chatId, 'assistant', content, null, att.id);
+
+    const store = d1ContextStore(env.DB);
+    await safeEvent(store, chatId, 'attachment_generated', {
+      attachmentId: att.id, name: att.name, mime: att.mime, size: att.size,
+      derivedFrom, experimentId, chatId,
+    });
+
+    console.log('STAGE4_UPLOAD_OK:', att.id, att.name, bytes.byteLength);
+    return json({ success: true, attachmentId: att.id });
+  } catch (e) {
+    console.error('STAGE4_UPLOAD_ERROR: unexpected —', e.message);
+    return json({ error: e.message || 'خطأ في استقبال الملف' }, 500);
+  }
+}
+
 // ============ الإحصاءات ============
 async function getUsageFromGateway(env) {
   if (env.CF_ACCOUNT_ID && env.CF_API_TOKEN) {
@@ -453,11 +612,45 @@ async function loadMessages(env, chatId) {
   }));
 }
 
+// ============ buildContextMessages — stage 3 ============
+// يحل مشكلة "اقرأ الملف الذي أرسلته سابقاً": الرسائل التاريخية تحمل فقط إشارة مختصرة
+// للمرفق، ومحتواه الكامل يُدرَج فقط عند الحاجة الفعلية (رسالة سابقة + طلب حالي يذكر الملف)،
+// حفاظاً على حجم السياق.
+const READ_FILE_HINTS = /(اقرأ|افتح|اعرض|أرني|حلل|لخص|اشرح|استخدم|عدّل|عدل|أضف|احذف|صحح).{0,20}(الملف|المرفق|الصورة|الكود|المحتوى|الأخير)/i;
+
+async function buildContextMessages(env, cleanHistory, currentText) {
+  const wantsFileContent = READ_FILE_HINTS.test(String(currentText || ''));
+  let lastAttachmentId = null;
+
+  for (const m of cleanHistory) {
+    if (!m.attachment_ref) continue;
+    let ids;
+    try { ids = JSON.parse(m.attachment_ref); if (!Array.isArray(ids)) ids = [m.attachment_ref]; }
+    catch { ids = [m.attachment_ref]; }
+    if (ids.length) lastAttachmentId = ids[ids.length - 1];
+  }
+
+  if (!wantsFileContent || !lastAttachmentId) return [];
+
+  try {
+    const att = await getAttachmentContent(env, lastAttachmentId);
+    if (!att || att.content == null || att.isBinary) return [];
+    if (String(att.mime || '').startsWith('image/')) return []; // الصور تُدار عبر مسار vision، لا تُحقن كنص
+    return [{
+      role: 'user',
+      content: `[محتوى الملف المرفق سابقاً: ${att.name}]\n${String(att.content).slice(0, LIMITS.MAX_FILE_TEXT)}\n[نهاية الملف]\n\nهذه رسالة سياق تلقائية وليست من المستخدم — استخدمها للإجابة على الطلب الحالي.`,
+    }];
+  } catch (e) {
+    console.error('STAGE3_CONTEXT_ERROR: fetch attachment failed —', e.message);
+    return [];
+  }
+}
+
 // ============ deepAnswer ============
-async function deepAnswer(env, sysContent, packetRecent, media) {
+async function deepAnswer(env, sysContent, packetRecent, media, contextExtra = []) {
   const modelA = getModel('cf-gpt-oss-120b');
   const modelB = getModel('cf-qwen3');
-  const baseMessages = [{ role: 'system', content: sysContent }, ...packetRecent.slice(0, -1), ...media.messages];
+  const baseMessages = [{ role: 'system', content: sysContent }, ...packetRecent.slice(0, -1), ...contextExtra, ...media.messages];
   const [ra, rb] = await Promise.all([
     routeCompletion(env, modelA.id, baseMessages, { maxTokens: 4096 }),
     routeCompletion(env, modelB.id, baseMessages, { maxTokens: 4096 }),
@@ -517,6 +710,8 @@ async function chat(env, b) {
     const cleanHistory = historyMessages.map(m => ({
       role: m.role === 'model' ? 'assistant' : (m.role || 'user'),
       content: typeof m.content === 'string' ? m.content : String(m.content || ''),
+      // ⭐ stage 3 — تمرَّر من الواجهة إن وُجدت، تُستخدم لاسترجاع محتوى مرفق سابق عند الحاجة
+      attachment_ref: m.attachment_ref || null,
     }));
 
     const budget = await getBudget(env, b.chatId);
@@ -550,6 +745,9 @@ async function chat(env, b) {
     const packet = contextPacket(state, cleanHistory);
     const wantsDeep = !inAutoPilot && (b.mode === 'deep' || (routeInfo && routeInfo.tier === 'deep' && !hasImage));
 
+    // ⭐ stage 3 — سياق إضافي لمرفق سابق إن كان الطلب الحالي يشير إليه
+    const contextExtra = await buildContextMessages(env, cleanHistory, lastContent);
+
     await safeEvent(store, b.chatId, 'generation_started', {
       requested: model.id, mode: inAutoPilot ? 'autopilot' : (b.mode || 'auto'),
       route: routeInfo, deep: wantsDeep, contextMessages: cleanHistory.length,
@@ -572,7 +770,7 @@ async function chat(env, b) {
     try {
       if (wantsDeep && !hasImage) {
         const mediaPlaceholder = { messages: [userMsg] };
-        const r = await deepAnswer(env, sysContent, packet.recent, mediaPlaceholder);
+        const r = await deepAnswer(env, sysContent, packet.recent, mediaPlaceholder, contextExtra);
         fullText = r.text;
         actualModel = r.actual;
         deepMeta = r.deep;
@@ -591,6 +789,7 @@ async function chat(env, b) {
         const finalMessages = [
           { role: 'system', content: sysContent },
           ...packet.recent,
+          ...contextExtra,
           userMsg,
         ];
 
@@ -991,9 +1190,18 @@ async function runTool(env, b) {
     } catch {}
   }
 
+  // ⭐ stage 6 — إن ذكر الأمر اسم ملف يطابق مرفقاً سابقاً في نفس المحادثة، استرجعه قبل التنفيذ
+  let referencedAttachmentIds = [];
+  try {
+    const chatAttachments = await listChatAttachments(env, b.chatId);
+    referencedAttachmentIds = await signAttachmentTokens(env, findReferencedAttachments(proposal.command, chatAttachments));
+  } catch (e) {
+    console.error('STAGE6_RESTORE_ERROR: lookup failed —', e.message);
+  }
+
   const remaining = Math.max(0, budget.remaining - 1);
   const approval = approvalRecord({ proposalId: proposal.id, approved: true, scope: budget.active ? 'autopilot' : 'manual' });
-  const experiment = { ...experimentRecord({ chatId: b.chatId, proposal, approval }), taskId: b.taskId || null, stepId: b.stepId || null };
+  const experiment = { ...experimentRecord({ chatId: b.chatId, proposal, approval, attachmentIds: referencedAttachmentIds }), taskId: b.taskId || null, stepId: b.stepId || null };
 
   if (budget.active) {
     await env.DB.prepare('UPDATE tool_budgets SET used = used + 1, updated_at = ? WHERE chat_id = ?').bind(Date.now(), b.chatId).run();
@@ -1164,8 +1372,16 @@ async function generateToolCommentary(env, row, result, correctionResult, inAuto
           const currentBudget = await getBudget(env, chatId);
           if (currentBudget.active) {
             try {
+              // ⭐ stage 6 — نفس اكتشاف المرفقات المُشار إليها، لضمان اتساق سلوك الاسترجاع
+              let referencedAttachmentIds = [];
+              try {
+                const chatAttachments = await listChatAttachments(env, chatId);
+                referencedAttachmentIds = await signAttachmentTokens(env, findReferencedAttachments(newProposal.command, chatAttachments));
+              } catch (e) {
+                console.error('STAGE6_RESTORE_ERROR: lookup failed (auto) —', e.message);
+              }
               const approval = approvalRecord({ proposalId: newProposal.id, approved: true, scope: 'autopilot' });
-              const experiment = { ...experimentRecord({ chatId, proposal: newProposal, approval }), taskId: null, stepId: null };
+              const experiment = { ...experimentRecord({ chatId, proposal: newProposal, approval, attachmentIds: referencedAttachmentIds }), taskId: null, stepId: null };
               await env.DB.prepare('UPDATE tool_budgets SET used = used + 1, updated_at = ? WHERE chat_id = ?').bind(Date.now(), chatId).run();
               await env.DB.prepare('INSERT INTO experiments (id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id,mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
                 .bind(experiment.id, experiment.chatId, experiment.command, experiment.status, '', null, experiment.createdAt, experiment.updatedAt, experiment.taskId, experiment.stepId, null, 1, null, 'autopilot').run();
@@ -1309,8 +1525,17 @@ async function tryAutoCorrect(env, originalRow, failedResult, inAutoPilot, budge
         risk,
       };
 
+      // ⭐ stage 6 — نفس اكتشاف المرفقات المُشار إليها، لضمان اتساق سلوك الاسترجاع
+      let referencedAttachmentIds = [];
+      try {
+        const chatAttachments = await listChatAttachments(env, chatId);
+        referencedAttachmentIds = await signAttachmentTokens(env, findReferencedAttachments(safeCommand, chatAttachments));
+      } catch (e) {
+        console.error('STAGE6_RESTORE_ERROR: lookup failed (correction) —', e.message);
+      }
+
       const approval = approvalRecord({ proposalId, approved: true, scope: 'autopilot_correction' });
-      const experiment = { ...experimentRecord({ chatId, proposal: newProposal, approval }), taskId: originalRow.task_id || null, stepId: originalRow.step_id || null };
+      const experiment = { ...experimentRecord({ chatId, proposal: newProposal, approval, attachmentIds: referencedAttachmentIds }), taskId: originalRow.task_id || null, stepId: originalRow.step_id || null };
 
       await env.DB.prepare('UPDATE tool_budgets SET used = used + 1, updated_at = ? WHERE chat_id = ?').bind(Date.now(), chatId).run();
       await env.DB.prepare('INSERT INTO experiments (id,chat_id,command,status,output,exit_code,created_at,updated_at,task_id,step_id,run_id,attempt,parent_id,mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
@@ -1421,6 +1646,8 @@ async function getAttachmentFull(env, b) {
       storageKind: att.storage_kind,
       content: contentOut,
       isBinary: att.isBinary || false,
+      // ⭐ رابط موقّت وموقّع — يُستخدم بدل بناء المسار يدوياً في الواجهة (لا مصادقة بدونه الآن)
+      rawUrl: await signedAttachmentUrl(env, att.id),
       error: att.error || null,
     },
   });
@@ -1430,7 +1657,9 @@ async function getAttachmentFull(env, b) {
 async function getAttachmentsList(env, b) {
   if (!b.chatId) return json({ error: 'chatId مطلوب' }, 400);
   const attachments = await listChatAttachments(env, b.chatId);
-  return json({ attachments });
+  // ⭐ رابط موقّع لكل مرفق — يتيح للواجهة عرض صور مصغّرة مباشرة دون طلب get_attachment إضافي
+  const withUrls = await Promise.all(attachments.map(async a => ({ ...a, rawUrl: await signedAttachmentUrl(env, a.id) })));
+  return json({ attachments: withUrls });
 }
 
 async function searchAll(env, b) {
@@ -1583,22 +1812,45 @@ export default {
 
     if (pathname === '/tool-result') return receiveToolResult(env, request);
 
-    // ⭐ endpoint مباشر للـ attachment (للاستخدام في iframe / img)
+    // ⭐ stage 4/5/6 — رفع ملف مُولَّد/مُعدَّل من بيئة التشغيل (multipart/form-data، ليس JSON)
+    if (pathname === '/upload-from-runner' && request.method === 'POST') return uploadFromRunner(env, request);
+
+    // ⭐ endpoint مباشر للـ attachment (للاستخدام في iframe / img) — يتطلب رابطاً موقّعاً صالحاً
     if (pathname.startsWith('/attachment/') && request.method === 'GET') {
       const parts = pathname.split('/');
       const id = parts[2];
       const mode = parts[3]; // 'raw' أو undefined
       if (!id) return new Response('Not found', { status: 404 });
+
+      // ⭐ أمان — بدون هذا التحقق، أي شخص يعرف معرّف مرفق يقدر يقرأ محتواه دون أي مصادقة
+      const qs = new URL(request.url).searchParams;
+      const exp = Number(qs.get('exp') || 0);
+      const sig = String(qs.get('sig') || '');
+      if (!exp || !sig) return new Response('Unauthorized: missing signature', { status: 401 });
+      if (Math.floor(Date.now() / 1000) > exp) return new Response('Link expired', { status: 401 });
+      const expectedSig = await hmacHex(`${id}.${exp}`, env.HMAC_SECRET);
+      if (expectedSig !== sig.toLowerCase()) return new Response('Invalid signature', { status: 403 });
+
       try {
         const att = await getAttachmentContent(env, id);
         if (!att) return new Response('Not found', { status: 404 });
+        // ⭐ stage 6 — اسم الملف الأصلي في الترويسة، ليستخدمه runner عند الاسترجاع بنفس الاسم
+        const dispositionName = String(att.name || 'file').replace(/["\r\n]/g, '');
         if (att.content instanceof ArrayBuffer) {
           return new Response(att.content, {
-            headers: { 'content-type': att.mime || 'application/octet-stream', ...CORS },
+            headers: {
+              'content-type': att.mime || 'application/octet-stream',
+              'content-disposition': `inline; filename="${dispositionName}"`,
+              ...CORS,
+            },
           });
         }
         return new Response(String(att.content || ''), {
-          headers: { 'content-type': att.mime || 'text/plain;charset=utf-8', ...CORS },
+          headers: {
+            'content-type': att.mime || 'text/plain;charset=utf-8',
+            'content-disposition': `inline; filename="${dispositionName}"`,
+            ...CORS,
+          },
         });
       } catch (e) {
         return new Response('Error: ' + e.message, { status: 500 });
