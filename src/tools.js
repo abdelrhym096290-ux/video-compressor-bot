@@ -199,7 +199,7 @@ export function approvalRecord({ proposalId, approved, scope = 'single_run' }) {
 // ============================================================
 // experimentRecord
 // ============================================================
-export function experimentRecord({ chatId, proposal, approval }) {
+export function experimentRecord({ chatId, proposal, approval, attachmentIds = [] }) {
   if (!approval?.approved) throw new Error('لا يمكن إنشاء تجربة دون موافقة صريحة');
   if (approval.proposalId !== proposal.id) throw new Error('الموافقة لا تطابق الاقتراح');
   const cmd = validateCommand(proposal.command);
@@ -213,9 +213,30 @@ export function experimentRecord({ chatId, proposal, approval }) {
     output: '',
     exitCode: null,
     attempt: 1,
+    // ⭐ stage 6 — مرفقات يجب استرجاعها في بيئة التشغيل قبل التنفيذ (لتعديل ملف موجود)
+    attachmentIds: Array.isArray(attachmentIds) ? attachmentIds.filter(Boolean).slice(0, 5) : [],
     createdAt: now(),
     updatedAt: now(),
   };
+}
+
+// ============================================================
+// findReferencedAttachments — stage 6
+// يكتشف إن كان نص الأمر يذكر اسم ملف مطابق لمرفق موجود في نفس المحادثة،
+// ليُعاد استرجاعه إلى بيئة التشغيل قبل التنفيذ (تعديل ملف مرفوع سابقاً).
+// ============================================================
+export function findReferencedAttachments(command, chatAttachments = []) {
+  const cmd = String(command || '');
+  if (!cmd || !Array.isArray(chatAttachments) || !chatAttachments.length) return [];
+  const escapeRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const matches = [];
+  for (const a of chatAttachments) {
+    if (!a || !a.name) continue;
+    const re = new RegExp(`(^|[\\s"'/=])${escapeRe(a.name)}($|[\\s"'])`);
+    if (re.test(cmd)) matches.push(a.id);
+    if (matches.length >= 5) break;
+  }
+  return matches;
 }
 
 // ============================================================
@@ -311,6 +332,8 @@ export async function dispatchExperiment(env, experiment) {
         command: experiment.command,
         language: experiment.language,
         experimentId: experiment.id,
+        // ⭐ stage 6 — مرفقات تُسترجَع في بيئة التشغيل قبل تنفيذ الأمر (مفصولة بفواصل)
+        attachmentIds: Array.isArray(experiment.attachmentIds) ? experiment.attachmentIds.join(',') : '',
       },
     }),
   });
