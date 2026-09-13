@@ -3,18 +3,18 @@
 // التعديلات: جدول attachments موحّد + endpoints جديدة + رفع من الواجهة
 // =====================================================================
 
-import { publicCatalog, getModel, chooseModel, scoreDifficulty, routeAuto } from './src/catalog.js';
-import { routeCompletion, streamCompletion, ProviderError } from './src/providers.js';
-import { d1ContextStore, contextPacket, renderHandoff, mergeContext, createContextEvent } from './src/context.js';
-import { createTask, startPlanning, createPlan, approvePlan, startStep, completeStep, failStep, retryStep, taskEvent } from './src/tasks.js';
-import { detectToolProposal, approvalRecord, experimentRecord, dispatchExperiment, cancelExperiment, verifyResult, retryExperiment, verifyWebhook, validateCommand, commandRiskLevel, findReferencedAttachments } from './src/tools.js';
-import { uploadReleaseAsset, downloadReleaseAsset, MAX_DIRECT_UPLOAD, D1_THRESHOLD } from './src/storage.js';
-import { buildUserMessage, modelCapabilities } from './src/media.js';
-import { advanceTask, addIntervention, taskEvents } from './src/orchestrator.js';
+import { publicCatalog, getModel, chooseModel, scoreDifficulty, routeAuto, VISION_FALLBACK_CHAIN, nextVisionModel } from './catalog.js';
+import { routeCompletion, streamCompletion, ProviderError } from './providers.js';
+import { d1ContextStore, contextPacket, renderHandoff, mergeContext, createContextEvent } from './context.js';
+import { createTask, startPlanning, createPlan, approvePlan, startStep, completeStep, failStep, retryStep, taskEvent } from './tasks.js';
+import { detectToolProposal, approvalRecord, experimentRecord, dispatchExperiment, cancelExperiment, verifyResult, retryExperiment, verifyWebhook, validateCommand, commandRiskLevel, findReferencedAttachments } from './tools.js';
+import { uploadReleaseAsset, downloadReleaseAsset, MAX_DIRECT_UPLOAD, D1_THRESHOLD } from './storage.js';
+import { buildUserMessage } from './media.js';
+import { advanceTask, addIntervention, taskEvents } from './orchestrator.js';
 import {
   buildSystemPrompt, buildToolCommentaryPrompt, buildAutoPilotPrompt, buildAutoPilotCommentaryPrompt,
   classifyQuestion, toolResultMessage
-} from './src/prompts.js';
+} from './prompts.js';
 
 // ============ ثوابت ============
 const CORS = {
@@ -46,6 +46,10 @@ const LIMITS = {
   MAX_FILES_PER_MSG: 20,
   PREVIEW_CHARS: 2000,
 };
+
+// ⭐ نافذة سياق أضيق لتعليق الأداة تحديداً (مهمة مركّزة على أمر واحد، لا محادثة مفتوحة كاملة) —
+// رقم واحد مشترك بدل رقمين منفصلين (20 في SQL، 12 في slice) كانا يؤديان نفس الغرض بلا داعٍ.
+const TOOL_COMMENTARY_CONTEXT_WINDOW = 20;
 
 // ⭐ schema caching
 let _schemaReady = false;
@@ -657,7 +661,7 @@ async function deepAnswer(env, sysContent, packetRecent, media, contextExtra = [
   ]);
   const reviewPrompt = `لديك إجابتان مستقلتان لنفس السؤال. قارن بينهما بدقة. إن اتفقتا، أعد أفضل صياغة موحدة. إن اختلفتا، وضّح نقطة الخلاف وأعد إجابة نهائية موثوقة.\n\n## الأولى (${modelA.name})\n${ra.text}\n\n## الثانية (${modelB.name})\n${rb.text}`;
   const reviewer = getModel('cf-qwen3');
-  const rr = await routeCompletion(env, reviewer.id, [{ role: 'system', content: sysContent }, { role: 'user', content: reviewPrompt }], { maxTokens: 2200, temperature: 0.2 });
+  const rr = await routeCompletion(env, reviewer.id, [{ role: 'system', content: sysContent }, { role: 'user', content: reviewPrompt }], { maxTokens: 2200, temperature: 0.15 });
   const disagreed = /يختلف|تعارض|تناقض|اختلاف جوهري|خلاف/.test(rr.text.slice(0, 400));
   return { text: rr.text, actual: rr.actual, deep: { modelA: ra.actual.id, modelB: rb.actual.id, reviewer: rr.actual.id, agreed: !disagreed } };
 }
@@ -731,7 +735,8 @@ async function chat(env, b) {
 
     let model = requested;
     if (hasImage && requested.kind !== 'vision') {
-      model = getModel('cf-llama-vision');
+      // ⭐ أول عنصر في سلسلة الرؤية بدل نموذج واحد مُصلَّب — الاختيار اليدوي لأي نموذج رؤية آخر يبقى محترَماً (الشرط أعلاه)
+      model = getModel(VISION_FALLBACK_CHAIN[0]);
     }
 
     // ⭐ بناء رسالة المستخدم
@@ -793,7 +798,15 @@ async function chat(env, b) {
           userMsg,
         ];
 
-        const result = await streamCompletion(env, model.id, finalMessages, { maxTokens: 4096 });
+        const result = await streamCompletion(env, model.id, finalMessages, {
+          maxTokens: 4096,
+          // ⭐ إصلاح جذري: الافتراضي في providers.js كان يسقط أي فشل مباشرة إلى نموذج نصي
+          // بحت (cf-gpt-oss-20b) — أي فشل في نموذج رؤية كان يُستبدَل بنموذج لا يرى الصور
+          // إطلاقاً، فيرد بثقة أنه "لا يستطيع رؤية الصور" رغم أن هذا سلوك متوقع لا عطل.
+          // الآن: عند وجود صورة، الاحتياطي هو النموذج التالي في سلسلة الرؤية نفسها — أو
+          // null صراحةً إن انتهت السلسلة، ليفشل الطلب بوضوح بدل الرد الواثق الخاطئ.
+          ...(hasImage ? { fallbackModelId: nextVisionModel(model.id) } : {}),
+        });
         actualModel = result.actual;
         fallback = result.fallback;
         fallbackReason = result.fallbackReason;
@@ -1327,9 +1340,11 @@ async function generateToolCommentary(env, row, result, correctionResult, inAuto
   const store = d1ContextStore(env.DB);
 
   try {
+    // ⭐ توحيد: كانت السطور تُجلَب بحد (20) عبر SQL ثم تُقصّ مجدداً بحد مختلف (12) عبر slice —
+    // رقمان منفصلان يؤديان نفس الغرض بلا داعٍ. الآن قيمة واحدة مشتركة تُستخدَم في الاثنين.
     const msgsRaw = await env.DB.prepare(
-      'SELECT role,content,created_at FROM messages WHERE chat_id=? ORDER BY created_at DESC LIMIT 20'
-    ).bind(chatId).all();
+      'SELECT role,content,created_at FROM messages WHERE chat_id=? ORDER BY created_at DESC LIMIT ?'
+    ).bind(chatId, TOOL_COMMENTARY_CONTEXT_WINDOW).all();
     const history = (msgsRaw.results || []).reverse().map(x => ({
       role: x.role === 'assistant' ? 'assistant' : 'user',
       content: String(x.content || ''),
@@ -1350,12 +1365,12 @@ async function generateToolCommentary(env, row, result, correctionResult, inAuto
 
     const finalMessages = [
       { role: 'system', content: sysContent },
-      ...history.slice(-12),
+      ...history,
       toolMsg,
     ];
 
     const model = getModel('cf-qwen3');
-    const r = await routeCompletion(env, model.id, finalMessages, { maxTokens: 1500, temperature: 0.3 });
+    const r = await routeCompletion(env, model.id, finalMessages, { maxTokens: 1500, temperature: 0.15 });
     const commentaryText = String(r.text || '').trim();
     if (!commentaryText) return null;
 
@@ -1485,7 +1500,7 @@ async function tryAutoCorrect(env, originalRow, failedResult, inAutoPilot, budge
     const r = await routeCompletion(env, 'cf-qwen3-coder', [
       { role: 'system', content: 'أنت مصحح أوامر terminal. حلّل الخطأ وأعد JSON فقط بالشكل: {"command":"الأمر الجديد","language":"bash|python","explanation":"سبب الفشل والحل"}. لا تكرر نفس الأمر الفاشل.' },
       { role: 'user', content: `الهدف: ${taskGoal || 'غير محدد'}\nالأمر الفاشل:\n${originalRow.command}\n\nالخطأ:\n${String(failedResult.output || '').slice(0, 3000)}\n\nأعد JSON فقط.` },
-    ], { maxTokens: 1200, temperature: .2 });
+    ], { maxTokens: 1200, temperature: .15 });
 
     const raw = r.text.match(/\{[\s\S]*\}/)?.[0] || '{}';
     correction = JSON.parse(raw);
