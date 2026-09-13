@@ -49,9 +49,11 @@ export async function uploadReleaseAsset(env, { name, mime, bytes }) {
   const release = await latestRelease(env);
   const repo = repoOf(env);
   const safe = String(name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 180) || 'file';
+  // ⭐ ملاحظة: هذا رابط كامل على نطاق uploads.github.com (مختلف عن API)، وليس على api.github.com —
+  // gh() يستخدمه كما هو مباشرةً (يتحقق من startsWith('http'))، فلا حاجة لأي معالجة إضافية عليه هنا.
   const url = `https://uploads.github.com/repos/${repo}/releases/${release.id}/assets?name=${encodeURIComponent(`${Date.now()}-${safe}`)}`;
 
-  const r = await gh(env, url.replace(API, ''), {
+  const r = await gh(env, url, {
     method: 'POST',
     headers: headers(env.GITHUB_TOKEN, {
       'content-type': mime || 'application/octet-stream',
