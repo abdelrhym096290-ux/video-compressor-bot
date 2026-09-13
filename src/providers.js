@@ -14,6 +14,15 @@ export class ProviderError extends Error {
   }
 }
 
+// ⭐ استعادة رؤية الاستهلاك عبر AI Gateway — كانت موجودة في إصدارات سابقة ثم فُقدت لأن
+// استدعاءات env.AI.run() لم تُمرِّر معامل gateway إطلاقاً (بدونه، الطلب ينفَّذ مباشرة على
+// Workers AI دون المرور بـ AI Gateway، فلا تظهر في تحليلاته/سجلاته على الإطلاق).
+// "default" تُنشئ بوابة تلقائياً عند أول طلب موثَّق إن لم توجد، أو استخدم env.AI_GATEWAY_ID
+// لتسمية بوابة محددة من لوحة Cloudflare.
+function buildGatewayOptions(env) {
+  return { gateway: { id: env.AI_GATEWAY_ID || 'default' } };
+}
+
 // ============================================================
 // ⭐ getProviderKind — يُعيد نوع المزوّد للتحويل الصحيح
 // ============================================================
@@ -58,7 +67,7 @@ function translateImagePart(part, providerKind) {
     };
   }
 
-  // OpenAI-compatible (Cerebras, OpenAI, وغيرها): image_url
+  // OpenAI-compatible (Cerebras, OpenAI، وأيضاً Workers AI لنماذج الرؤية — نفس الصيغة تماماً)
   return {
     type: 'image_url',
     image_url: { url: part.data },
@@ -177,7 +186,7 @@ async function openAI({ key, endpoint, model, messages, provider, options = {} }
     body: JSON.stringify({
       model,
       messages: normalized,
-      temperature: options.temperature ?? .2,
+      temperature: options.temperature ?? .15,
       max_tokens: options.maxTokens ?? 4096,
     }),
   });
@@ -200,7 +209,7 @@ async function gemini({ key, model, messages, options = {} }) {
       contents,
       ...(system ? { systemInstruction: { parts: [{ text: typeof system === 'string' ? system : coerceToString(system) }] } } : {}),
       generationConfig: {
-        temperature: options.temperature ?? .2,
+        temperature: options.temperature ?? .15,
         maxOutputTokens: options.maxTokens ?? 4096,
       },
     }),
@@ -211,16 +220,17 @@ async function gemini({ key, model, messages, options = {} }) {
   return { text, usage: d.usageMetadata || null, raw: d };
 }
 
-async function workers(env, model, messages, options = {}) {
+async function workers(env, model, messages, options = {}, isVision = false) {
   if (!env?.AI?.run) throw new ProviderError('workers-ai', 'ربط Workers AI غير موجود', 503);
   try {
-    // ⭐ Workers AI النصي لا يدعم array — نحوّله دائماً لـ string
     const normalized = normalizeMessages(messages, 'workers-ai');
-    const safeMessages = normalized.map(m => {
+    // ⭐ إصلاح جذري: سابقاً كانت كل الصور تُحذف من كل نموذج على Workers AI بلا استثناء،
+    // حتى نماذج الرؤية نفسها — فتصل الرسالة للنموذج بلا أي بيانات بصرية. الآن: تُحذف فقط
+    // إن لم يكن النموذج المُستهدَف فعلياً نموذج رؤية (isVision يُحدَّد من catalog.js عبر kind==='vision').
+    const safeMessages = isVision ? normalized : normalized.map(m => {
       if (Array.isArray(m.content)) {
-        // ادمج كل النص، تجاهل الصور (Workers AI النصي لا يدعمها)
         const textOnly = m.content
-          .map(p => p.text || (p.type === 'image' ? '[صورة — غير مدعومة من هذا النموذج]' : ''))
+          .map(p => p.text || (p.type === 'image_url' ? '[صورة — غير مدعومة من هذا النموذج]' : ''))
           .filter(Boolean)
           .join('\n');
         return { ...m, content: textOnly };
@@ -231,8 +241,8 @@ async function workers(env, model, messages, options = {}) {
     const d = await env.AI.run(model, {
       messages: safeMessages,
       max_tokens: options.maxTokens ?? 4096,
-      temperature: options.temperature ?? .2,
-    });
+      temperature: options.temperature ?? .15,
+    }, buildGatewayOptions(env));
     const raw = d?.response ?? d?.choices?.[0]?.message?.content ?? '';
     const text = coerceToString(raw);
     if (!text) throw new ProviderError('workers-ai', 'استجابة Workers AI فارغة', 502, true);
@@ -248,7 +258,7 @@ export async function callProvider(env, modelId, messages, options = {}) {
   if (!s) throw new ProviderError('catalog', `نموذج غير معروف: ${modelId}`, 400);
   if (s.provider === 'cerebras') return openAI({ key: env.CEREBRAS_API_KEY, endpoint: 'https://api.cerebras.ai/v1/chat/completions', model: s.model, messages, provider: 'cerebras', options });
   if (s.provider === 'gemini') return gemini({ key: env.GEMINI_API_KEY, model: s.model, messages, options });
-  if (s.provider === 'workers-ai') return workers(env, s.model, messages, options);
+  if (s.provider === 'workers-ai') return workers(env, s.model, messages, options, s.kind === 'vision');
   throw new ProviderError(s.provider, 'مزود غير مدعوم', 400);
 }
 
@@ -279,7 +289,7 @@ async function openAIStream({ key, endpoint, model, messages, provider, options 
     body: JSON.stringify({
       model,
       messages: normalized,
-      temperature: options.temperature ?? .2,
+      temperature: options.temperature ?? .15,
       max_tokens: options.maxTokens ?? 4096,
       stream: true,
     }),
@@ -340,7 +350,7 @@ async function geminiStream({ key, model, messages, options = {} }) {
       contents,
       ...(system ? { systemInstruction: { parts: [{ text: typeof system === 'string' ? system : coerceToString(system) }] } } : {}),
       generationConfig: {
-        temperature: options.temperature ?? .2,
+        temperature: options.temperature ?? .15,
         maxOutputTokens: options.maxTokens ?? 4096,
       },
     }),
@@ -386,15 +396,15 @@ async function geminiStream({ key, model, messages, options = {} }) {
   });
 }
 
-async function workersStream(env, model, messages, options = {}) {
+async function workersStream(env, model, messages, options = {}, isVision = false) {
   if (!env?.AI?.run) throw new ProviderError('workers-ai', 'ربط Workers AI غير موجود', 503);
   try {
-    // ⭐ Workers AI النصي: تحويل array → string
     const normalized = normalizeMessages(messages, 'workers-ai');
-    const safeMessages = normalized.map(m => {
+    // ⭐ نفس إصلاح workers() أعلاه — لا نحذف الصور إن كان النموذج فعلاً يدعم الرؤية.
+    const safeMessages = isVision ? normalized : normalized.map(m => {
       if (Array.isArray(m.content)) {
         const textOnly = m.content
-          .map(p => p.text || (p.type === 'image' ? '[صورة — غير مدعومة من هذا النموذج]' : ''))
+          .map(p => p.text || (p.type === 'image_url' ? '[صورة — غير مدعومة من هذا النموذج]' : ''))
           .filter(Boolean)
           .join('\n');
         return { ...m, content: textOnly };
@@ -405,9 +415,9 @@ async function workersStream(env, model, messages, options = {}) {
     const aiStream = await env.AI.run(model, {
       messages: safeMessages,
       max_tokens: options.maxTokens ?? 4096,
-      temperature: options.temperature ?? .2,
+      temperature: options.temperature ?? .15,
       stream: true,
-    });
+    }, buildGatewayOptions(env));
     if (!aiStream) throw new ProviderError('workers-ai', 'البث غير مدعوم', 502);
 
     const encoder = new TextEncoder();
@@ -481,7 +491,7 @@ export async function streamCompletion(env, requestedModelId, messages, { fallba
         messages, options,
       });
     } else if (requested.provider === 'workers-ai') {
-      stream = await workersStream(env, requested.model, messages, options);
+      stream = await workersStream(env, requested.model, messages, options, requested.kind === 'vision');
     } else {
       throw new ProviderError(requested.provider, 'مزود غير مدعوم', 400);
     }
@@ -496,7 +506,7 @@ export async function streamCompletion(env, requestedModelId, messages, { fallba
     fallbackReason = primary.message;
     try {
       if (actual.provider === 'workers-ai') {
-        stream = await workersStream(env, actual.model, messages, options);
+        stream = await workersStream(env, actual.model, messages, options, actual.kind === 'vision');
       } else if (actual.provider === 'cerebras') {
         stream = await openAIStream({
           key: env.CEREBRAS_API_KEY,
