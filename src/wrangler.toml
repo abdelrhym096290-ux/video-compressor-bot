@@ -15,9 +15,9 @@ binding = "AI"
 name = "EXPERIMENT_STATE"
 class_name = "ExperimentState"
 
-[exports.ExperimentState]
-type = "durable-object"
-storage = "sqlite"
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ExperimentState"]
 
 [observability]
 enabled = true
