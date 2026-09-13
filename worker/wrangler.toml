@@ -6,3 +6,7 @@ keep_vars = true
 [[kv_namespaces]]
 binding = "SESSIONS"
 id = "6975fbb9307242a482e66da949410733"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
