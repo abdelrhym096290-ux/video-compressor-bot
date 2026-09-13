@@ -1,20 +1,12 @@
-name = "fox1-ai"
-main = "Worker.js"
-compatibility_date = "2026-09-03"
+name = "mybot2"
+main = "worker.js"
+compatibility_date = "2024-01-01"
 keep_vars = true
 
-[[d1_databases]]
-binding = "DB"
-database_name = "fox-ai-db"
-database_id = "af119c1d-6f40-41d3-aab0-590cdce0462e"
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "5d25d52dcd44473d9d5c02ec48488be2"
 
-[ai]
-binding = "AI"
-
-[[durable_objects.bindings]]
-name = "EXPERIMENT_STATE"
-class_name = "ExperimentState"
-
-[exports.ExperimentState]
-type = "durable-object"
-storage = "sqlite"
+[observability]
+enabled = true
+head_sampling_rate = 1
