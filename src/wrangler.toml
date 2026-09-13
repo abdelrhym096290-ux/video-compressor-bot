@@ -16,8 +16,7 @@ name = "EXPERIMENT_STATE"
 class_name = "ExperimentState"
 
 # ⭐ الصيغة الجديدة (declarative exports) — بديل [[migrations]]
-[[exports]]
-name = "ExperimentState"
+[exports.ExperimentState]
 type = "durable-object"
 storage = "sqlite"
 
