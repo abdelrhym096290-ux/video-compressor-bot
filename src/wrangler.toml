@@ -15,9 +15,11 @@ binding = "AI"
 name = "EXPERIMENT_STATE"
 class_name = "ExperimentState"
 
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["ExperimentState"]
+# ⭐ الصيغة الجديدة (declarative exports) — بديل [[migrations]]
+[[exports]]
+name = "ExperimentState"
+type = "durable-object"
+storage = "sqlite"
 
 [observability]
 enabled = true
