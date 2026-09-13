@@ -40,7 +40,6 @@ export const MODEL_CATALOG = Object.freeze([
 ].map(([id,model,name,company,provider,description,kind]) => Object.freeze({id,model,name,company,provider,description,kind})));
 
 // ⭐ سلسلة الرؤية الاحتياطية — يُجرَّب كل معرّف بالترتيب حتى ينجح أحدها.
-// (لم تُربط بعد في Worker.js — إضافة لاحقة عند الاتفاق على منطق التبديل التلقائي)
 export const VISION_FALLBACK_CHAIN = Object.freeze([
   'cf-llama-vision',
   'cf-gemma-vision',
@@ -49,6 +48,15 @@ export const VISION_FALLBACK_CHAIN = Object.freeze([
   'cf-mistral-vision',
   'cf-qwen-vision',
 ]);
+
+// ⭐ الآن مربوطة فعلياً في Worker.js: تُستخدَم لاختيار fallbackModelId عند وجود صورة،
+// بدل السقوط الافتراضي لنموذج نصي بحت لا يرى الصور إطلاقاً.
+export function nextVisionModel(currentId) {
+  const idx = VISION_FALLBACK_CHAIN.indexOf(currentId);
+  if (idx === -1) return VISION_FALLBACK_CHAIN[0] === currentId ? null : VISION_FALLBACK_CHAIN[0];
+  if (idx >= VISION_FALLBACK_CHAIN.length - 1) return null; // آخر السلسلة، لا مزيد من الاحتياط
+  return VISION_FALLBACK_CHAIN[idx + 1];
+}
 
 // ============================================================
 // getModel
@@ -74,7 +82,8 @@ export function publicCatalog() {
 export function chooseModel(text = '') {
   const t = String(text).toLowerCase();
   if (/code|كود|برمج|terminal|طرفية|debug|تصحيح/.test(t)) return getModel('cf-qwen3-coder');
-  if (/image|صورة|vision|صوّر/.test(t)) return getModel('cf-llama-vision');
+  // ⭐ اتساق: يستخدم أول عنصر في سلسلة الرؤية بدل قيمة ثابتة منفصلة قد تتعارض معها لاحقاً
+  if (/image|صورة|vision|صوّر/.test(t)) return getModel(VISION_FALLBACK_CHAIN[0]);
   if (/plan|خطة|بحث|research|تحليل/.test(t)) return getModel('cf-gpt-oss-120b');
   return getModel('cf-gpt-oss-20b');
 }
