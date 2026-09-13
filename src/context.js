@@ -6,6 +6,11 @@ import { id, now, eventRecord } from './contracts.js';
 
 const EMPTY = Object.freeze({ summary:'', facts:[], decisions:[], next:'', constraints:[], revision:0 });
 
+// ⭐ حجم نافذة السياق الافتراضي — كان 14 بلا أي علاقة بـ LIMITS.MAX_CONTEXT_MESSAGES (100) في
+// Worker.js، فيُهمَل الأخير فعلياً ويُقصّ التاريخ دوماً لآخر 14 رسالة فقط بصمت. الآن قابل
+// للتمرير كمعامل، وقيمته الافتراضية تطابق فعلياً الحد الذي يُطبَّق أصلاً في Worker.js (100).
+export const DEFAULT_CONTEXT_WINDOW = 100;
+
 export function emptyContext(){
   return structuredClone(EMPTY);
 }
@@ -22,7 +27,7 @@ export function normalizeContext(value){
   };
 }
 
-export function contextPacket(state, recent = []){
+export function contextPacket(state, recent = [], windowSize = DEFAULT_CONTEXT_WINDOW){
   const s = normalizeContext(state);
   return {
     revision: s.revision,
@@ -31,7 +36,7 @@ export function contextPacket(state, recent = []){
     decisions: s.decisions,
     constraints: s.constraints,
     next: s.next,
-    recent: recent.slice(-14).map(m => ({ role: m.role, content: String(m.content || '') })),
+    recent: recent.slice(-windowSize).map(m => ({ role: m.role, content: String(m.content || '') })),
   };
 }
 
