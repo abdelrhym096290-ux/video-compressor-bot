@@ -25,7 +25,13 @@ export const EVENT_TYPES = Object.freeze([
   // أحداث الميزانية
   'tool_budget_exhausted','tool_budget_renewed',
   // أحداث التصحيح التلقائي
-  'tool_correction_proposed','tool_correction_aborted','tool_correction_rejected','tool_auto_corrected'
+  'tool_correction_proposed','tool_correction_aborted','tool_correction_rejected','tool_auto_corrected',
+  // ⭐ إصلاح: هذه القيم كانت تُستخدَم فعلياً في Worker.js (رفع ملفات، اقتراح أداة، تعليق تلقائي،
+  // تفعيل/إيقاف الوضع التلقائي) لكنها لم تكن مُدرَجة هنا — فكانت كل محاولة تسجيلها تفشل صامتاً
+  // عبر مسار الطوارئ في safeEvent()، وتُسجَّل رسالة خطأ في السجلات في كل مرة رغم نجاح التسجيل
+  // فعلياً عبر المسار البديل غير المُتحقَّق.
+  'attachment_generated','tool_proposed','tool_commentary_completed','tool_commentary_failed',
+  'autopilot_activated','autopilot_stopped'
 ]);
 
 export const ROLES = Object.freeze(['system','user','assistant','tool']);
