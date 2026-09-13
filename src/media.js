@@ -27,7 +27,12 @@ export function validateAttachments(files = []) {
     const name = String(f.name || 'file').slice(0, 180);
     const mime = String(f.mime || f.type || 'application/octet-stream');
     const size = Number(f.size || 0);
-    if (size > MEDIA_LIMITS.maxBytesPerFile) {
+    // ⭐ إصلاح: maxImageBytes كان مُعرَّفاً في MEDIA_LIMITS لكن غير مُستخدَم إطلاقاً —
+    // كل الملفات (بما فيها الصور) كانت تُقاس فقط بحد الـ60MB العام، ما يسمح فعلياً
+    // بصور أكبر بخمس مرات من الحد المُعلَن دون أي تحذير أو رفض.
+    const isImage = mime.startsWith('image/');
+    const limit = isImage ? MEDIA_LIMITS.maxImageBytes : MEDIA_LIMITS.maxBytesPerFile;
+    if (size > limit) {
       throw new Error(`الملف كبير جدًا: ${name}`);
     }
     return { name, mime, size, data: f.data || null, text: f.text || null };
