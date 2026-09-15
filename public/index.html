@@ -1,3 +1,2620 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#080b12" id="metaTheme" />
+<title>FOX AI — مركز تحكم العامل الذكي</title>
+<link rel="manifest" href="/manifest.json" />
+<link rel="icon" href="/icons/icon-192.png" />
+<link rel="apple-touch-icon" href="/icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="FOX AI" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#080b12;--panel:#101520;--panel2:#151c2a;--line:#202a3b;--text:#eef3fc;--muted:#8a96aa;--cyan:#55d8ea;--violet:#9f8cff;--green:#57dc9b;--orange:#ffb86b;--danger:#ff7283;--shadow:0 20px 60px #0006;--bubble-ai:#1b2638;--bubble-ai-border:#2b3a54;--bubble-user-start:#21404c;--bubble-user-end:#26335c;--bubble-user-border:#3b6071;--input-bg:#111a29;--input-border:#2a3950;--input-placeholder:#5f6c80;--topbar-start:#0b1120f5;--topbar-mid:#0b1120d9;--drawer-bg:#0c111b;--code-bg:#0a0f18;--code-border:#202b3e;--code-text:#eef3fc;--overlay:#000a;--safe-top:env(safe-area-inset-top,0px);--safe-bottom:env(safe-area-inset-bottom,0px);--drawer-w:320px;--card-bg:#0d1420;--card-body-bg:#0a1018;--tool-head-bg-start:#0f1726;--tool-head-bg-end:#0d1420;--proposal-body-bg:#1b1610;--correction-body-bg:#191630;--att-bg:#0f1826;--att-border:#26344a;--vh:1vh}
+html[data-theme="light"]{--bg:#f4f7fc;--panel:#ffffff;--panel2:#eef3fa;--line:#dde5f0;--text:#0e1626;--muted:#5d6b82;--cyan:#0d9bb5;--violet:#6b53e6;--green:#0d9e6a;--orange:#c8791a;--danger:#d94359;--shadow:0 10px 30px #1a23400f;--bubble-ai:#f1f5fb;--bubble-ai-border:#dde6f2;--bubble-user-start:#d3ecf3;--bubble-user-end:#dde3f8;--bubble-user-border:#b7d4e0;--input-bg:#ffffff;--input-border:#dbe3ee;--input-placeholder:#8a96aa;--topbar-start:#f4f7fcf5;--topbar-mid:#f4f7fcd9;--drawer-bg:#ffffff;--code-bg:#f1f5fb;--code-border:#dde6f2;--code-text:#0e1626;--overlay:#0003;--card-bg:#f8fbff;--card-body-bg:#f4f8fe;--tool-head-bg-start:#f4f8fe;--tool-head-bg-end:#eef4fc;--proposal-body-bg:#fdf6ec;--correction-body-bg:#f0eefc;--att-bg:#f1f6fd;--att-border:#dbe6f2}
+html[data-theme="light"] body{background:radial-gradient(circle at 70% -15%,#dfe8fb 0,#eef3fa 31%,var(--bg) 64%)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{margin:0;background:radial-gradient(circle at 70% -15%,#26345b 0,#0d1320 31%,var(--bg) 64%);color:var(--text);font-family:"IBM Plex Sans Arabic",sans-serif;min-height:100vh;overflow-x:hidden;transition:background .3s ease,color .3s ease}
+button,input,textarea{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+input,textarea{outline:none}
+a{color:inherit;text-decoration:none}
+svg{display:block}
+.icon{width:18px;height:18px;stroke:currentColor;stroke-width:1.8;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.icon.sm{width:14px;height:14px}
+.icon.lg{width:22px;height:22px}
+
+/* ============ Topbar (الصفحات غير المحادثة) ============ */
+.topbar{position:sticky;top:0;z-index:40;padding:calc(10px + var(--safe-top)) 14px 10px;background:linear-gradient(180deg,var(--topbar-start),var(--topbar-mid) 70%,transparent);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);display:flex;align-items:center;gap:10px}
+.topbar .title{flex:1;min-width:0}
+.topbar .title strong{font-size:15px;display:block;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar .title small{color:var(--muted);font-size:10.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand-logo{height:36px;width:36px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,var(--cyan),var(--violet));box-shadow:0 0 24px #55d8ea55;font-weight:700;color:#08101c;font-size:16px;flex:none}
+.icon-btn{height:38px;width:38px;border-radius:12px;background:var(--panel);border:1px solid var(--line);display:grid;place-items:center;color:var(--muted);flex:none;transition:.15s}
+.icon-btn:active{transform:scale(.93);color:var(--cyan)}
+.pages{position:relative}
+.page{display:none;padding:6px 14px calc(30px + var(--safe-bottom));animation:fade .25s ease}
+.page.active{display:block}
+.page.chat-page{padding:0;height:calc(var(--vh, 1vh) * 100 - var(--safe-top));display:none;flex-direction:column;min-height:0}
+.page.chat-page.active{display:flex}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes dotPulse{0%,100%{opacity:.3;transform:scale(.85)}50%{opacity:1;transform:scale(1.1)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes blink{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+@keyframes slideUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes slideDown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 #ff728366}50%{box-shadow:0 0 0 8px #ff728300}}
+@keyframes logoPulse{0%,100%{transform:scale(1);box-shadow:0 0 20px #55d8ea88}50%{transform:scale(1.1);box-shadow:0 0 32px #55d8eacc}}
+@keyframes autoGlow{0%,100%{box-shadow:0 0 12px #57dc9b66}50%{box-shadow:0 0 24px #57dc9bcc}}
+@keyframes modalIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+
+/* ============ Chat Bar (شريط واحد للمحادثة) ============ */
+.chat-bar{display:flex;align-items:center;gap:8px;padding:calc(10px + var(--safe-top)) 12px 10px;background:var(--panel);border-bottom:1px solid var(--line);flex:none;min-height:calc(56px + var(--safe-top))}
+.chat-bar-btn{height:38px;width:38px;border-radius:11px;display:grid;place-items:center;color:var(--muted);flex:none;transition:.15s;background:var(--panel2);border:1px solid var(--line)}
+.chat-bar-btn:active{transform:scale(.92);color:var(--cyan)}
+.chat-bar-title{flex:1;min-width:0;text-align:right}
+.chat-bar-title b{font-size:14px;display:block;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-bar-title small{color:var(--muted);font-size:10.5px;display:flex;align-items:center;gap:5px;margin-top:2px;justify-content:flex-end}
+.chat-bar-title small i{height:6px;width:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);flex:none}
+.chat-bar-title small.busy{color:var(--cyan)}
+.chat-bar-title small.busy i{background:var(--cyan);box-shadow:0 0 6px var(--cyan);animation:dotPulse 1s infinite}
+.chat-bar-title small.error{color:var(--danger)}
+.chat-bar-title small.error i{background:var(--danger);box-shadow:0 0 6px var(--danger)}
+
+/* ============ Overview / Sections ============ */
+.hero h1{font-size:21px;letter-spacing:-.03em;margin:6px 0;line-height:1.35}
+.hero p{margin:0;color:var(--muted);font-size:12.5px;line-height:1.7}
+.run-btn{width:100%;margin-top:14px;background:linear-gradient(135deg,#48cee3,#8b76ff);padding:14px;border-radius:14px;font-weight:700;font-size:14px;box-shadow:0 8px 22px #55d8ea33;color:#08101c;transition:transform .15s;display:flex;align-items:center;justify-content:center;gap:8px}
+.run-btn:active{transform:scale(.97)}
+.metrics{display:flex;gap:10px;overflow-x:auto;padding:16px 0 6px;scroll-snap-type:x mandatory;margin:0 -14px;padding-inline:14px;scrollbar-width:none}
+.metrics::-webkit-scrollbar{display:none}
+.metric{flex:0 0 150px;scroll-snap-align:start;background:linear-gradient(145deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:var(--shadow)}
+.metric small{color:var(--muted);font-size:11px}
+.metric strong{display:block;font-size:20px;margin:5px 0}
+.metric .trend{font-size:10px;color:var(--green)}
+.metric .bar{height:4px;background:var(--line);border-radius:5px;margin-top:11px;overflow:hidden}
+.metric .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--violet));border-radius:5px}
+.section{margin-top:20px}
+.section:first-child{margin-top:6px}
+.section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:11px}
+.section-head h2{font-size:14.5px;margin:0;font-weight:600}
+.section-head a{font-size:11px;color:var(--cyan);cursor:pointer}
+.card{background:linear-gradient(145deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:16px}
+
+/* ============ Chat Scroll ============ */
+.chat-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:18px 14px 8px;display:flex;flex-direction:column;gap:14px;position:relative;-webkit-overflow-scrolling:touch}
+.chat-scroll::-webkit-scrollbar{width:4px}
+.chat-scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+.scroll-down{position:absolute;bottom:calc(100% + 14px);left:14px;width:38px;height:38px;border-radius:50%;background:var(--panel);border:1px solid var(--line);display:grid;place-items:center;color:var(--muted);cursor:pointer;opacity:0;pointer-events:none;transition:.2s;z-index:5;box-shadow:0 6px 20px #0005}
+.scroll-down.show{opacity:1;pointer-events:auto}
+.scroll-down:active{transform:scale(.9);background:var(--panel2)}
+
+/* ============ Messages ============ */
+.msg{display:flex;gap:9px;max-width:88%;flex-shrink:0}
+.msg.user{align-self:flex-start;flex-direction:row-reverse;margin-right:auto}
+.msg.ai{align-self:flex-end}
+.msg .av{width:30px;height:30px;border-radius:10px;flex:none;display:grid;place-items:center;font-size:11px;font-weight:700;background:linear-gradient(135deg,var(--cyan),var(--violet));color:#08101c}
+.msg.user .av{background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+.msg-body{min-width:0;max-width:100%;flex:1}
+.msg .bubble{background:var(--bubble-ai);border:1px solid var(--bubble-ai-border);padding:11px 13px;border-radius:14px 14px 4px 14px;font-size:13px;line-height:1.8;color:var(--text);word-wrap:break-word;overflow-wrap:break-word}
+.msg.user .bubble{background:linear-gradient(135deg,var(--bubble-user-start),var(--bubble-user-end));border-color:var(--bubble-user-border);border-radius:14px 14px 14px 4px}
+.msg .bubble pre{background:var(--code-bg);border:1px solid var(--code-border);border-radius:9px;padding:10px 12px;margin:8px 0;overflow-x:auto;direction:ltr;text-align:left;font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.7;position:relative}
+.msg .bubble pre code{background:none;padding:0;font-size:11px;color:var(--code-text)}
+.msg .bubble code:not(pre code){background:var(--code-bg);border:1px solid var(--code-border);padding:1px 6px;border-radius:5px;font-family:"JetBrains Mono",monospace;font-size:11.5px;direction:ltr;display:inline-block;vertical-align:middle;cursor:pointer;color:var(--code-text)}
+.msg .bubble .code-wrap{position:relative;margin:8px 0}
+.msg .bubble .code-copy{position:absolute;top:6px;left:6px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:4px 8px;font-size:10px;opacity:.6;transition:.15s;cursor:pointer;z-index:2;display:flex;align-items:center;gap:4px}
+.msg .bubble .code-copy:active{opacity:1}
+.msg .meta{color:var(--muted);font-size:9.5px;margin-top:5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.msg.user .meta{flex-direction:row-reverse}
+.msg-toolbar{display:flex;align-items:center;gap:2px;margin-top:5px;opacity:.55;transition:opacity .2s}
+.msg:hover .msg-toolbar{opacity:1}
+.msg-toolbar button{height:28px;min-width:28px;padding:0 7px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);gap:4px}
+.msg-toolbar button:active{background:var(--panel2);color:var(--cyan)}
+.msg-toolbar button.copied{color:var(--green)}
+.expand-btn{margin-top:6px;font-size:11px;color:var(--cyan);background:transparent;border:1px dashed var(--line);border-radius:8px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px;transition:.15s}
+.expand-btn:active{background:var(--panel2)}
+.msg .bubble.collapsed{max-height:180px;overflow:hidden;position:relative;transition:max-height .3s ease}
+.msg .bubble.collapsed::after{content:'';position:absolute;bottom:0;left:0;right:0;height:60px;background:linear-gradient(transparent,var(--bubble-ai));pointer-events:none}
+.msg.user .bubble.collapsed::after{background:linear-gradient(transparent,var(--bubble-user-end))}
+
+/* ============ Attachment Cards (Inline) ============ */
+.att-stack{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.att-card{position:relative;width:76px;cursor:pointer;transition:.15s}
+.att-card:active{transform:scale(.96)}
+.att-card .att-thumb{width:76px;height:76px;border-radius:12px;background:var(--att-bg);border:1px solid var(--att-border);display:grid;place-items:center;overflow:hidden}
+.att-card .att-thumb img{width:100%;height:100%;object-fit:cover}
+.att-card .att-thumb .att-ic{font-size:20px;color:var(--cyan);display:grid;place-items:center}
+.att-card .att-info{width:100%;text-align:center;margin-top:4px}
+.att-card .att-info b{font-size:10px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text);font-weight:500}
+.att-card.pending{opacity:.6;cursor:default}
+
+/* ============ Activity indicator ============ */
+.activity{display:flex;align-items:center;gap:9px;padding:10px 4px;align-self:flex-end;margin-top:4px;animation:slideUp .25s ease;flex-shrink:0}
+.activity .act-logo{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(135deg,var(--cyan),var(--violet));color:#08101c;font-weight:800;font-size:13px;flex:none;animation:logoPulse 1.6s ease-in-out infinite}
+.activity .act-text{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px}
+.activity .act-text .label{color:var(--text);font-weight:500}
+.activity .dots{display:flex;gap:3px}
+.activity .dots i{width:5px;height:5px;border-radius:50%;background:var(--cyan);animation:blink 1.2s infinite}
+.activity .dots i:nth-child(2){animation-delay:.2s}
+.activity .dots i:nth-child(3){animation-delay:.4s}
+
+/* ============ Tool Cards ============ */
+.tool-card{background:var(--card-bg);border:1px solid var(--line);border-radius:12px;overflow:hidden;align-self:flex-end;width:100%;max-width:92%;animation:slideUp .25s ease;flex-shrink:0}
+.tool-card.auto{border-color:#2c5a47}
+.tool-card.auto .tool-head{background:linear-gradient(180deg,#0f2a1e,#0d1a15)}
+html[data-theme="light"] .tool-card.auto .tool-head{background:linear-gradient(180deg,#e8f8ee,#e0f2e6)}
+.tool-card .tool-head{display:flex;align-items:center;gap:10px;padding:10px 13px;cursor:pointer;user-select:none;background:linear-gradient(180deg,var(--tool-head-bg-start),var(--tool-head-bg-end));transition:background .15s}
+.tool-card .tool-head:active{background:var(--panel2)}
+.tool-card.open .tool-head .t-chev{transform:rotate(90deg)}
+.tool-card .tool-head .t-chev{color:var(--muted);transition:transform .25s;flex:none;width:14px}
+.tool-card .tool-head .t-icon{flex:none;color:var(--cyan);display:grid;place-items:center}
+.tool-card .tool-head .t-title{flex:1;min-width:0;font-size:12.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tool-card .tool-head .t-status{font-size:11px;flex:none;display:flex;align-items:center;gap:5px}
+.tool-card .tool-head .t-status.running{color:var(--cyan)}
+.tool-card .tool-head .t-status.done{color:var(--green)}
+.tool-card .tool-head .t-status.failed{color:var(--danger)}
+.tool-card .tool-head .t-status.waiting{color:var(--orange)}
+.tool-card .tool-head .t-status.auto{color:var(--green);font-weight:700}
+.tool-card .tool-head .t-status.running .spin{animation:spin 1s linear infinite}
+.tool-card .tool-body{display:none;padding:12px 13px;border-top:1px solid var(--line);background:var(--card-body-bg)}
+.tool-card.open .tool-body{display:block;animation:fade .2s ease}
+.tool-card .tool-body pre{background:var(--code-bg);border:1px solid var(--code-border);border-radius:8px;padding:10px 12px;margin:6px 0;overflow-x:auto;direction:ltr;text-align:left;font-family:"JetBrains Mono",monospace;font-size:11px;line-height:1.7;color:var(--code-text);max-height:300px;white-space:pre-wrap;word-break:break-word}
+.tool-card .tool-body .kv{display:flex;justify-content:space-between;padding:5px 0;font-size:10.5px;border-bottom:1px dashed var(--line)}
+.tool-card .tool-body .kv:last-child{border-bottom:0}
+.tool-card .tool-body .kv b{color:var(--cyan);font-family:"JetBrains Mono",monospace;font-weight:500}
+.tool-card .tool-body .risk-warn{background:#3d1c22;color:var(--danger);border:1px solid #5a2a32;border-radius:8px;padding:8px 10px;font-size:11px;margin:8px 0;display:flex;align-items:center;gap:6px}
+.tool-card .tool-body .actions-row{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.tool-card .tool-body .actions-row button{font-size:11px;padding:7px 12px;border-radius:8px;background:var(--panel2);color:var(--text);border:1px solid var(--line);display:inline-flex;align-items:center;gap:5px}
+.tool-card .tool-body .actions-row button:active{transform:scale(.96)}
+.tool-card .tool-body .actions-row button.primary{background:linear-gradient(135deg,#48cee3,#8b76ff);color:#08101c;border:0;font-weight:600}
+.tool-card .tool-body .actions-row button.danger{background:#3d1c22;color:var(--danger);border-color:#5a2a32}
+.tool-card .tool-body .actions-row button.auto{background:linear-gradient(135deg,#57dc9b,#3da97c);color:#08101c;border:0;font-weight:600}
+.tool-card.proposal .tool-head .t-icon{color:var(--orange)}
+.tool-card.proposal .tool-body{background:var(--proposal-body-bg)}
+.tool-card.correction .tool-head .t-icon{color:var(--violet)}
+.tool-card.correction .tool-body{background:var(--correction-body-bg)}
+
+/* ============ Composer (جديد) ============ */
+.composer-full{flex:none;padding:10px 12px calc(10px + var(--safe-bottom));background:var(--panel);border-top:1px solid var(--line);position:relative}
+.attachments-preview{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.attachments-preview:empty{display:none}
+.attach-chip{position:relative;width:64px;height:64px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none}
+.attach-chip img{width:100%;height:100%;object-fit:cover}
+.attach-chip .ic{color:var(--muted)}
+.attach-chip .name-badge{position:absolute;bottom:0;left:0;right:0;font-size:8.5px;line-height:1.4;background:#00000099;color:#fff;padding:2px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
+.attach-chip .rm{position:absolute;top:3px;left:3px;height:18px;width:18px;border-radius:50%;background:#000000b3;color:#fff;display:grid;place-items:center;z-index:2;flex:none}
+
+.composer-box{background:var(--input-bg);border:1px solid var(--input-border);border-radius:18px;padding:8px 8px 6px;transition:border-color .2s}
+.composer-box:focus-within{border-color:var(--cyan)}
+.composer-box textarea{width:100%;resize:none;background:none;border:0;font-size:13.5px;line-height:1.6;color:var(--text);padding:6px 6px;min-height:26px;max-height:200px;font-family:inherit;display:block}
+.composer-box textarea::placeholder{color:var(--input-placeholder)}
+.composer-actions{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:4px 2px 0}
+.composer-actions .left-actions{display:flex;align-items:center;gap:4px}
+.composer-actions .right-actions{display:flex;align-items:center;gap:4px}
+.action-btn{height:36px;width:36px;border-radius:50%;display:grid;place-items:center;color:var(--muted);flex:none;transition:.15s}
+.action-btn:active{background:var(--panel2);transform:scale(.9);color:var(--cyan)}
+.action-btn.recording{background:var(--danger);color:#fff;animation:pulse 1.2s infinite}
+.model-btn{height:36px;border-radius:18px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;color:var(--muted);border:1px solid var(--line);background:var(--panel);font-size:11.5px;font-weight:600;transition:.15s;max-width:160px}
+.model-btn:active{background:var(--panel2);color:var(--cyan)}
+.model-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.send-btn{height:36px;width:36px;border-radius:50%;flex:none;display:grid;place-items:center;background:linear-gradient(135deg,#48cee3,#8b76ff);color:#08101c;transition:.15s}
+.send-btn:active{transform:scale(.9)}
+.send-btn:disabled{opacity:.35;cursor:not-allowed}
+.send-btn.stop-btn{background:var(--danger);color:#fff}
+.hint-row{font-size:10px;color:var(--muted);margin-top:6px;text-align:center;opacity:.75}
+
+/* ============ Modal ============ */
+.modal-backdrop{position:fixed;inset:0;background:var(--overlay);z-index:170;opacity:0;pointer-events:none;transition:opacity .2s;backdrop-filter:blur(3px);display:grid;place-items:end center}
+.modal-backdrop.show{opacity:1;pointer-events:auto}
+.modal-sheet{width:100%;max-width:720px;max-height:92vh;background:var(--panel);border-radius:20px 20px 0 0;border:1px solid var(--line);border-bottom:0;display:flex;flex-direction:column;transform:translateY(30px);transition:transform .25s ease;box-shadow:0 -20px 60px #0008}
+.modal-backdrop.show .modal-sheet{transform:translateY(0)}
+.modal-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);flex:none}
+.modal-title{flex:1;min-width:0}
+.modal-title b{font-size:13.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.modal-title small{font-size:10.5px;color:var(--muted);display:block;margin-top:2px}
+.modal-close{height:44px;width:44px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);display:grid;place-items:center;color:var(--muted);flex:none;transition:.15s}
+.modal-close:active{transform:scale(.92);color:var(--danger)}
+.modal-body{flex:1;overflow:auto;padding:14px;background:var(--card-body-bg)}
+.modal-body pre{background:var(--code-bg);border:1px solid var(--code-border);border-radius:10px;padding:12px 14px;direction:ltr;text-align:left;font-family:"JetBrains Mono",monospace;font-size:11.5px;line-height:1.75;color:var(--code-text);white-space:pre-wrap;word-break:break-word;margin:0}
+.modal-body img{max-width:100%;height:auto;border-radius:10px;display:block;margin:0 auto}
+.modal-body iframe{width:100%;height:70vh;border:1px solid var(--line);border-radius:10px;background:#fff}
+.modal-foot{flex:none;padding:10px 14px calc(14px + var(--safe-bottom));border-top:1px solid var(--line);display:flex;gap:8px}
+.modal-foot button{flex:1;padding:11px 12px;border-radius:12px;background:var(--panel2);color:var(--text);border:1px solid var(--line);font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:.15s}
+.modal-foot button:active{transform:scale(.97)}
+.modal-foot button.primary{background:linear-gradient(135deg,#48cee3,#8b76ff);color:#08101c;border:0}
+.modal-loading{display:grid;place-items:center;padding:40px;color:var(--muted);font-size:12px;gap:10px}
+.modal-loading .spinner{width:24px;height:24px;border:2px solid var(--line);border-top-color:var(--cyan);border-radius:50%;animation:spin 1s linear infinite}
+
+/* ============ Action Sheet ============ */
+.action-backdrop{position:fixed;inset:0;background:var(--overlay);z-index:150;opacity:0;pointer-events:none;transition:opacity .2s;backdrop-filter:blur(2px)}
+.action-backdrop.show{opacity:1;pointer-events:auto}
+.action-sheet{position:fixed;left:0;right:0;bottom:0;z-index:160;background:var(--panel);border-radius:22px 22px 0 0;border-top:1px solid var(--line);padding:10px 12px calc(20px + var(--safe-bottom));transform:translateY(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);max-height:80vh;overflow-y:auto;box-shadow:0 -20px 60px #0008}
+.action-sheet.show{transform:translateY(0)}
+.action-handle{width:40px;height:4px;border-radius:4px;background:var(--line);margin:0 auto 12px}
+.action-title{padding:0 6px 12px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.action-title b{font-size:13.5px;display:block}
+.action-title small{font-size:11px;color:var(--muted);display:block;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.action-item{display:flex;align-items:center;gap:14px;padding:13px 10px;border-radius:12px;width:100%;text-align:right;transition:.15s}
+.action-item:active{background:var(--panel2)}
+.action-item .ai-icon{height:36px;width:36px;border-radius:11px;background:var(--panel2);display:grid;place-items:center;color:var(--cyan);flex:none;border:1px solid var(--line)}
+.action-item .ai-text{flex:1;min-width:0}
+.action-item .ai-text b{font-size:13px;display:block}
+.action-item .ai-text small{color:var(--muted);font-size:11px;display:block;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.action-item.danger .ai-icon{background:#3d1c22;color:var(--danger);border-color:transparent}
+.action-item.danger b{color:var(--danger)}
+
+/* ============ Model Sheet (Bottom Sheet) ============ */
+.model-opt{display:flex;align-items:center;gap:12px;padding:12px 12px;border-radius:12px;width:100%;text-align:right;transition:.15s;border:1px solid transparent}
+.model-opt:active{background:var(--panel2)}
+.model-opt.selected{background:var(--panel2);border-color:var(--line)}
+.model-opt .mo-icon{height:38px;width:38px;border-radius:11px;flex:none;display:grid;place-items:center;background:#25224b;color:var(--violet);border:1px solid var(--line)}
+.model-opt .mo-info{flex:1;min-width:0}
+.model-opt .mo-info b{font-size:13px;display:block;color:var(--text)}
+.model-opt .mo-info small{font-size:10.5px;color:var(--muted);display:block;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.model-opt .mo-check{color:var(--cyan);flex:none;opacity:0;transition:.15s}
+.model-opt.selected .mo-check{opacity:1}
+.model-opt .mo-badge{font-size:9.5px;color:var(--cyan);background:rgba(85,216,234,.12);border:1px solid rgba(85,216,234,.3);padding:2px 6px;border-radius:5px;margin-inline-start:6px}
+
+/* ============ Tasks / Files / Exp ============ */
+.task-step{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.task-step:last-child{border:0;padding-bottom:0}
+.task-step:first-child{padding-top:0}
+.step-icon{height:30px;width:30px;border-radius:10px;background:var(--panel2);display:grid;place-items:center;color:var(--cyan);flex:none;border:1px solid var(--line)}
+.done .step-icon{background:#17352e;color:var(--green);border-color:transparent}
+.step-copy{flex:1;min-width:0}
+.step-copy b{font-size:12.5px;display:block}
+.step-copy small{display:block;color:var(--muted);font-size:10.5px;margin-top:3px}
+.progress{height:6px;border-radius:8px;background:var(--line);overflow:hidden}
+.progress i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--violet))}
+.event{display:flex;gap:10px;align-items:flex-start;font-size:12px}
+.event i{height:8px;width:8px;border-radius:50%;background:var(--cyan);margin-top:5px;flex:none;box-shadow:0 0 9px var(--cyan)}
+.event span{color:var(--muted);display:block;font-size:10.5px;margin-top:2px}
+.file-item{display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.file-item:last-child{border:0;padding-bottom:0}
+.file-item:first-child{padding-top:0}
+.file-item:active{background:var(--panel2);border-radius:8px}
+.file-icon{height:40px;width:40px;border-radius:11px;background:var(--panel2);display:grid;place-items:center;color:var(--cyan);flex:none;border:1px solid var(--line);overflow:hidden}
+.file-icon img{width:100%;height:100%;object-fit:cover}
+.file-info{flex:1;min-width:0}
+.file-info b{font-size:12.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-info small{display:block;color:var(--muted);font-size:10.5px;margin-top:3px}
+.file-size{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--muted);flex:none}
+.exp-item{padding:14px 0;border-bottom:1px solid var(--line)}
+.exp-item:last-child{border:0;padding-bottom:0}
+.exp-item:first-child{padding-top:0}
+.exp-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px}
+.exp-head b{font-size:12.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.exp-meta{display:flex;gap:14px;font-size:10.5px;color:var(--muted);margin-top:8px;flex-wrap:wrap}
+.exp-meta span{display:flex;align-items:center;gap:4px}
+.exp-meta b{color:var(--text);font-family:"JetBrains Mono",monospace;font-size:11px}
+.tag{color:var(--green);font-size:10px;background:#15352e;border-radius:6px;padding:3px 7px;font-weight:600;display:inline-flex;align-items:center;gap:3px}
+.tag.orange{color:var(--orange);background:#3d2d1c}
+.tag.red{color:var(--danger);background:#3d1c22}
+.setting-item{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}
+.setting-item:last-child{border:0;padding-bottom:0}
+.setting-item:first-child{padding-top:0}
+.setting-icon{height:38px;width:38px;border-radius:11px;background:var(--panel2);display:grid;place-items:center;color:var(--cyan);flex:none;border:1px solid var(--line)}
+.setting-text{flex:1;min-width:0}
+.setting-text b{font-size:13px;display:block}
+.setting-text small{color:var(--muted);font-size:10.5px;display:block;margin-top:2px}
+.arrow{color:var(--muted)}
+.theme-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;background:var(--panel2);padding:5px;border-radius:14px;border:1px solid var(--line)}
+.theme-opt{display:flex;flex-direction:column;align-items:center;gap:5px;padding:11px 6px;border-radius:10px;font-size:11.5px;font-weight:500;color:var(--muted);transition:.15s}
+.theme-opt.active{background:linear-gradient(135deg,#48cee3,#8b76ff);color:#08101c;font-weight:700}
+
+/* ============ Drawer ============ */
+.drawer-backdrop{position:fixed;inset:0;background:var(--overlay);z-index:90;opacity:0;pointer-events:none;transition:opacity .25s;backdrop-filter:blur(2px)}
+.drawer-backdrop.show{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;bottom:0;right:0;width:var(--drawer-w);max-width:88vw;z-index:100;background:var(--drawer-bg);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;padding:calc(16px + var(--safe-top)) 0 calc(16px + var(--safe-bottom));overflow:hidden}
+.drawer.show{transform:translateX(0)}
+.drawer-brand{display:flex;align-items:center;gap:11px;padding:4px 18px 14px;flex:none}
+.drawer-brand strong{font-size:16px;display:block}
+.drawer-brand small{color:var(--muted);font-size:10.5px;display:block;margin-top:2px}
+.new-chat-btn{margin:0 12px 14px;padding:12px;border-radius:12px;background:linear-gradient(135deg,#48cee3,#8b76ff);color:#08101c;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s;flex:none}
+.new-chat-btn:active{transform:scale(.97)}
+.drawer-scroll{flex:1;overflow-y:auto;overflow-x:hidden;padding:0 12px}
+.drawer-scroll::-webkit-scrollbar{width:4px}
+.drawer-scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+.drawer-label{font-size:10.5px;color:var(--muted);padding:16px 10px 8px;text-transform:uppercase;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between}
+.drawer-nav{display:grid;gap:4px}
+.drawer-nav button{background:transparent;text-align:right;padding:11px 12px;border-radius:12px;color:var(--text);display:flex;gap:12px;align-items:center;font-size:13.5px;width:100%;opacity:.75}
+.drawer-nav button:active{background:var(--panel2)}
+.drawer-nav button.active{background:var(--panel2);color:var(--text);box-shadow:inset -3px 0 var(--cyan);opacity:1}
+.drawer-nav .ico{width:20px;text-align:center;color:var(--muted);flex:none;display:grid;place-items:center}
+.drawer-nav button.active .ico{color:var(--cyan)}
+.conv-list{display:grid;gap:3px}
+.conv-item{display:flex;align-items:center;gap:10px;padding:10px 10px 10px 6px;border-radius:12px;text-align:right;width:100%;cursor:pointer;position:relative;transition:.15s}
+.conv-item:active{background:var(--panel2)}
+.conv-item.active{background:linear-gradient(135deg,#21404c,#26335c);box-shadow:inset -3px 0 var(--cyan)}
+html[data-theme="light"] .conv-item.active{background:linear-gradient(135deg,#d3ecf3,#dde3f8)}
+.conv-item .conv-ic{height:34px;width:34px;border-radius:10px;flex:none;display:grid;place-items:center;color:var(--cyan);background:var(--panel2);border:1px solid var(--line)}
+.conv-item.active .conv-ic{background:linear-gradient(135deg,var(--cyan),var(--violet));color:#08101c;border-color:transparent}
+.conv-item .conv-body{flex:1;min-width:0}
+.conv-item .conv-title{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.conv-item.active .conv-title{color:#fff}
+html[data-theme="light"] .conv-item.active .conv-title{color:var(--text)}
+.conv-item .conv-preview{font-size:10.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.conv-item .conv-more{height:28px;width:28px;border-radius:8px;flex:none;display:grid;place-items:center;color:var(--muted)}
+.conv-item .conv-more:active{background:#00000033;transform:scale(.9)}
+.drawer-footer{flex:none;padding:14px 18px 0;margin-top:10px;border-top:1px solid var(--line);display:flex;align-items:center;gap:11px}
+.drawer-footer .avatar{height:38px;width:38px;border-radius:11px;background:var(--panel2);display:grid;place-items:center;color:var(--cyan);font-size:12px;font-weight:700;flex:none;border:1px solid var(--line)}
+.drawer-footer b{font-size:12.5px;display:block}
+.drawer-footer small{color:var(--muted);font-size:10.5px;display:block;margin-top:2px}
+.dot{height:8px;width:8px;border-radius:50%;background:var(--green);box-shadow:0 0 9px var(--green);margin-right:auto}
+.toast{position:fixed;bottom:calc(24px + var(--safe-bottom));left:50%;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--panel);border:1px solid var(--line);color:var(--text);padding:11px 18px;border-radius:12px;font-size:12px;transition:.25s;pointer-events:none;z-index:250;max-width:90vw;box-shadow:0 14px 40px #0006;display:flex;align-items:center;gap:9px}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.success{border-color:#2c5a47;background:linear-gradient(180deg,#0e1c18,#101822)}
+.toast.error{border-color:#5a2a32;background:linear-gradient(180deg,#1c1013,#101822)}
+.toast.warn{border-color:#5a4a2a;background:linear-gradient(180deg,#1c1710,#101822)}
+.toast.info{border-color:#2a4a5a;background:linear-gradient(180deg,#0f1a22,#101822)}
+.toast.auto{border-color:#2c5a47;background:linear-gradient(180deg,#0f2a1e,#0d1a15)}
+html[data-theme="light"] .toast.success{background:#e6f7ee;color:#0e5a3e}
+html[data-theme="light"] .toast.error{background:#fdecef;color:#8a1f30}
+html[data-theme="light"] .toast.warn{background:#fdf3e3;color:#7a4a10}
+html[data-theme="light"] .toast.info{background:#e5f0f7;color:#0d4a63}
+.divider{height:1px;background:var(--line);margin:20px 0}
+@media(min-width:560px){
+.page:not(.chat-page){max-width:520px;margin:0 auto;padding-inline:20px}
+.metrics{margin:0;padding-inline:0}
+.chat-page{max-width:620px;margin:0 auto;border-left:1px solid var(--line);border-right:1px solid var(--line)}
+}
+</style>
+</head>
+<body>
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+  <symbol id="i-menu" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/></symbol>
+  <symbol id="i-auto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18" fill="currentColor" stroke="none" opacity=".3"/></symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91 0z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-attach" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/><path d="M15 5l4 4"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></symbol>
+  <symbol id="i-spinner" viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></symbol>
+  <symbol id="i-flask" viewBox="0 0 24 24"><path d="M10 2v6.5L4 20a2 2 0 0 0 2 3h12a2 2 0 0 0 2-3l-6-11.5V2"/><line x1="8" y1="2" x2="16" y2="2"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+</svg>
+
+<!-- ============ Topbar (صفحات غير المحادثة) ============ -->
+<header class="topbar" id="mainTopbar">
+<button class="icon-btn" id="menuBtn"><svg class="icon"><use href="#i-menu"/></svg></button>
+<div class="brand-logo" id="brandLogo">F</div>
+<div class="title">
+<strong id="pageTitle">نظرة عامة</strong>
+<small id="pageSubtitle">مركز تحكم العامل الذكي</small>
+</div>
+<button class="icon-btn" id="themeQuickBtn"><svg class="icon"><use href="#i-moon"/></svg></button>
+</header>
+
+<div class="pages">
+<!-- ============ Overview ============ -->
+<section class="page active" id="page-overview" data-title="نظرة عامة" data-subtitle="مركز تحكم العامل الذكي">
+<div class="hero">
+<h1>مركز تحكم العامل الذكي</h1>
+<p>راقب المحادثات، نسّق المهام، وتحقق من نتائج الأدوات في مكان واحد.</p>
+<button class="run-btn" id="runNewTaskBtn"><svg class="icon"><use href="#i-plus"/></svg> تشغيل مهمة جديدة</button>
+</div>
+<div class="metrics">
+<div class="metric"><small>طلبات اليوم</small><strong id="mTasks">—</strong><div class="trend" id="mTasksTrend">—</div><div class="bar"><i id="bTasks" style="width:0%"></i></div></div>
+<div class="metric"><small>التوكنات</small><strong id="mTools">—</strong><div class="trend">in + out</div><div class="bar"><i id="bTools" style="width:0%"></i></div></div>
+<div class="metric"><small>التكلفة</small><strong id="mTokens">—</strong><div class="trend">هذا اليوم</div><div class="bar"><i id="bTokens" style="width:0%"></i></div></div>
+<div class="metric"><small>التجارب</small><strong id="mCost">—</strong><div class="trend">من العامل</div><div class="bar"><i id="bCost" style="width:0%"></i></div></div>
+</div>
+<div class="section">
+<div class="section-head"><h2>الحصة والطلبات</h2></div>
+<div class="card">
+<div id="budgetOverview" style="font-size:12px;color:var(--muted);margin-bottom:12px">لا توجد حصة نشطة</div>
+</div>
+</div>
+<div class="section">
+<div class="section-head"><h2>النشاط الأخير</h2></div>
+<div class="card"><div class="activity" id="overviewActivity"><div style="font-size:11px;color:var(--muted);text-align:center;padding:10px">جارٍ التحميل...</div></div></div>
+</div>
+</section>
+
+<!-- ============ Chat ============ -->
+<section class="page chat-page" id="page-chats" data-title="المحادثات" data-subtitle="تحدث مع FOX AI">
+<div class="chat-bar">
+<button class="chat-bar-btn" id="chatMenuBtn"><svg class="icon"><use href="#i-menu"/></svg></button>
+<div class="chat-bar-title">
+<b id="chatHeaderTitle">محادثة جديدة</b>
+<small id="chatStatusWrap"><i></i><span id="chatStatus">متصل · جاهز</span></small>
+</div>
+<button class="chat-bar-btn" id="chatOptionsBtn"><svg class="icon"><use href="#i-dots"/></svg></button>
+</div>
+
+<div class="chat-scroll" id="chatScroll">
+</div>
+
+<div class="composer-full">
+<button class="scroll-down" id="scrollDownBtn"><svg class="icon"><use href="#i-chevron-down"/></svg></button>
+<div class="attachments-preview" id="attachPreview"></div>
+<div class="composer-box">
+<textarea id="chatInput" rows="1" placeholder="اكتب رسالة... (Ctrl/⌘ + Enter للإرسال)"></textarea>
+<div class="composer-actions">
+<div class="left-actions">
+<button class="action-btn" id="attachBtn" aria-label="إرفاق"><svg class="icon"><use href="#i-attach"/></svg></button>
+<button class="action-btn" id="voiceBtn" aria-label="إدخال صوتي"><svg class="icon"><use href="#i-mic"/></svg></button>
+</div>
+<div class="right-actions">
+<button class="model-btn" id="modelBtn" aria-label="اختيار النموذج">
+<svg class="icon sm"><use href="#i-sparkle"/></svg>
+<span id="currentModelLabel">Auto</span>
+</button>
+<button class="send-btn" id="sendBtn" disabled aria-label="إرسال"><svg class="icon"><use href="#i-send"/></svg></button>
+</div>
+</div>
+</div>
+<input type="file" id="fileInput" multiple hidden />
+</div>
+</section>
+
+<!-- ============ Tasks ============ -->
+<section class="page" id="page-tasks" data-title="المهام والخطط" data-subtitle="إدارة المهام النشطة والمنجزة">
+<div class="section">
+<div class="section-head"><h2>خطة المهمة الحالية</h2><a id="newTaskLink">+ جديدة</a></div>
+<div class="card" id="taskCard"><div style="color:var(--muted);font-size:12px">لا توجد مهمة نشطة</div></div>
+</div>
+<div class="section">
+<div class="section-head"><h2>الأحداث</h2></div>
+<div class="card" id="taskEventsCard"><div style="color:var(--muted);font-size:12px">لا توجد أحداث</div></div>
+</div>
+</section>
+
+<!-- ============ Memory ============ -->
+<section class="page" id="page-memory" data-title="الذاكرة" data-subtitle="سياق العامل">
+<div class="section">
+<div class="section-head"><h2>ذاكرة السياق</h2><a id="clearMemoryLink">مسح</a></div>
+<div class="card" id="memoryCard"><div style="color:var(--muted);font-size:12px">لا توجد ذاكرة</div></div>
+</div>
+</section>
+
+<!-- ============ Files ============ -->
+<section class="page" id="page-files" data-title="الملفات" data-subtitle="المستندات والمخرجات">
+<div class="section">
+<div class="section-head"><h2>الملفات الأخيرة</h2></div>
+<div class="card" id="filesCard"><div style="color:var(--muted);font-size:12px">لا توجد ملفات</div></div>
+</div>
+</section>
+
+<!-- ============ Experiments ============ -->
+<section class="page" id="page-experiments" data-title="التجارب" data-subtitle="تشغيلات العامل">
+<div class="section">
+<div class="section-head"><h2>التجارب النشطة</h2></div>
+<div class="card" id="experimentsCard"><div style="color:var(--muted);font-size:12px">لا توجد تجارب</div></div>
+</div>
+</section>
+
+<!-- ============ Settings ============ -->
+<section class="page" id="page-settings" data-title="الإعدادات" data-subtitle="تفضيلات التطبيق">
+<div class="section">
+<div class="section-head"><h2>المظهر</h2></div>
+<div class="card">
+<div class="theme-picker" id="themePicker">
+<button class="theme-opt" data-theme-opt="light"><span><svg class="icon lg"><use href="#i-sun"/></svg></span>فاتح</button>
+<button class="theme-opt" data-theme-opt="dark"><span><svg class="icon lg"><use href="#i-moon"/></svg></span>داكن</button>
+<button class="theme-opt active" data-theme-opt="auto"><span><svg class="icon lg"><use href="#i-auto"/></svg></span>تلقائي</button>
+</div>
+</div>
+</div>
+<div class="section">
+<div class="section-head"><h2>الحساب</h2></div>
+<div class="card">
+<div class="setting-item" id="logoutItem" style="cursor:pointer">
+<div class="setting-icon"><svg class="icon"><use href="#i-logout"/></svg></div>
+<div class="setting-text"><b>تسجيل الخروج</b><small>إنهاء الجلسة</small></div>
+<span class="arrow"><svg class="icon sm"><use href="#i-chevron"/></svg></span>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ============ Help ============ -->
+<section class="page" id="page-help" data-title="المساعدة" data-subtitle="دليل الاستخدام">
+<div class="section">
+<div class="section-head"><h2>حول FOX AI</h2></div>
+<div class="card">
+<div style="font-size:12px;color:var(--muted);line-height:1.9">
+<b style="color:var(--text);display:block;margin-bottom:8px">عامل ذكي متكامل</b>
+يتصل مباشرة بـ Cloudflare Worker. يدير المحادثات والمهام والأدوات والتجارب.
+</div>
+</div>
+</div>
+</section>
+</div>
+
+<!-- ============ Drawer ============ -->
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<aside class="drawer" id="drawer">
+<div class="drawer-brand">
+<div class="brand-logo">F</div>
+<div><strong>FOX AI</strong><small>Agent orchestration</small></div>
+</div>
+<button class="new-chat-btn" id="newConvBtn"><svg class="icon"><use href="#i-plus"/></svg> محادثة جديدة</button>
+<div class="drawer-scroll">
+<div class="drawer-label"><span>المحادثات</span></div>
+<div class="conv-list" id="convList"></div>
+<div class="drawer-label" style="margin-top:14px"><span>مساحة العمل</span></div>
+<nav class="drawer-nav" id="drawerNav">
+<button class="active" data-page="overview"><span class="ico"><svg class="icon sm"><use href="#i-home"/></svg></span>نظرة عامة</button>
+<button data-page="tasks"><span class="ico"><svg class="icon sm"><use href="#i-check"/></svg></span>المهام والخطط</button>
+<button data-page="memory"><span class="ico"><svg class="icon sm"><use href="#i-brain"/></svg></span>الذاكرة</button>
+<button data-page="files"><span class="ico"><svg class="icon sm"><use href="#i-folder"/></svg></span>الملفات</button>
+<button data-page="experiments"><span class="ico"><svg class="icon sm"><use href="#i-flask"/></svg></span>التجارب</button>
+</nav>
+<div class="drawer-label" style="margin-top:14px"><span>النظام</span></div>
+<nav class="drawer-nav">
+<button data-page="settings"><span class="ico"><svg class="icon sm"><use href="#i-settings"/></svg></span>الإعدادات</button>
+<button data-page="help"><span class="ico"><svg class="icon sm"><use href="#i-help"/></svg></span>المساعدة</button>
+</nav>
+</div>
+<div class="drawer-footer">
+<div class="avatar">AI</div>
+<div><b>بيئة الإنتاج</b><small>fox1-ai · workers.dev</small></div>
+<i class="dot"></i>
+</div>
+</aside>
+
+<!-- ============ Action Sheet ============ -->
+<div class="action-backdrop" id="actionBackdrop"></div>
+<div class="action-sheet" id="actionSheet">
+<div class="action-handle"></div>
+<div class="action-title" id="actionTitle"></div>
+<div id="actionItems"></div>
+</div>
+
+<!-- ============ Modal (معاينة الملفات) ============ -->
+<div class="modal-backdrop" id="attachmentModal">
+<div class="modal-sheet" onclick="event.stopPropagation()">
+<div class="modal-head">
+<div class="modal-title">
+<b id="modalTitle">ملف</b>
+<small id="modalSubtitle">—</small>
+</div>
+<button class="modal-close" id="modalClose" aria-label="إغلاق"><svg class="icon lg"><use href="#i-x"/></svg></button>
+</div>
+<div class="modal-body" id="modalBody">
+<div class="modal-loading"><div class="spinner"></div><span>جارٍ التحميل...</span></div>
+</div>
+<div class="modal-foot">
+<button id="modalDownload"><svg class="icon sm"><use href="#i-download"/></svg> تنزيل</button>
+<button id="modalCopy" class="primary"><svg class="icon sm"><use href="#i-copy"/></svg> نسخ</button>
+</div>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// FOX AI — v9.0
+// تصميم جديد: شريط واحد، أزرار أسفل، Bottom Sheet، Modal للمرفقات
+// ============================================================
+
+// ⭐ إصلاح viewport للأندرويد
+(function() {
+  function setRealViewportHeight() {
+    const h = (window.visualViewport ? window.visualViewport.height : window.innerHeight) * 0.01;
+    document.documentElement.style.setProperty('--vh', h + 'px');
+  }
+  setRealViewportHeight();
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', setRealViewportHeight);
+    window.visualViewport.addEventListener('scroll', setRealViewportHeight);
+  }
+  window.addEventListener('resize', setRealViewportHeight);
+  window.addEventListener('orientationchange', () => setTimeout(setRealViewportHeight, 150));
+})();
+
+const FOX = {
+  BASE: 'https://fox1-ai.abdelrhym096290.workers.dev/',
+  SESSION_KEY: 'fox_session',
+  CHAT_KEY: 'fox_chat_id',
+  MODEL_KEY: 'fox_model',
+  POLL_MS: 3000,
+  LIMITS: {
+    MAX_FILE_SIZE: 50 * 1024 * 1024,
+    MAX_FILES_PER_MSG: 20,
+    MAX_TOTAL_ATTACHMENTS: 100 * 1024 * 1024,
+    MAX_MESSAGE_TEXT: 200000,
+    MAX_FILE_TEXT: 2000000,
+    COLLAPSE_THRESHOLD: 600,
+    ATTACH_PREVIEW_CHARS: 2000,
+  },
+};
+
+const Svg = { icon: (n, c='icon') => `<svg class="${c}"><use href="#i-${n}"/></svg>` };
+
+const U = {
+  esc: t => String(t ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
+  now: () => { const d = new Date(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; },
+  hhmm: ts => new Date(ts).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+  uid: () => 'id_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
+  sleep: ms => new Promise(r => setTimeout(r, ms)),
+  fmt: n => new Intl.NumberFormat('ar-EG').format(n || 0),
+  bytes: n => { if (n < 1024) return n + ' B'; if (n < 1048576) return (n/1024).toFixed(1) + ' KB'; if (n < 1073741824) return (n/1048576).toFixed(1) + ' MB'; return (n/1073741824).toFixed(2) + ' GB'; },
+  ago: ts => { const s = Math.floor((Date.now() - ts)/1000); if (s < 60) return 'منذ ' + s + 'ث'; if (s < 3600) return 'منذ ' + Math.floor(s/60) + 'د'; if (s < 86400) return 'منذ ' + Math.floor(s/3600) + 'س'; return 'منذ ' + Math.floor(s/86400) + 'ي'; },
+  isImageMime: mime => /^image\//.test(String(mime || '')),
+  isTextMime: mime => /^text\//.test(mime || '') || /json|xml|javascript|yaml/.test(mime || ''),
+  fileIconFor: (mime, name) => {
+    if (/^image\//.test(mime || '')) return 'image';
+    if (/pdf/.test(mime || '') || /\.pdf$/i.test(name || '')) return 'file';
+    if (/zip|rar|tar|gzip/.test(mime || '')) return 'folder';
+    return 'file';
+  },
+  toast: (msg, type='info') => {
+    const t = document.getElementById('toast');
+    if (!t) return;
+    const icons = { info: 'i-info', success: 'i-check', error: 'i-alert', warn: 'i-alert', auto: 'i-rocket' };
+    t.className = 'toast ' + type;
+    t.innerHTML = `${Svg.icon(icons[type] || 'i-info', 'icon sm')}<span>${U.esc(msg)}</span>`;
+    t.classList.add('show');
+    clearTimeout(t._t);
+    t._t = setTimeout(() => t.classList.remove('show'), 2600);
+  },
+};
+
+async function copyText(text) {
+  const v = String(text ?? '');
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(v); return true; } } catch {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = v; ta.style.cssText = 'position:fixed;top:-9999px;opacity:0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = U.esc(String(text));
+  html = html.replace(/```([a-zA-Z0-9_\-]*)\n?([\s\S]*?)```/g, (m, lang, code) => {
+    return `<div class="code-wrap"><button class="code-copy" data-copy-inline="${U.esc(code)}">${Svg.icon('copy', 'icon sm')}<span>نسخ</span></button><pre><code>${code.replace(/\n$/, '')}</code></pre></div>`;
+  });
+  html = html.replace(/`([^`\n]+)`/g, (m, code) => `<code data-inline-copy="${U.esc(code)}">${code}</code>`);
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--cyan)">$1</a>');
+  html = html.replace(/\n/g, '<br/>');
+  return html;
+}
+
+// ═══ Attachments ═══
+const Attachments = {
+  async open(attId) {
+    const modal = document.getElementById('attachmentModal');
+    const body = document.getElementById('modalBody');
+    const title = document.getElementById('modalTitle');
+    const subtitle = document.getElementById('modalSubtitle');
+    const dlBtn = document.getElementById('modalDownload');
+    const copyBtn = document.getElementById('modalCopy');
+
+    modal.classList.add('show');
+    body.innerHTML = '<div class="modal-loading"><div class="spinner"></div><span>جارٍ التحميل...</span></div>';
+    title.textContent = 'ملف';
+    subtitle.textContent = '—';
+
+    let loaded = null;
+    try {
+      const r = await api.call('get_attachment', { attachmentId: attId });
+      loaded = r.attachment;
+    } catch (e) {
+      body.innerHTML = `<div style="text-align:center;color:var(--danger);padding:20px">فشل التحميل: ${U.esc(e.message || '')}</div>`;
+      return;
+    }
+
+    if (!loaded) { body.innerHTML = '<div style="text-align:center;color:var(--danger);padding:20px">الملف غير موجود</div>'; return; }
+
+    title.textContent = loaded.name || 'ملف';
+    subtitle.textContent = `${loaded.mime || 'unknown'} · ${U.bytes(loaded.size || 0)}`;
+
+    const isImg = U.isImageMime(loaded.mime);
+    const isText = U.isTextMime(loaded.mime) || typeof loaded.content === 'string';
+
+    if (isImg && loaded.content) {
+      body.innerHTML = `<img src="${loaded.storageKind === 'release' ? U.esc(loaded.rawUrl) : loaded.content}" alt="" />`;
+      copyBtn.style.display = 'none';
+    } else if (isText && typeof loaded.content === 'string') {
+      body.innerHTML = `<pre>${U.esc(loaded.content)}</pre>`;
+      copyBtn.style.display = 'inline-flex';
+      copyBtn.onclick = async () => {
+        if (await copyText(loaded.content)) U.toast('تم النسخ', 'success');
+      };
+    } else if (loaded.content) {
+      // ثنائي (PDF وغيرها) — نحاول عرضه أو تنزيله
+      if (loaded.mime === 'application/pdf') {
+        body.innerHTML = `<iframe src="${U.esc(loaded.rawUrl)}"></iframe>`;
+      } else {
+        body.innerHTML = `<div style="text-align:center;padding:30px;color:var(--muted)">
+          <div style="font-size:40px;margin-bottom:10px">📄</div>
+          <div>لا يمكن معاينة هذا النوع مباشرة</div>
+          <div style="font-size:11px;margin-top:8px">${U.esc(loaded.mime)}</div>
+        </div>`;
+      }
+      copyBtn.style.display = 'none';
+    } else {
+      body.innerHTML = `<div style="text-align:center;color:var(--muted);padding:20px">لا يوجد محتوى</div>`;
+    }
+
+    dlBtn.onclick = () => {
+      if (!loaded.rawUrl) { U.toast('تعذّر إنشاء رابط التنزيل', 'error'); return; }
+      const a = document.createElement('a');
+      a.href = loaded.rawUrl;
+      a.download = loaded.name || 'file';
+      a.click();
+    };
+  },
+  close() {
+    document.getElementById('attachmentModal').classList.remove('show');
+  },
+  // ⭐ معاينة مرفق محلي قيد الإرسال (قبل وصول معرّف من الخادم) — يعيد استخدام نفس المودال
+  // لكن يقرأ من state.attachments مباشرة بدل طلب get_attachment.
+  openLocal(index) {
+    const a = state.attachments[index];
+    if (!a) return;
+    const modal = document.getElementById('attachmentModal');
+    const body = document.getElementById('modalBody');
+    const title = document.getElementById('modalTitle');
+    const subtitle = document.getElementById('modalSubtitle');
+    const dlBtn = document.getElementById('modalDownload');
+    const copyBtn = document.getElementById('modalCopy');
+
+    modal.classList.add('show');
+    title.textContent = a.name || 'ملف';
+    subtitle.textContent = `${a.mime || 'unknown'} · ${U.bytes(a.size || 0)} · قيد الإرسال`;
+
+    const isImg = U.isImageMime(a.mime) && a.data;
+    const isText = a.text != null;
+
+    if (isImg) {
+      body.innerHTML = `<img src="${U.esc(a.data)}" alt="" />`;
+      copyBtn.style.display = 'none';
+    } else if (isText) {
+      body.innerHTML = `<pre>${U.esc(a.text)}</pre>`;
+      copyBtn.style.display = 'inline-flex';
+      copyBtn.onclick = async () => { if (await copyText(a.text)) U.toast('تم النسخ', 'success'); };
+    } else {
+      body.innerHTML = `<div style="text-align:center;padding:30px;color:var(--muted)">
+        <div style="font-size:40px;margin-bottom:10px">📄</div>
+        <div>لا يمكن معاينة هذا النوع مباشرة</div>
+      </div>`;
+      copyBtn.style.display = 'none';
+    }
+
+    dlBtn.onclick = () => {
+      if (!a.data) { U.toast('لا يوجد محتوى قابل للتنزيل بعد', 'warn'); return; }
+      const el = document.createElement('a');
+      el.href = a.data;
+      el.download = a.name || 'file';
+      el.click();
+    };
+  },
+  renderInline(ids) {
+    if (!ids || !ids.length) return '';
+    if (typeof ids === 'string') {
+      try { ids = JSON.parse(ids); } catch { ids = [ids]; }
+    }
+    if (!Array.isArray(ids)) ids = [ids];
+    return `<div class="att-stack">${ids.map(id => {
+      const info = state.attachmentsIndex[id];
+      const name = info ? info.name : 'ملف مرفق';
+      const isImg = info && U.isImageMime(info.mime);
+      const icon = isImg ? 'image' : 'file';
+      // ⭐ صورة مصغّرة فعلية إن توفّر رابط موقّع (بعد إعادة تحميل المحادثة)، بدل أيقونة عامة دائماً
+      const thumbHtml = (isImg && info.rawUrl)
+        ? `<img src="${U.esc(info.rawUrl)}" alt="" loading="lazy" />`
+        : `<span class="att-ic">${Svg.icon(icon, 'icon sm')}</span>`;
+      return `
+      <div class="att-card" data-att-id="${U.esc(id)}">
+        <div class="att-thumb">${thumbHtml}</div>
+        <div class="att-info"><b title="${U.esc(name)}">${U.esc(name)}</b></div>
+      </div>`;
+    }).join('')}</div>`;
+  },
+  // ⭐ عرض فوري لمرفقات قيد الإرسال — قبل أن يعيد الخادم معرّفاتها الحقيقية.
+  // بلا data-att-id عمداً حتى لا يُربط لها حدث نقر (لا يوجد بعد ما تُعرض عليه).
+  renderPending(list) {
+    if (!list || !list.length) return '';
+    return `<div class="att-stack">${list.map(a => {
+      const isImg = U.isImageMime(a.mime) && a.data;
+      const thumbHtml = isImg
+        ? `<img src="${U.esc(a.data)}" alt="" />`
+        : `<span class="att-ic">📎</span>`;
+      return `
+      <div class="att-card pending">
+        <div class="att-thumb">${thumbHtml}</div>
+        <div class="att-info"><b title="${U.esc(a.name)}">${U.esc(a.name)}</b></div>
+      </div>`;
+    }).join('')}</div>`;
+  },
+};
+
+// ═══ Tool Cards ═══
+const ToolCards = {
+  render(c) {
+    const el = document.createElement('div');
+    el.className = 'tool-card' + (c.kind === 'proposal' ? ' proposal' : '') + (c.kind === 'correction' ? ' correction' : '') + (c.open ? ' open' : '') + (c.auto ? ' auto' : '');
+    el.dataset.cardId = c.id;
+    const statusMap = {
+      waiting: `${Svg.icon('clock', 'icon sm')} بانتظارك`,
+      running: `<svg class="icon sm spin"><use href="#i-spinner"/></svg> يعمل`,
+      done: `${Svg.icon('check', 'icon sm')} اكتمل`,
+      failed: `${Svg.icon('x', 'icon sm')} فشل`,
+      auto: `${Svg.icon('rocket', 'icon sm')} تلقائي`,
+    };
+    el.innerHTML = `
+      <div class="tool-head">
+        <span class="t-chev">${Svg.icon('chevron', 'icon sm')}</span>
+        <span class="t-icon">${Svg.icon(c.icon || 'terminal', 'icon')}</span>
+        <span class="t-title">${U.esc(c.title)}</span>
+        <span class="t-status ${c.status}">${statusMap[c.status] || ''}</span>
+      </div>
+      <div class="tool-body">${c.bodyHtml || ''}</div>`;
+    el.querySelector('.tool-head').onclick = () => el.classList.toggle('open');
+    setTimeout(() => ToolCards.wire(el), 10);
+    return el;
+  },
+  wire(root) {
+    root.querySelectorAll('.code-copy').forEach(btn => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const code = btn.dataset.copyInline || btn.closest('.code-wrap')?.querySelector('pre code')?.textContent || '';
+        if (await copyText(code)) {
+          btn.innerHTML = `${Svg.icon('check', 'icon sm')}<span>تم</span>`;
+          setTimeout(() => btn.innerHTML = `${Svg.icon('copy', 'icon sm')}<span>نسخ</span>`, 1200);
+        }
+      };
+    });
+    root.querySelectorAll('[data-action]').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const act = btn.dataset.action;
+        const payload = btn.dataset.payload ? JSON.parse(btn.dataset.payload) : {};
+        if (act === 'copy') copyText(payload.text || '').then(ok => ok && U.toast('تم النسخ', 'success'));
+        else if (act === 'retry') Actions.retryExperiment(payload.experimentId);
+        else if (act === 'approve') Actions.approveFromCard(payload);
+        else if (act === 'reject') Actions.rejectFromCard(payload);
+        else if (act === 'activate_autopilot') Actions.activateAutopilot();
+      };
+    });
+  },
+};
+
+// ═══ API ═══
+const api = {
+  token: null,
+  async call(action, payload = {}, opts = {}) {
+    const tries = opts.retry ?? 2;
+    let lastErr;
+    for (let i = 0; i <= tries; i++) {
+      try {
+        const res = await fetch(FOX.BASE, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action, sessionToken: this.token, ...payload }),
+        });
+        if (res.status === 401) {
+          const d = await res.json().catch(() => ({}));
+          if (d.authRequired) auth.onUnauthorized();
+          else if (d.needsUserLogin) auth.showAccountGate();
+          throw Object.assign(new Error(d.error || 'unauthorized'), { status: 401 });
+        }
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({ error: 'HTTP ' + res.status }));
+          const e = Object.assign(new Error(d.error || 'request_failed'), { status: res.status, data: d });
+          if (res.status >= 500 && i < tries) { lastErr = e; await U.sleep(300 * (i + 1)); continue; }
+          throw e;
+        }
+        return await res.json();
+      } catch (e) {
+        if (e.status === 401) throw e;
+        lastErr = e;
+        if (i < tries && !e.status) { await U.sleep(300 * (i + 1)); continue; }
+        throw e;
+      }
+    }
+    throw lastErr;
+  },
+  login: p => api.call('login', { accessPassword: p }, { retry: 0 }),
+  checkSession: () => api.call('check_session', {}, { retry: 0 }),
+  userSignup: (username, password) => api.call('user_signup', { username, password }, { retry: 0 }),
+  userLogin: (username, password) => api.call('user_login', { username, password }, { retry: 0 }),
+  logout: () => api.call('logout', {}),
+  models: () => api.call('models', {}, { retry: 0 }),
+  poll: (chatId, since) => api.call('poll', { chatId, since }, { retry: 0 }),
+  getMessages: chatId => api.call('get_messages', { chatId }),
+  listConversations: limit => api.call('list_conversations', limit ? { limit } : {}),
+  chatEvents: chatId => api.call('chat_events', { chatId }),
+  getMemory: chatId => api.call('get_memory', { chatId }),
+  memoryUpdate: (chatId, content) => api.call('memory_update', { chatId, content }),
+  planTask: p => api.call('plan_task', p),
+  runTool: p => api.call('run_tool', p),
+  toolBudget: chatId => api.call('tool_budget', { chatId }),
+  requestAutopilot: (chatId, reason) => api.call('request_autopilot', { chatId, reason }, { retry: 0 }),
+  stopAutopilot: (chatId, reason) => api.call('stop_autopilot', { chatId, reason }),
+  workspaceStatus: chatId => api.call('workspace_status', { chatId }),
+  getExperiment: experimentId => api.call('get_experiment', { experimentId }),
+  getExperiments: () => api.call('get_experiments', {}),
+  cancelExperiment: experimentId => api.call('cancel_experiment', { experimentId }),
+  getAttachment: attachmentId => api.call('get_attachment', { attachmentId }),
+  getAttachments: chatId => api.call('get_attachments', { chatId }),
+  downloadFile: async assetId => {
+    const res = await fetch(FOX.BASE, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'download_file', sessionToken: api.token, assetId }),
+    });
+    if (!res.ok) throw new Error('download_failed');
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'file_' + assetId.slice(0, 8);
+    a.click();
+    URL.revokeObjectURL(a.href);
+  },
+  renameConversation: (chatId, title) => api.call('rename_conversation', { chatId, title }),
+  deleteConversation: chatId => api.call('delete_conversation', { chatId }),
+  usage: () => api.call('usage', {}),
+};
+
+// ═══ SSE Chat ═══
+let currentStream = null;
+async function chatStream(payload, handlers) {
+  const { onStart, onChunk, onMeta, onError, onAutoExecuted, onAutopilotBlocked } = handlers;
+  const controller = new AbortController();
+  currentStream = controller;
+  try {
+    const res = await fetch(FOX.BASE, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'chat', sessionToken: api.token, ...payload }),
+      signal: controller.signal,
+    });
+    if (res.status === 401) { auth.onUnauthorized(); throw new Error('انتهت الجلسة'); }
+    if (!res.ok) {
+      let msg = 'HTTP ' + res.status;
+      try { const d = await res.json(); msg = d.error || msg; } catch {}
+      throw new Error(msg);
+    }
+    if (!res.body) throw new Error('البث غير مدعوم');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const handleEvent = (block) => {
+      const lines = block.split('\n');
+      let evt = 'message', data = '';
+      for (const line of lines) {
+        if (line.startsWith('event:')) evt = line.slice(6).trim();
+        else if (line.startsWith('data:')) data += line.slice(5).trim();
+      }
+      if (!data) return;
+      let obj;
+      try { obj = JSON.parse(data); } catch { return; }
+      if (evt === 'start') onStart && onStart(obj);
+      else if (evt === 'chunk') onChunk && onChunk(obj.text || '');
+      else if (evt === 'meta') onMeta && onMeta(obj);
+      else if (evt === 'error') onError && onError(obj.message || 'خطأ');
+      else if (evt === 'auto_executed') onAutoExecuted && onAutoExecuted(obj);
+      else if (evt === 'autopilot_blocked') onAutopilotBlocked && onAutopilotBlocked(obj);
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        if (block.trim()) handleEvent(block);
+      }
+    }
+  } finally {
+    if (currentStream === controller) currentStream = null;
+  }
+}
+
+function abortCurrentStream() {
+  if (currentStream) { try { currentStream.abort(); } catch {} currentStream = null; }
+}
+
+// ═══ Auth ═══
+const auth = {
+  token: null,
+  init() { this.token = localStorage.getItem(FOX.SESSION_KEY); api.token = this.token; },
+  onUnauthorized() { this.token = null; api.token = null; localStorage.removeItem(FOX.SESSION_KEY); this.showLogin(); },
+  async check() { if (!this.token) return false; try { const r = await api.checkSession(); return !!r.valid; } catch { return false; } },
+  async login(pwd) {
+    const r = await api.login(pwd);
+    if (r.success && r.token) { this.token = r.token; api.token = r.token; localStorage.setItem(FOX.SESSION_KEY, r.token); return true; }
+    throw new Error(r.error || 'login_failed');
+  },
+  async logout() { try { await api.logout(); } catch {} this.token = null; api.token = null; localStorage.removeItem(FOX.SESSION_KEY); location.reload(); },
+  showLogin() {
+    let ov = document.getElementById('foxAuth');
+    if (ov) { ov.style.display = 'grid'; return; }
+    ov = document.createElement('div');
+    ov.id = 'foxAuth';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:var(--bg);display:grid;place-items:center;padding:24px';
+    ov.innerHTML = `<div style="width:100%;max-width:380px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:28px;box-shadow:var(--shadow)"><div style="display:flex;align-items:center;gap:12px;margin-bottom:20px"><div style="height:44px;width:44px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,var(--cyan),var(--violet));color:#08101c;font-weight:700;font-size:18px">F</div><div><div style="font-size:16px;font-weight:700">FOX AI</div><div style="font-size:11px;color:var(--muted)">مركز تحكم العامل الذكي</div></div></div><h3 style="font-size:15px;margin:0 0 8px">تسجيل الدخول</h3><p style="font-size:12px;color:var(--muted);margin:0 0 16px;line-height:1.7">أدخل كلمة المرور للوصول إلى العامل.</p><input id="foxPwd" type="password" placeholder="كلمة المرور..." style="width:100%;padding:12px 14px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:12px;font-size:13px;color:var(--text);outline:none;margin-bottom:14px;box-sizing:border-box" /><div id="foxErr" style="display:none;font-size:11px;color:#ff7283;margin-bottom:10px;padding:8px 10px;background:#3d1c22;border-radius:8px;line-height:1.6"></div><button id="foxBtn" style="width:100%;padding:13px;border-radius:12px;background:linear-gradient(135deg,#48cee3,#8b76ff);color:#08101c;font-weight:700;font-size:13px;border:0;cursor:pointer">دخول</button></div>`;
+    document.body.appendChild(ov);
+    const inp = document.getElementById('foxPwd');
+    const btn = document.getElementById('foxBtn');
+    const err = document.getElementById('foxErr');
+    const go = async () => {
+      const p = inp.value.trim(); if (!p) return;
+      btn.disabled = true; btn.textContent = 'جارٍ الدخول...'; err.style.display = 'none';
+      try { await auth.login(p); ov.remove(); foxApp.boot(); }
+      catch (e) { err.textContent = e.message || 'فشل الدخول'; err.style.display = 'block'; btn.disabled = false; btn.textContent = 'دخول'; }
+    };
+    btn.onclick = go;
+    inp.onkeydown = e => { if (e.key === 'Enter') go(); };
+    setTimeout(() => inp.focus(), 100);
+  },
+  // ⭐ الطبقة الثانية فوق بوابة كلمة المرور المشتركة: حساب شخصي (اسم مستخدم + كلمة مرور)
+  // يعزل محادثات كل شخص عن البقية. تظهر تلقائياً كلما أعاد الخادم needsUserLogin.
+  showAccountGate() {
+    let ov = document.getElementById('foxAccountGate');
+    if (ov) { ov.style.display = 'grid'; return; }
+    ov = document.createElement('div');
+    ov.id = 'foxAccountGate';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:var(--bg);display:grid;place-items:center;padding:24px';
+    ov.innerHTML = `<div style="width:100%;max-width:380px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:28px;box-shadow:var(--shadow)">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px"><div style="height:44px;width:44px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,var(--cyan),var(--violet));color:#08101c;font-weight:700;font-size:18px">F</div><div><div style="font-size:16px;font-weight:700">FOX AI</div><div style="font-size:11px;color:var(--muted)">حسابك الشخصي</div></div></div>
+      <div style="display:flex;gap:6px;margin-bottom:16px;background:var(--panel2);border-radius:10px;padding:4px">
+        <button id="acgTabLogin" style="flex:1;padding:8px;border-radius:8px;border:0;background:var(--cyan);color:#08101c;font-weight:700;font-size:12px;cursor:pointer">دخول</button>
+        <button id="acgTabSignup" style="flex:1;padding:8px;border-radius:8px;border:0;background:transparent;color:var(--muted);font-weight:700;font-size:12px;cursor:pointer">حساب جديد</button>
+      </div>
+      <p id="acgDesc" style="font-size:12px;color:var(--muted);margin:0 0 16px;line-height:1.7">سجّل الدخول بحسابك الشخصي — محادثاتك خاصة بك ولا يراها أحد غيرك.</p>
+      <input id="acgUser" type="text" placeholder="اسم المستخدم" style="width:100%;padding:12px 14px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:12px;font-size:13px;color:var(--text);outline:none;margin-bottom:10px;box-sizing:border-box" />
+      <input id="acgPass" type="password" placeholder="كلمة المرور" style="width:100%;padding:12px 14px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:12px;font-size:13px;color:var(--text);outline:none;margin-bottom:14px;box-sizing:border-box" />
+      <div id="acgErr" style="display:none;font-size:11px;color:#ff7283;margin-bottom:10px;padding:8px 10px;background:#3d1c22;border-radius:8px;line-height:1.6"></div>
+      <button id="acgBtn" style="width:100%;padding:13px;border-radius:12px;background:linear-gradient(135deg,#48cee3,#8b76ff);color:#08101c;font-weight:700;font-size:13px;border:0;cursor:pointer">دخول</button>
+    </div>`;
+    document.body.appendChild(ov);
+
+    const userInp = document.getElementById('acgUser');
+    const passInp = document.getElementById('acgPass');
+    const err = document.getElementById('acgErr');
+    const btn = document.getElementById('acgBtn');
+    const desc = document.getElementById('acgDesc');
+    const tabLogin = document.getElementById('acgTabLogin');
+    const tabSignup = document.getElementById('acgTabSignup');
+    let mode = 'login';
+
+    const setMode = m => {
+      mode = m;
+      err.style.display = 'none';
+      if (m === 'login') {
+        tabLogin.style.background = 'var(--cyan)'; tabLogin.style.color = '#08101c';
+        tabSignup.style.background = 'transparent'; tabSignup.style.color = 'var(--muted)';
+        desc.textContent = 'سجّل الدخول بحسابك الشخصي — محادثاتك خاصة بك ولا يراها أحد غيرك.';
+        btn.textContent = 'دخول';
+      } else {
+        tabSignup.style.background = 'var(--cyan)'; tabSignup.style.color = '#08101c';
+        tabLogin.style.background = 'transparent'; tabLogin.style.color = 'var(--muted)';
+        desc.textContent = 'أنشئ حساباً خاصاً بك (3 أحرف على الأقل لاسم المستخدم، و6 لكلمة المرور).';
+        btn.textContent = 'إنشاء الحساب';
+      }
+    };
+    tabLogin.onclick = () => setMode('login');
+    tabSignup.onclick = () => setMode('signup');
+
+    const go = async () => {
+      const u = userInp.value.trim(), p = passInp.value;
+      if (!u || !p) return;
+      btn.disabled = true; err.style.display = 'none';
+      const prevText = btn.textContent; btn.textContent = 'جارٍ التنفيذ...';
+      try {
+        const r = mode === 'login' ? await api.userLogin(u, p) : await api.userSignup(u, p);
+        if (r.success) { ov.remove(); location.reload(); return; }
+        throw new Error(r.error || 'فشل');
+      } catch (e) {
+        err.textContent = e.message || 'فشل الطلب'; err.style.display = 'block';
+        btn.disabled = false; btn.textContent = prevText;
+      }
+    };
+    btn.onclick = go;
+    passInp.onkeydown = e => { if (e.key === 'Enter') go(); };
+    setTimeout(() => userInp.focus(), 100);
+  },
+};
+
+// ═══ State ═══
+const state = {
+  chatId: null,
+  conversations: [],
+  messages: [],
+  cards: [],
+  events: [],
+  attachments: [],
+  attachmentsIndex: {}, // ⭐ id -> {name, mime, size} لعرض بطاقات المرفقات بأسمائها الحقيقية
+  models: [],
+  currentModel: 'auto',
+  budget: null,
+  experiments: [],
+  workspace: null,
+  task: null,
+  taskEvents: [],
+  memory: '',
+  busy: false,
+  lastPollAt: 0,
+  pollTimer: null,
+  setChat(id) {
+    this.chatId = id;
+    if (id) localStorage.setItem(FOX.CHAT_KEY, id);
+    else localStorage.removeItem(FOX.CHAT_KEY);
+    this.lastPollAt = 0;
+  },
+  getCard(cardId) { return this.cards.find(c => c.id === cardId); },
+  upsertCard(card) {
+    const idx = this.cards.findIndex(c => c.id === card.id);
+    if (idx >= 0) Object.assign(this.cards[idx], card);
+    else this.cards.push(card);
+    return this.cards.find(c => c.id === card.id);
+  },
+  getModelDisplay() {
+    if (this.currentModel === 'auto') return 'Auto';
+    const m = this.models.find(x => x.id === this.currentModel);
+    if (!m) return 'Auto';
+    // اسم مختصر: نأخذ الجزء الأول من الاسم
+    return String(m.name || m.id).split(/[·—\-]/)[0].trim().slice(0, 16);
+  },
+};
+
+const speak = {
+  current: null,
+  toggle(btn, text) {
+    const synth = window.speechSynthesis;
+    if (!synth) { U.toast('القراءة غير مدعومة', 'warn'); return; }
+    if (this.current) {
+      synth.cancel();
+      this.current.btn.innerHTML = `${Svg.icon('speaker', 'icon sm')}<span>قراءة</span>`;
+      this.current.btn.classList.remove('speaking');
+      if (this.current.btn === btn) { this.current = null; return; }
+    }
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.lang = 'ar-SA';
+    utt.onend = () => { btn.innerHTML = `${Svg.icon('speaker', 'icon sm')}<span>قراءة</span>`; btn.classList.remove('speaking'); this.current = null; };
+    utt.onerror = utt.onend;
+    synth.speak(utt);
+    btn.innerHTML = `${Svg.icon('stop', 'icon sm')}<span>إيقاف</span>`;
+    btn.classList.add('speaking');
+    this.current = { btn };
+  },
+};
+
+const Activity = {
+  el: null,
+  show(text = 'يفكر...') {
+    this.hide();
+    const box = document.getElementById('chatScroll');
+    if (!box) return;
+    const el = document.createElement('div');
+    el.className = 'activity';
+    el.innerHTML = `<div class="act-logo">F</div><div class="act-text"><span class="label">${U.esc(text)}</span><div class="dots"><i></i><i></i><i></i></div></div>`;
+    box.appendChild(el);
+    this.el = el;
+    render.scroll();
+  },
+  update(text) { if (this.el) { const l = this.el.querySelector('.label'); if (l) l.textContent = text; } },
+  hide() { if (this.el) { this.el.remove(); this.el = null; } },
+};
+
+// ⭐ مصدر وحيد لظهور/إخفاء زر "النزول لآخر رسالة" — يُستدعى من كل نقطة قد تغيّر ارتفاع
+// المحتوى (تمرير يدوي، رسالة جديدة، بطاقة أداة، مؤشر النشاط...) حتى لا يبقى الزر بحالة قديمة.
+function updateScrollDownBtn() {
+  const box = document.getElementById('chatScroll');
+  const btn = document.getElementById('scrollDownBtn');
+  if (!box || !btn) return;
+  const distance = box.scrollHeight - box.scrollTop - box.clientHeight;
+  btn.classList.toggle('show', distance > 4); // ⭐ أي ابتعاد فعلي عن النهاية (حتى سطر واحد) يُظهر الزر؛ 4px فقط هامش لأخطاء التقريب العشري
+}
+
+// ═══ Render ═══
+const render = {
+  messages() {
+    const box = document.getElementById('chatScroll');
+    if (!box) return;
+    box.querySelectorAll(':scope > *').forEach(n => n.remove()); // ⭐ زر النزول لم يعد داخل هذا الصندوق، لا حاجة لاستثنائه
+
+    const items = [];
+    state.messages.forEach((m, i) => items.push({ type: 'msg', item: m, ts: m.createdAt || Date.now(), idx: i }));
+    state.cards.forEach(c => items.push({ type: 'card', item: c, ts: c.createdAt || Date.now() }));
+    items.sort((a, b) => a.ts - b.ts);
+
+    items.forEach(x => {
+      const el = x.type === 'msg' ? render.message(x.item, x.idx) : ToolCards.render(x.item);
+      box.appendChild(el);
+    });
+    render.scroll();
+  },
+  message(m, i) {
+    const el = document.createElement('div');
+    const isAI = m.role === 'ai' || m.role === 'assistant';
+    el.className = 'msg ' + (isAI ? 'ai' : 'user');
+    el.dataset.idx = i;
+    const av = isAI ? 'F' : 'م';
+    const time = m.time || U.now();
+    const raw = m.content || '';
+    const needsCollapse = raw.length > FOX.LIMITS.COLLAPSE_THRESHOLD;
+    const contentHtml = isAI ? renderMarkdown(raw) : U.esc(raw).replace(/\n/g, '<br/>');
+    const attachmentRef = m.attachment_ref || null;
+    let attachmentHtml = '';
+    if (attachmentRef) attachmentHtml = Attachments.renderInline(attachmentRef);
+    else if (m._localAttachments && m._localAttachments.length) attachmentHtml = Attachments.renderPending(m._localAttachments);
+
+    el.innerHTML = `
+      <div class="av">${av}</div>
+      <div class="msg-body">
+        <div class="bubble${needsCollapse ? ' collapsed' : ''}">${contentHtml}</div>
+        ${needsCollapse ? `<button class="expand-btn" type="button">${Svg.icon('expand', 'icon sm')}<span>عرض الكل</span></button>` : ''}
+        ${attachmentHtml}
+        <div class="meta"><span>${isAI ? 'FOX AI' : 'أنت'} · ${time}</span>${isAI && m.model ? `<span>· ${U.esc(m.model.name || m.model.id || m.model || '')}</span>` : ''}</div>
+        <div class="msg-toolbar">
+          <button data-act="copy">${Svg.icon('copy', 'icon sm')}<span>نسخ</span></button>
+          <button data-act="speak">${Svg.icon('speaker', 'icon sm')}<span>قراءة</span></button>
+          <button data-act="more">${Svg.icon('dots', 'icon sm')}</button>
+        </div>
+      </div>`;
+
+    const expandBtn = el.querySelector('.expand-btn');
+    if (expandBtn) {
+      expandBtn.onclick = () => {
+        const bubble = el.querySelector('.bubble');
+        const isCollapsed = bubble.classList.contains('collapsed');
+        bubble.classList.toggle('collapsed', !isCollapsed);
+        expandBtn.querySelector('span').textContent = isCollapsed ? 'طيّ' : 'عرض الكل';
+      };
+    }
+    el.querySelector('[data-act="copy"]').onclick = async (e) => {
+      if (await copyText(raw)) {
+        e.currentTarget.classList.add('copied');
+        e.currentTarget.innerHTML = `${Svg.icon('check', 'icon sm')}<span>تم</span>`;
+        U.toast('تم النسخ', 'success');
+        setTimeout(() => { e.currentTarget.innerHTML = `${Svg.icon('copy', 'icon sm')}<span>نسخ</span>`; e.currentTarget.classList.remove('copied'); }, 1200);
+      }
+    };
+    el.querySelector('[data-act="speak"]').onclick = e => speak.toggle(e.currentTarget, raw);
+    el.querySelector('[data-act="more"]').onclick = () => Actions.messageMenu(i);
+
+    // ربط بطاقات المرفقات (فقط ما له معرّف حقيقي — البطاقات "قيد الإرسال" ليست قابلة للفتح بعد)
+    el.querySelectorAll('.att-card[data-att-id]').forEach(card => {
+      card.onclick = () => Attachments.open(card.dataset.attId);
+    });
+
+    setTimeout(() => ToolCards.wire(el), 10);
+    return el;
+  },
+  conversations() {
+    const list = document.getElementById('convList');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!state.conversations.length) {
+      list.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:10px;text-align:center">لا توجد محادثات</div>';
+      return;
+    }
+    state.conversations.forEach(c => {
+      const el = document.createElement('div');
+      el.className = 'conv-item' + (c.id === state.chatId ? ' active' : '');
+      el.dataset.id = c.id;
+      el.innerHTML = `
+        <div class="conv-ic">${Svg.icon('chat', 'icon sm')}</div>
+        <div class="conv-body">
+          <div class="conv-title">${U.esc(c.title || 'محادثة')}</div>
+          <div class="conv-preview">${U.esc(c.taskGoal || (c.taskStatus ? 'حالة: ' + c.taskStatus : 'محادثة'))}</div>
+        </div>
+        <button class="conv-more" data-more="${c.id}">${Svg.icon('dots', 'icon sm')}</button>`;
+      el.onclick = e => { if (e.target.closest('[data-more]')) return; conv.switch(c.id); };
+      el.querySelector('[data-more]').onclick = e => { e.stopPropagation(); Actions.convMenu(c.id); };
+      list.appendChild(el);
+    });
+  },
+  budget() {
+    const b = state.budget;
+    const overview = document.getElementById('budgetOverview');
+    if (overview) {
+      if (!b || !b.active) {
+        overview.innerHTML = `
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+            <span>${b && b.granted ? `${b.used} / ${b.granted} محاولات` : 'لا توجد حصة نشطة'}</span>
+            <span style="color:var(--muted)">${b && b.active ? '' : 'الوضع اليدوي'}</span>
+          </div>
+          ${b && b.granted ? `<div class="progress"><i style="width:${Math.round((b.used/b.granted)*100)}%;background:var(--muted)"></i></div>` : ''}
+          <button id="foxActivateAuto" style="margin-top:12px;font-size:12px;padding:8px 14px;border-radius:8px;background:linear-gradient(135deg,#57dc9b,#3da97c);color:#08101c;font-weight:600;border:0;cursor:pointer;display:inline-flex;align-items:center;gap:6px;width:100%;justify-content:center">${Svg.icon('rocket', 'icon sm')}تفعيل الوضع التلقائي (10 محاولات)</button>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:8px;text-align:center">حتى 3 تفعيلات في الساعة</div>`;
+        const ab = document.getElementById('foxActivateAuto');
+        if (ab) ab.onclick = () => Actions.activateAutopilot();
+      } else {
+        const pct = Math.round((b.used / b.granted) * 100);
+        overview.innerHTML = `
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+            <span>${b.used} / ${b.granted} محاولات</span>
+            <span style="color:var(--green);font-weight:700">🚀 ${b.remaining} متبقية</span>
+          </div>
+          <div class="progress"><i style="width:${pct}%;background:linear-gradient(90deg,#57dc9b,#3da97c)"></i></div>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:8px;text-align:center">ينتهي: ${U.hhmm(b.expiresAt)}</div>
+          <button id="foxStopAuto" style="margin-top:10px;font-size:11px;padding:6px 12px;border-radius:8px;background:var(--panel2);color:var(--text);border:1px solid var(--line);cursor:pointer;display:inline-flex;align-items:center;gap:5px;width:100%;justify-content:center">إيقاف الوضع التلقائي</button>`;
+        const sb = document.getElementById('foxStopAuto');
+        if (sb) sb.onclick = () => Actions.stopAutopilot();
+      }
+    }
+  },
+  scroll() {
+    const box = document.getElementById('chatScroll');
+    if (!box) return;
+    const isNearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 200;
+    updateScrollDownBtn(); // ⭐ يضمن أن ظهور الزر يتحدّث مع كل استدعاء لهذه الدالة، لا فقط عند تمرير المستخدم يدوياً
+    if (!isNearBottom && !state.busy && state.messages.length > 1) return;
+    const scrollToEnd = () => { box.scrollTop = box.scrollHeight; };
+    requestAnimationFrame(() => requestAnimationFrame(scrollToEnd));
+  },
+  metrics(usage, experiments) {
+    const u = usage || {}; const t = u.totals || {};
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('mTasks', U.fmt(t.requests || 0));
+    set('mTools', U.fmt((t.tokensIn || 0) + (t.tokensOut || 0)));
+    set('mTokens', t.cost ? '$' + t.cost.toFixed(4) : '$0');
+    set('mCost', U.fmt((experiments || []).length));
+    const trend = document.getElementById('mTasksTrend');
+    if (trend) trend.textContent = u.source === 'gateway' ? 'AI Gateway' : (u.source === 'd1' ? 'من D1' : '—');
+    const bT = document.getElementById('bTasks'); if (bT) bT.style.width = Math.min(100, (t.requests || 0) * 2) + '%';
+    const bTo = document.getElementById('bTools'); if (bTo) bTo.style.width = Math.min(100, ((t.tokensIn || 0) + (t.tokensOut || 0)) / 1000) + '%';
+    const bTk = document.getElementById('bTokens'); if (bTk) bTk.style.width = Math.min(100, (t.cost || 0) * 10) + '%';
+    const bC = document.getElementById('bCost'); if (bC) bC.style.width = Math.min(100, (experiments || []).length * 10) + '%';
+  },
+  activity(events, experiments) {
+    const box = document.getElementById('overviewActivity');
+    if (!box) return;
+    box.innerHTML = '';
+    const items = [];
+    (experiments || []).slice(0, 3).forEach(e => {
+      items.push({ color: 'var(--cyan)', text: (e.command || '').slice(0, 60) || 'تنفيذ', sub: (e.status || '') + ' · ' + U.ago(e.created_at || Date.now()) });
+    });
+    (events || []).slice(-3).reverse().forEach(e => {
+      items.push({ color: 'var(--violet)', text: e.type, sub: U.ago(e.createdAt || Date.now()) });
+    });
+    if (!items.length) { box.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:10px">لا يوجد نشاط</div>'; return; }
+    items.forEach(it => {
+      const el = document.createElement('div');
+      el.className = 'event';
+      el.innerHTML = `<i style="background:${it.color};box-shadow:0 0 9px ${it.color}"></i><div>${U.esc(it.text)}<span>${U.esc(it.sub)}</span></div>`;
+      box.appendChild(el);
+    });
+  },
+  taskCard() {
+    const el = document.getElementById('taskCard');
+    if (!el) return;
+    if (!state.task) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">لا توجد مهمة نشطة</div>'; return; }
+    const plan = state.task.plan || { steps: [] };
+    el.innerHTML = '';
+    (plan.steps || []).forEach(s => {
+      const done = s.status === 'completed', running = s.status === 'running';
+      const row = document.createElement('div');
+      row.className = 'task-step' + (done ? ' done' : '');
+      row.innerHTML = `<div class="step-icon">${done ? Svg.icon('check', 'icon sm') : running ? Svg.icon('spinner', 'icon sm') : Svg.icon('hash', 'icon sm')}</div><div class="step-copy"><b>${U.esc(s.title || '')}</b><small>${U.esc(s.description || s.verification || '')}</small></div>`;
+      el.appendChild(row);
+    });
+    if (!plan.steps || !plan.steps.length) el.innerHTML = '<div style="color:var(--muted);font-size:12px">لا توجد خطوات</div>';
+  },
+  taskEventsCard() {
+    const el = document.getElementById('taskEventsCard');
+    if (!el) return;
+    if (!state.taskEvents.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">لا توجد أحداث</div>'; return; }
+    el.innerHTML = '';
+    state.taskEvents.slice(-10).reverse().forEach(e => {
+      const row = document.createElement('div');
+      row.className = 'event';
+      row.innerHTML = `<i></i><div>${U.esc(e.type || '')}<span>${U.ago(e.createdAt || Date.now())}</span></div>`;
+      el.appendChild(row);
+    });
+  },
+  memoryCard() {
+    const el = document.getElementById('memoryCard');
+    if (!el) return;
+    if (!state.memory) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">لا توجد ذاكرة</div>'; return; }
+    el.innerHTML = `<div style="font-size:12px;line-height:1.9;color:var(--text);white-space:pre-wrap">${U.esc(state.memory)}</div>`;
+  },
+  filesCard() {
+    const el = document.getElementById('filesCard');
+    if (!el) return;
+    const files = (state.workspace && state.workspace.files) || [];
+    if (!files.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">لا توجد ملفات</div>'; return; }
+    el.innerHTML = '';
+    files.forEach(f => {
+      const row = document.createElement('div');
+      row.className = 'file-item';
+      const icon = U.fileIconFor(f.mime, f.name);
+      row.innerHTML = `<div class="file-icon">${Svg.icon(icon, 'icon')}</div><div class="file-info"><b>${U.esc(f.name)}</b><small>${U.esc(f.mime || '')} · ${U.ago(f.created_at || Date.now())}</small></div><span class="file-size">${U.bytes(f.size || 0)}</span>`;
+      row.onclick = () => Attachments.open(f.id);
+      el.appendChild(row);
+    });
+  },
+  experimentsCard() {
+    const el = document.getElementById('experimentsCard');
+    if (!el) return;
+    if (!state.experiments.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">لا توجد تجارب</div>'; return; }
+    el.innerHTML = '';
+    state.experiments.forEach(x => {
+      const row = document.createElement('div');
+      row.className = 'exp-item';
+      const status = x.status === 'completed' ? `<span class="tag">${Svg.icon('check', 'icon sm')} مكتمل</span>` :
+                     x.status === 'failed' ? `<span class="tag red">${Svg.icon('x', 'icon sm')} فشل</span>` :
+                     `<span class="tag orange">${Svg.icon('clock', 'icon sm')} ${U.esc(x.status || '')}</span>`;
+      row.innerHTML = `<div class="exp-head"><b>${U.esc((x.command || '').slice(0, 60))}</b>${status}</div><div class="exp-meta"><span>exit <b>${x.exit_code ?? '-'}</b></span><span>${U.ago(x.created_at || Date.now())}</span></div>`;
+      el.appendChild(row);
+    });
+  },
+};
+
+// ═══ Actions ═══
+const Actions = {
+  async send() {
+    const input = document.getElementById('chatInput');
+    const text = (input.value || '').trim();
+    if (!text && !state.attachments.length) return;
+    if (state.busy) return;
+    if (text.length > FOX.LIMITS.MAX_MESSAGE_TEXT) { U.toast('الرسالة طويلة جداً', 'error'); return; }
+
+    const attachments = state.attachments.map(a => ({ name: a.name, mime: a.mime, size: a.size, text: a.text || null, data: a.data || null }));
+    if (!state.chatId) state.setChat('chat_' + U.uid());
+
+    const userMsg = {
+      role: 'user',
+      content: text || (attachments.length ? '📎 ' + attachments.length + ' مرفق' : ''),
+      time: U.now(),
+      createdAt: Date.now(),
+      _localAttachments: attachments, // للعرض المحلي الفوري
+    };
+    state.messages.push(userMsg);
+    render.messages();
+
+    input.value = ''; input.style.height = 'auto';
+    state.attachments = []; render.attachments(); updateSendState();
+    state.busy = true; setStatus('busy', 'يفكر...'); setLogoWorking(true); setSendButtonStop(true);
+    Activity.show('يفكر...');
+
+    try {
+      let fullText = '';
+      let meta = null;
+
+      await chatStream({
+        chatId: state.chatId,
+        messages: state.messages.filter(m => m.role === 'user' || m.role === 'ai').map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.content, attachment_ref: m.attachment_ref || null })),
+        attachments,
+        model: state.currentModel === 'auto' ? 'auto' : state.currentModel,
+      }, {
+        onStart: (d) => {
+          if (d.budget) { state.budget = d.budget; render.budget(); }
+          Activity.update(d.autopilot ? '🚀 يعمل تلقائياً...' : 'يكتب...');
+          setStatus('busy', d.autopilot ? '🚀 Auto' : 'يكتب...');
+        },
+        onChunk: (chunk) => { fullText += chunk; Activity.update('يكتب...'); },
+        onMeta: (m) => { meta = m; },
+        onError: (msg) => { throw new Error(msg); },
+        onAutoExecuted: (d) => {
+          const card = {
+            id: U.uid(),
+            kind: 'tool',
+            icon: 'terminal',
+            title: '🚀 تنفيذ تلقائي: ' + (d.experiment.command || '').slice(0, 40),
+            status: 'running',
+            open: false,
+            createdAt: Date.now(),
+            experimentId: d.experiment.id,
+            auto: true,
+            bodyHtml: `
+              <div class="kv"><span>Experiment ID</span><b>${U.esc(d.experiment.id)}</b></div>
+              <div class="kv"><span>Run ID</span><b>${U.esc(String(d.experiment.runId || '—'))}</b></div>
+              <pre>${U.esc(d.experiment.command || '')}</pre>
+              <div style="font-size:11px;color:var(--muted);margin-top:8px">🚀 في انتظار النتيجة...</div>`,
+          };
+          state.upsertCard(card);
+          render.messages();
+          U.toast('🚀 تنفيذ تلقائي', 'auto');
+          pollExperiment(d.experiment.id, card.id);
+        },
+        onAutopilotBlocked: (d) => {
+          U.toast('🚫 ' + (d.message || 'أمر خطر — يحتاج موافقة'), 'warn');
+          if (d.proposal) {
+            const card = {
+              id: U.uid(),
+              kind: 'proposal',
+              icon: 'shield',
+              title: '🚫 أمر خطر — يحتاج موافقتك',
+              status: 'waiting',
+              open: true,
+              createdAt: Date.now(),
+              proposal: d.proposal,
+              bodyHtml: `
+                <div class="risk-warn">${Svg.icon('shield', 'icon sm')}<span>${U.esc(d.risk?.label || 'أمر خطر')} — لا يُنفَّذ تلقائياً</span></div>
+                <pre>${U.esc(d.proposal.command || '')}</pre>
+                <div class="actions-row">
+                  <button class="primary" data-action="approve" data-payload='${U.esc(JSON.stringify({ cardId: null }))}'>${Svg.icon('play', 'icon sm')} موافقة وتنفيذ</button>
+                  <button class="danger" data-action="reject" data-payload='${U.esc(JSON.stringify({ cardId: null }))}'>${Svg.icon('x', 'icon sm')} رفض</button>
+                </div>`,
+            };
+            state.upsertCard(card);
+            render.messages();
+            setTimeout(() => {
+              const el = document.querySelector(`[data-card-id="${card.id}"]`);
+              if (el) el.querySelectorAll('[data-action]').forEach(btn => {
+                const p = JSON.parse(btn.dataset.payload);
+                p.cardId = card.id;
+                btn.dataset.payload = JSON.stringify(p);
+              });
+            }, 30);
+          }
+        },
+      });
+
+      Activity.hide();
+      if (!meta) throw new Error('لم تصل بيانات الرد');
+
+      // نُحدّث الرسالة الأخيرة بـ attachment_ref من meta
+      if (meta.attachmentIds && meta.attachmentIds.length) {
+        userMsg.attachment_ref = meta.attachmentIds.length === 1
+          ? meta.attachmentIds[0]
+          : JSON.stringify(meta.attachmentIds);
+        // ⭐ نملأ الفهرس فوراً من البيانات المحلية (كانت معروفة قبل الإرسال) بدل انتظار طلب لاحق
+        meta.attachmentIds.forEach((id, i) => {
+          const local = userMsg._localAttachments?.[i];
+          if (local) state.attachmentsIndex[id] = { id, name: local.name, mime: local.mime, size: local.size };
+        });
+        delete userMsg._localAttachments;
+      }
+
+      const aiMsg = { role: 'ai', content: meta.response || fullText, time: U.now(), createdAt: Date.now(), model: meta.model, route: meta.route, deep: meta.deep };
+      state.messages.push(aiMsg);
+      render.messages();
+
+      // ⭐ الخادم يحسب هذا فعلاً (fallback/fallbackReason) لكنه كان يُهمَل هنا بلا عرض —
+      // بدونه لا طريقة للمستخدم ليعرف أن النموذج المطلوب (مثلاً نموذج الصور) فشل واستُبدل تلقائياً
+      if (meta.fallback) {
+        U.toast(meta.fallbackReason ? `⚠️ تم التبديل تلقائياً لنموذج آخر: ${meta.fallbackReason}` : '⚠️ تم التبديل تلقائياً لنموذج آخر (النموذج الأصلي غير متاح حالياً)', 'warn');
+      }
+
+      // ⭐ نفس الفئة من الفجوة — unsupportedAttachments يُحسَب في الخادم منذ البداية لكن لم يُعرَض هنا قط
+      if (meta.unsupportedAttachments && meta.unsupportedAttachments.length) {
+        U.toast(`⚠️ لم يتمكن النموذج من قراءة: ${meta.unsupportedAttachments.join('، ')}`, 'warn');
+      }
+
+      if (meta.budget) { state.budget = meta.budget; render.budget(); }
+
+      // اقتراح أداة
+      if (meta.pendingExecution && !meta.autoExecuted) {
+        const pe = meta.pendingExecution;
+        const risk = pe.risk || null;
+        const card = {
+          id: U.uid(),
+          kind: 'proposal',
+          icon: risk && risk.level === 'destructive' ? 'shield' : 'bolt',
+          title: risk && risk.level === 'destructive'
+            ? '🚫 أمر خطر — يحتاج موافقتك'
+            : 'اقتراح: ' + (pe.language || 'bash') + ' — ' + (pe.command || '').slice(0, 40),
+          status: 'waiting',
+          open: false,
+          createdAt: Date.now(),
+          proposal: pe,
+          bodyHtml: `
+            ${risk && risk.level === 'destructive' ? `<div class="risk-warn">${Svg.icon('shield', 'icon sm')}<span>${U.esc(risk.label)} — لا يُنفَّذ تلقائياً</span></div>` : ''}
+            <div class="kv"><span>اللغة</span><b>${U.esc(pe.language || 'bash')}</b></div>
+            <pre>${U.esc(pe.command || '')}</pre>
+            <div class="actions-row">
+              <button class="primary" data-action="approve" data-payload='${U.esc(JSON.stringify({ cardId: null }))}'>${Svg.icon('play', 'icon sm')} موافقة وتنفيذ</button>
+              <button class="danger" data-action="reject" data-payload='${U.esc(JSON.stringify({ cardId: null }))}'>${Svg.icon('x', 'icon sm')} رفض</button>
+            </div>`,
+        };
+        state.upsertCard(card);
+        render.messages();
+        setTimeout(() => {
+          const el = document.querySelector(`[data-card-id="${card.id}"]`);
+          if (el) el.querySelectorAll('[data-action]').forEach(btn => {
+            const p = JSON.parse(btn.dataset.payload);
+            p.cardId = card.id;
+            btn.dataset.payload = JSON.stringify(p);
+          });
+        }, 20);
+        setStatus('busy', 'بانتظار موافقتك');
+      } else if (meta.autopilotRequest && !(state.budget && state.budget.active)) {
+        const card = {
+          id: U.uid(),
+          kind: 'proposal',
+          icon: 'rocket',
+          title: '🚀 النموذج يطلب تفعيل الوضع التلقائي',
+          status: 'waiting',
+          open: true,
+          createdAt: Date.now(),
+          bodyHtml: `
+            <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${U.esc(meta.autopilotRequest.reason)}</div>
+            <div class="kv"><span>الحصة</span><b>10 محاولات / 20 دقيقة</b></div>
+            <div class="kv"><span>حد التفعيل</span><b>3 مرات / ساعة</b></div>
+            <div style="font-size:11px;color:var(--muted);margin-top:8px">عند التفعيل، سينفّذ النموذج الأوامر الآمنة تلقائياً. الأوامر الخطرة ستبقى تطلب موافقتك.</div>
+            <div class="actions-row">
+              <button class="auto" data-action="activate_autopilot" data-payload='{}'>${Svg.icon('rocket', 'icon sm')} تفعيل الوضع التلقائي</button>
+              <button data-action="reject" data-payload='${U.esc(JSON.stringify({ cardId: null }))}'>${Svg.icon('x', 'icon sm')} ليس الآن</button>
+            </div>`,
+        };
+        state.upsertCard(card);
+        render.messages();
+      } else {
+        setLogoWorking(false); setSendButtonStop(false); setStatus('idle', 'جاهز');
+      }
+
+      await Actions.refreshSidebar();
+      await Actions.loadBudget();
+    } catch (e) {
+      Activity.hide();
+      setLogoWorking(false); setSendButtonStop(false); setStatus('error', 'خطأ');
+      U.toast('خطأ: ' + (e.message || ''), 'error');
+      setTimeout(() => setStatus('idle', 'جاهز'), 3000);
+    } finally {
+      state.busy = false;
+      updateSendState();
+    }
+  },
+
+  async approveFromCard({ cardId }) {
+    const card = state.getCard(cardId);
+    if (!card || !card.proposal) return;
+    const pe = card.proposal;
+    try {
+      U.toast('جارٍ التنفيذ...', 'info');
+      card.status = 'running'; card.title = 'قيد التنفيذ — ' + (pe.command || '').slice(0, 40);
+      render.messages();
+      setLogoWorking(true); setSendButtonStop(true);
+      Activity.show('ينفذ أمراً...');
+
+      const res = await api.runTool({ chatId: state.chatId, proposal: pe, approved: true });
+      Activity.hide();
+
+      if (res.budget) { state.budget = res.budget; render.budget(); }
+
+      if (res.needsApproval) {
+        card.status = 'waiting'; card.title = res.reason || 'يحتاج موافقة';
+        render.messages();
+        U.toast(res.reason || 'يحتاج موافقة', 'warn');
+        setLogoWorking(false); setSendButtonStop(false);
+        return;
+      }
+      if (res.duplicate) {
+        card.status = 'failed'; card.title = 'طلب مكرر';
+        card.bodyHtml = `<div class="kv"><span>التجربة</span><b>${U.esc(res.existingId || '')}</b></div><div style="font-size:11px;color:var(--muted);margin-top:8px">${U.esc(res.hint || '')}</div>`;
+        render.messages();
+        U.toast('أمر مكرر', 'warn');
+        setLogoWorking(false); setSendButtonStop(false);
+        return;
+      }
+
+      const exp = res.experiment;
+      card.experimentId = exp.id;
+      card.status = 'running';
+      card.title = 'تنفيذ: ' + (exp.command || '').slice(0, 40);
+      card.bodyHtml = `
+        <div class="kv"><span>Experiment ID</span><b>${U.esc(exp.id)}</b></div>
+        <div class="kv"><span>Run ID</span><b>${U.esc(String(exp.runId || '—'))}</b></div>
+        <pre>${U.esc(exp.command || '')}</pre>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px">في انتظار النتيجة...</div>`;
+      render.messages();
+      setStatus('busy', 'التنفيذ جارٍ');
+      pollExperiment(exp.id, card.id);
+      startPolling();
+    } catch (e) {
+      Activity.hide();
+      card.status = 'failed'; card.title = 'فشل: ' + (e.message || '');
+      render.messages();
+      U.toast('فشل: ' + (e.message || ''), 'error');
+      setLogoWorking(false); setSendButtonStop(false);
+    }
+  },
+
+  rejectFromCard({ cardId }) {
+    const card = state.getCard(cardId);
+    if (card) { card.status = 'failed'; card.title = 'رُفض'; card.bodyHtml = ''; render.messages(); }
+    U.toast('تم الرفض', 'info');
+    setStatus('idle', 'جاهز');
+    setSendButtonStop(false);
+  },
+
+  async stopCurrent() {
+    abortCurrentStream();
+    const runningCard = state.cards.find(c => c.status === 'running' && c.experimentId);
+    if (runningCard) {
+      try { await api.cancelExperiment(runningCard.experimentId); U.toast('أُوقف التنفيذ', 'info'); }
+      catch { U.toast('تعذّر الإيقاف', 'warn'); }
+    } else {
+      U.toast('أُوقف البث', 'info');
+    }
+    state.busy = false;
+    Activity.hide();
+    setLogoWorking(false); setSendButtonStop(false);
+    setStatus('idle', 'جاهز');
+    updateSendState();
+  },
+
+  async activateAutopilot() {
+    if (!state.chatId) return;
+    try {
+      const r = await api.requestAutopilot(state.chatId, 'طلب من واجهة المحادثة');
+      if (r.success && r.budget) {
+        state.budget = r.budget;
+        render.budget();
+        U.toast(`🚀 الوضع التلقائي مفعّل (${r.budget.granted} محاولات)`, 'auto');
+        state.cards = state.cards.filter(c => !(c.icon === 'rocket' && c.status === 'waiting'));
+        render.messages();
+      }
+    } catch (e) {
+      if (e.status === 429) U.toast(e.message || 'تم بلوغ الحد الأقصى', 'warn');
+      else U.toast('فشل التفعيل: ' + (e.message || ''), 'error');
+    }
+  },
+
+  async stopAutopilot() {
+    if (!state.chatId) return;
+    if (!confirm('إيقاف الوضع التلقائي؟')) return;
+    try {
+      const r = await api.stopAutopilot(state.chatId, 'إيقاف يدوي');
+      if (r.success && r.budget) {
+        state.budget = r.budget;
+        render.budget();
+        U.toast('تم إيقاف الوضع التلقائي', 'info');
+      }
+    } catch (e) { U.toast('فشل: ' + (e.message || ''), 'error'); }
+  },
+
+  async retryExperiment(experimentId) {
+    try {
+      const r = await api.getExperiment(experimentId);
+      if (r.experiment) {
+        const pe = { id: 'retry_' + U.uid(), kind: 'terminal', language: r.experiment.language || 'bash', command: r.experiment.command, requiresApproval: true };
+        await api.runTool({ chatId: state.chatId, proposal: pe, approved: true });
+        U.toast('أُعيد الإرسال', 'success');
+        startPolling();
+      }
+    } catch (e) { U.toast('فشل: ' + (e.message || ''), 'error'); }
+  },
+
+  async loadBudget() {
+    if (!state.chatId) return;
+    try { const r = await api.toolBudget(state.chatId); state.budget = r.budget; render.budget(); } catch {}
+  },
+
+  async refreshSidebar() {
+    try { const r = await api.listConversations(); state.conversations = r.conversations || []; render.conversations(); } catch {}
+  },
+
+  convMenu(id) {
+    const c = state.conversations.find(x => x.id === id);
+    if (!c) return;
+    openSheet({
+      title: 'خيارات المحادثة', subtitle: c.title,
+      items: [
+        { icon: 'pencil', label: 'إعادة التسمية', onClick: () => Actions.renameConv(c) },
+        { icon: 'trash', label: 'حذف', danger: true, onClick: () => Actions.deleteConv(c) },
+        { icon: 'x', label: 'إلغاء', onClick: () => {} },
+      ],
+    });
+  },
+  renameConv(c) {
+    const t = prompt('العنوان الجديد:', c.title);
+    if (!t) return;
+    api.renameConversation(c.id, t).then(() => { U.toast('تم التحديث', 'success'); Actions.refreshSidebar(); }).catch(() => U.toast('فشل', 'error'));
+  },
+  deleteConv(c) {
+    if (!confirm('حذف المحادثة نهائياً؟')) return;
+    api.deleteConversation(c.id).then(() => {
+      U.toast('تم الحذف', 'success');
+      if (state.chatId === c.id) { state.setChat(null); state.messages = []; state.cards = []; state.events = []; render.messages(); }
+      Actions.refreshSidebar();
+    }).catch(() => U.toast('فشل الحذف', 'error'));
+  },
+  messageMenu(idx) {
+    const m = state.messages[idx];
+    if (!m) return;
+    openSheet({
+      title: 'خيارات الرسالة', subtitle: (m.content || '').slice(0, 60),
+      items: [
+        { icon: 'copy', label: 'نسخ', onClick: async () => { if (await copyText(m.content || '')) U.toast('تم النسخ', 'success'); } },
+        { icon: 'refresh', label: 'إعادة إرسال', onClick: () => {
+          const i = document.getElementById('chatInput');
+          i.value = m.content || '';
+          updateSendState();
+          autoResize(i);
+          setTimeout(() => Actions.send(), 60);
+        } },
+        { icon: 'trash', label: 'حذف', danger: true, onClick: () => { state.messages.splice(idx, 1); render.messages(); U.toast('تم الحذف', 'success'); } },
+      ],
+    });
+  },
+
+  async loadOverview() {
+    try {
+      const [usageR, convR, expR] = await Promise.all([
+        api.usage().catch(() => ({})),
+        api.listConversations().catch(() => ({ conversations: [] })),
+        api.getExperiments().catch(() => ({ experiments: [] })),
+      ]);
+      state.conversations = convR.conversations || [];
+      state.experiments = expR.experiments || [];
+      render.conversations();
+      render.metrics(usageR, state.experiments);
+      render.activity([], state.experiments);
+      render.experimentsCard();
+    } catch (e) { console.warn('overview:', e); }
+  },
+  async loadMemory() {
+    if (!state.chatId) return;
+    try { const r = await api.getMemory(state.chatId); state.memory = r.content || ''; render.memoryCard(); } catch {}
+  },
+  async loadFiles() {
+    if (!state.chatId) return;
+    try { const r = await api.workspaceStatus(state.chatId); state.workspace = r.workspace || {}; render.filesCard(); } catch {}
+  },
+  async newTask() {
+    const goal = prompt('هدف المهمة:');
+    if (!goal) return;
+    if (!state.chatId) state.setChat('chat_' + U.uid());
+    try {
+      U.toast('جارٍ التخطيط...', 'info');
+      const r = await api.planTask({ chatId: state.chatId, task: goal, model: state.currentModel === 'auto' ? undefined : state.currentModel });
+      state.task = { ...r.task, plan: r.plan };
+      render.taskCard();
+      navigate('tasks');
+      U.toast('تم إنشاء الخطة', 'success');
+      startPolling();
+    } catch (e) { U.toast('فشل: ' + (e.message || ''), 'error'); }
+  },
+};
+
+// ═══ Model Sheet ═══
+function openModelSheet() {
+  const items = [];
+  // Auto أولاً
+  items.push({
+    id: 'auto',
+    name: 'Auto · تلقائي',
+    desc: 'يختار العامل النموذج حسب المهمة',
+    icon: 'sparkle',
+  });
+  state.models.forEach(m => {
+    if (m.id === 'auto') return;
+    items.push({
+      id: m.id,
+      name: m.name || m.id,
+      desc: [m.provider, m.description, m.kind].filter(Boolean).join(' · '),
+      icon: m.kind === 'vision' ? 'eye' : 'sparkle',
+      badge: m.supportsImages ? '👁' : null,
+    });
+  });
+
+  openSheet({
+    title: 'اختيار النموذج',
+    subtitle: `${items.length - 1} نموذج متاح`,
+    items: items.map(it => ({
+      icon: it.icon,
+      label: `${it.name}${it.badge ? ' ' + it.badge : ''}${it.id === state.currentModel ? ' ✓' : ''}`,
+      desc: it.desc,
+      onClick: () => selectModel(it.id),
+    })),
+  });
+}
+
+function selectModel(id) {
+  state.currentModel = id;
+  localStorage.setItem(FOX.MODEL_KEY, id);
+  refreshModelLabel();
+  U.toast('النموذج: ' + state.getModelDisplay(), 'info');
+}
+
+function refreshModelLabel() {
+  const el = document.getElementById('currentModelLabel');
+  if (el) el.textContent = state.getModelDisplay();
+}
+
+// ═══ Polling ═══
+async function pollExperiment(experimentId, cardId) {
+  let attempts = 0;
+  const maxAttempts = 240;
+  const tick = async () => {
+    attempts++;
+    if (attempts > maxAttempts) {
+      const card = state.getCard(cardId);
+      if (card) { card.status = 'failed'; card.title = 'انتهت مهلة الانتظار'; render.messages(); }
+      setLogoWorking(false); setSendButtonStop(false);
+      return;
+    }
+    try {
+      const r = await api.getExperiment(experimentId);
+      const exp = r.experiment;
+      if (exp && (exp.status === 'completed' || exp.status === 'failed')) {
+        const ok = exp.status === 'completed';
+        const card = state.getCard(cardId);
+        if (card) {
+          card.status = ok ? 'done' : 'failed';
+          card.title = (card.auto ? '🚀 ' : '') + (ok ? 'اكتمل: ' : 'فشل: ') + (exp.command || '').slice(0, 40);
+          card.open = true;
+          card.bodyHtml = `
+            <div class="kv"><span>exit code</span><b>${U.esc(String(exp.exitCode ?? '—'))}</b></div>
+            <pre>${U.esc(exp.output || '(لا مخرجات)')}</pre>
+            <div class="actions-row">
+              <button data-action="copy" data-payload='${U.esc(JSON.stringify({ text: exp.output || '' }))}'>${Svg.icon('copy', 'icon sm')} نسخ الناتج</button>
+              ${!ok ? `<button class="primary" data-action="retry" data-payload='${U.esc(JSON.stringify({ experimentId }))}'>${Svg.icon('refresh', 'icon sm')} إعادة محاولة</button>` : ''}
+            </div>`;
+          render.messages();
+        }
+        setLogoWorking(false); setSendButtonStop(false);
+        setStatus(ok ? 'idle' : 'error', ok ? 'جاهز' : 'فشل');
+        U.toast(ok ? 'اكتمل التنفيذ' : 'فشل التنفيذ', ok ? 'success' : 'error');
+        return;
+      }
+      const card = state.getCard(cardId);
+      if (card) { card.status = 'running'; card.title = (card.auto ? '🚀 ' : '') + `قيد التنفيذ (${attempts * 5}ث)`; render.messages(); }
+      setTimeout(tick, 5000);
+    } catch (e) { setTimeout(tick, 5000); }
+  };
+  tick();
+}
+
+const conv = {
+  async switch(id) {
+    state.setChat(id);
+    render.conversations();
+    await this.load();
+    document.getElementById('drawer')?.classList.remove('show');
+    document.getElementById('drawerBackdrop')?.classList.remove('show');
+    navigate('chats');
+    startPolling();
+  },
+  async load() {
+    if (!state.chatId) return;
+    try {
+      const [msgR, evR, attR] = await Promise.all([
+        api.getMessages(state.chatId),
+        api.chatEvents(state.chatId).catch(() => ({ events: [] })),
+        api.getAttachments(state.chatId).catch(() => ({ attachments: [] })),
+      ]);
+      // ⭐ فهرس المرفقات — يسمح بعرض الاسم/الحجم الحقيقيين داخل بطاقات الرسائل دون طلب إضافي لكل بطاقة
+      state.attachmentsIndex = {};
+      (attR.attachments || []).forEach(a => { state.attachmentsIndex[a.id] = a; });
+      state.messages = (msgR.messages || []).map(m => ({
+        role: m.role === 'assistant' ? 'ai' : m.role,
+        content: m.content,
+        time: U.hhmm(m.createdAt),
+        createdAt: m.createdAt,
+        model: m.model,
+        attachment_ref: m.attachment_ref || null,
+      }));
+      state.events = evR.events || [];
+      state.cards = [];
+      restoreCardsFromEvents(state.events);
+      render.messages();
+      await Actions.loadBudget();
+    } catch { U.toast('فشل تحميل المحادثة', 'error'); }
+  },
+  async create() {
+    const id = 'chat_' + U.uid();
+    state.setChat(id);
+    state.messages = []; state.cards = []; state.events = []; state.attachmentsIndex = {};
+    render.messages(); render.conversations();
+    U.toast('محادثة جديدة', 'success');
+    document.getElementById('drawer')?.classList.remove('show');
+    document.getElementById('drawerBackdrop')?.classList.remove('show');
+    navigate('chats');
+    stopPolling();
+  },
+};
+
+function restoreCardsFromEvents(events) {
+  const cardsById = new Map();
+  events.forEach(ev => {
+    const p = ev.payload || {};
+    if (ev.type === 'tool_proposed' && p.proposalId) {
+      const risk = p.risk || null;
+      cardsById.set(p.proposalId, {
+        id: 'restored_proposed_' + p.proposalId,
+        kind: 'proposal',
+        icon: risk && risk.level === 'destructive' ? 'shield' : 'bolt',
+        title: risk && risk.level === 'destructive'
+          ? '🚫 أمر خطر'
+          : 'اقتراح: ' + (p.language || 'bash') + ' — ' + (p.command || '').slice(0, 40),
+        status: 'waiting',
+        open: false,
+        createdAt: ev.createdAt,
+        proposal: {
+          id: p.proposalId, kind: 'terminal',
+          language: p.language || 'bash',
+          command: p.command,
+          explanation: p.explanation || '',
+          requiresApproval: true, risk,
+        },
+        bodyHtml: `
+          ${risk && risk.level === 'destructive' ? `<div class="risk-warn">${Svg.icon('shield', 'icon sm')}<span>${U.esc(risk.label)}</span></div>` : ''}
+          <pre>${U.esc(p.command || '')}</pre>`,
+      });
+    } else if (ev.type === 'tool_executed' && p.experimentId) {
+      const isAuto = !!p.autopilot;
+      const proposalCard = Array.from(cardsById.values()).find(c => c.proposal && c.proposal.command === p.command);
+      if (proposalCard) {
+        proposalCard.kind = 'tool';
+        proposalCard.icon = 'terminal';
+        proposalCard.status = 'running';
+        proposalCard.title = (isAuto ? '🚀 ' : '') + 'تنفيذ: ' + (p.command || '').slice(0, 40);
+        proposalCard.experimentId = p.experimentId;
+        proposalCard.auto = isAuto;
+        proposalCard.bodyHtml = `<pre>${U.esc(p.command || '')}</pre><div style="font-size:11px;color:var(--muted);margin-top:8px">جارٍ جلب النتيجة...</div>`;
+      } else {
+        cardsById.set(p.experimentId, {
+          id: 'restored_exec_' + p.experimentId,
+          kind: 'tool', icon: 'terminal',
+          title: (isAuto ? '🚀 ' : '') + 'تنفيذ: ' + (p.command || '').slice(0, 40),
+          status: 'running', open: false,
+          createdAt: ev.createdAt,
+          experimentId: p.experimentId,
+          auto: isAuto,
+          bodyHtml: `<pre>${U.esc(p.command || '')}</pre><div style="font-size:11px;color:var(--muted);margin-top:8px">جارٍ جلب النتيجة...</div>`,
+        });
+      }
+    } else if (ev.type === 'tool_result_ready' && p.experimentId) {
+      const card = cardsById.get(p.experimentId) || Array.from(cardsById.values()).find(c => c.experimentId === p.experimentId);
+      if (card) {
+        const ok = p.status === 'completed';
+        card.status = ok ? 'done' : 'failed';
+        card.title = (card.auto ? '🚀 ' : '') + (ok ? 'اكتمل: ' : 'فشل: ') + (p.command || '').slice(0, 40);
+        card.bodyHtml = `
+          <div class="kv"><span>exit code</span><b>${U.esc(String(p.exitCode ?? '—'))}</b></div>
+          <pre>${U.esc(p.outputPreview || '(لا مخرجات)')}</pre>`;
+      }
+    } else if (ev.type === 'tool_correction_proposed' && p.proposalId) {
+      const risk = p.risk || null;
+      cardsById.set(p.proposalId, {
+        id: 'restored_corr_' + p.proposalId,
+        kind: 'correction',
+        icon: risk && risk.level === 'destructive' ? 'shield' : 'refresh',
+        title: 'اقتراح تصحيح: ' + (p.proposedCommand || '').slice(0, 40),
+        status: 'waiting', open: false,
+        createdAt: ev.createdAt,
+        proposal: {
+          id: p.proposalId, kind: 'terminal',
+          language: p.language || 'bash',
+          command: p.proposedCommand,
+          explanation: p.explanation || '',
+          requiresApproval: true, isCorrection: true,
+          originalExperimentId: p.originalId, risk,
+        },
+        bodyHtml: `
+          ${risk && risk.level === 'destructive' ? `<div class="risk-warn">${Svg.icon('shield', 'icon sm')}<span>${U.esc(risk.label)}</span></div>` : ''}
+          <pre>${U.esc(p.proposedCommand || '')}</pre>`,
+      });
+    }
+  });
+  state.cards = Array.from(cardsById.values());
+}
+
+function startPolling() {
+  stopPolling();
+  if (!state.chatId) return;
+  state.pollTimer = setInterval(async () => {
+    if (!state.chatId || state.busy) return;
+    try {
+      const r = await api.poll(state.chatId, state.lastPollAt);
+      if (r.now) state.lastPollAt = r.now;
+      if (r.events && r.events.length) r.events.forEach(ev => handleLiveEvent(ev));
+      if (r.budget) {
+        const changed = !state.budget || state.budget.used !== r.budget.used || state.budget.active !== r.budget.active;
+        state.budget = r.budget;
+        if (changed) render.budget();
+      }
+      if (r.experiments && r.experiments.length) { state.experiments = r.experiments; render.experimentsCard(); }
+    } catch (e) {}
+  }, FOX.POLL_MS);
+}
+function stopPolling() { if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; } }
+
+function handleLiveEvent(ev) {
+  if (!ev || !ev.type) return;
+
+  if (ev.type === 'autopilot_activated' && ev.payload) { U.toast('🚀 الوضع التلقائي مفعّل', 'auto'); return; }
+  if (ev.type === 'autopilot_stopped' && ev.payload) { U.toast('تم إيقاف الوضع التلقائي', 'info'); return; }
+  if (ev.type === 'tool_budget_exhausted' && ev.payload) { U.toast('⏱️ استُهلكت الحصة', 'warn'); return; }
+
+  if (ev.type === 'tool_commentary_completed' && ev.payload && ev.payload.text) {
+    const chatId = ev.payload.chatId || state.chatId;
+    if (chatId !== state.chatId) return;
+    if (state.messages.find(m => m.role === 'ai' && m.content === ev.payload.text)) return;
+    state.messages.push({
+      role: 'ai',
+      content: ev.payload.text,
+      time: U.hhmm(ev.createdAt || Date.now()),
+      createdAt: ev.createdAt || Date.now(),
+      model: ev.payload.model ? { id: ev.payload.model, name: ev.payload.model } : null,
+    });
+    render.messages();
+    U.toast(ev.payload.autopilot ? '🚀 تعليق تلقائي' : 'تعليق جديد من FOX', 'info');
+    return;
+  }
+
+  if (ev.type === 'tool_auto_corrected' && ev.payload) { U.toast('🔄 تصحيح تلقائي', 'auto'); return; }
+
+  // ⭐ stage 4/5/6 — ملف جديد أو مُعدَّل وصل من بيئة التشغيل
+  if (ev.type === 'attachment_generated' && ev.payload) {
+    const chatId = ev.payload.chatId || state.chatId;
+    if (chatId !== state.chatId) return;
+    const attId = ev.payload.attachmentId;
+    if (!attId || state.messages.find(m => m.attachment_ref === attId)) return;
+    state.attachmentsIndex[attId] = { id: attId, name: ev.payload.name, mime: ev.payload.mime, size: ev.payload.size };
+    state.messages.push({
+      role: 'ai',
+      content: ev.payload.derivedFrom ? `✏️ تم تعديل الملف: ${ev.payload.name}` : `📄 ملف جديد: ${ev.payload.name}`,
+      time: U.hhmm(ev.createdAt || Date.now()),
+      createdAt: ev.createdAt || Date.now(),
+      attachment_ref: attId,
+    });
+    render.messages();
+    U.toast(ev.payload.derivedFrom ? '✏️ ملف مُعدَّل' : '📄 ملف جديد', 'success');
+    return;
+  }
+
+  if (ev.type === 'tool_correction_proposed' && ev.payload) {
+    const pid = ev.payload.proposalId;
+    if (state.cards.find(c => (c.proposal && c.proposal.id === pid))) return;
+    const risk = ev.payload.risk || null;
+    const pe = {
+      id: pid, kind: 'terminal',
+      language: ev.payload.language || 'bash',
+      command: ev.payload.proposedCommand,
+      explanation: ev.payload.explanation || '',
+      requiresApproval: true, isCorrection: true,
+      originalExperimentId: ev.payload.originalId, risk,
+    };
+    state.upsertCard({
+      id: U.uid(),
+      kind: 'correction',
+      icon: risk && risk.level === 'destructive' ? 'shield' : 'refresh',
+      title: risk && risk.level === 'destructive'
+        ? '🚫 تصحيح خطر — يحتاج موافقتك'
+        : 'اقتراح تصحيح: ' + (pe.command || '').slice(0, 40),
+      status: 'waiting', open: false,
+      createdAt: ev.createdAt || Date.now(),
+      proposal: pe,
+      bodyHtml: `
+        ${risk && risk.level === 'destructive' ? `<div class="risk-warn">${Svg.icon('shield', 'icon sm')}<span>${U.esc(risk.label)}</span></div>` : ''}
+        <div class="kv"><span>التجربة الأصلية</span><b>${U.esc((ev.payload.originalId || '').slice(0, 20))}…</b></div>
+        ${ev.payload.explanation ? `<div style="font-size:11px;color:var(--muted);margin:8px 0">${U.esc(ev.payload.explanation)}</div>` : ''}
+        <pre>${U.esc(pe.command || '')}</pre>
+        <div class="actions-row">
+          <button class="primary" data-action="approve" data-payload='${U.esc(JSON.stringify({ cardId: null }))}'>${Svg.icon('play', 'icon sm')} موافقة وتنفيذ</button>
+          <button class="danger" data-action="reject" data-payload='${U.esc(JSON.stringify({ cardId: null }))}'>${Svg.icon('x', 'icon sm')} رفض</button>
+        </div>`,
+    });
+    setTimeout(() => {
+      document.querySelectorAll('.tool-card').forEach(el => {
+        const c = state.cards.find(x => x.id === el.dataset.cardId);
+        if (c && c.proposal && c.proposal.id === pid) {
+          el.querySelectorAll('[data-action]').forEach(btn => {
+            const p = JSON.parse(btn.dataset.payload);
+            p.cardId = c.id;
+            btn.dataset.payload = JSON.stringify(p);
+          });
+        }
+      });
+    }, 30);
+    render.messages();
+    U.toast('اقتراح تصحيح جديد', 'info');
+  }
+}
+
+function setStatus(kind, text) {
+  const el = document.getElementById('chatStatus');
+  const wrap = document.getElementById('chatStatusWrap');
+  if (el) el.textContent = text || '';
+  if (wrap) {
+    wrap.classList.toggle('busy', kind === 'busy');
+    wrap.classList.toggle('error', kind === 'error');
+  }
+}
+
+function setLogoWorking(working) {
+  const av = document.querySelector('.chat-bar-title');
+  if (av) av.style.opacity = working ? '0.95' : '1';
+}
+
+function setSendButtonStop(stop) {
+  const btn = document.getElementById('sendBtn');
+  if (!btn) return;
+  if (stop) {
+    btn.classList.add('stop-btn');
+    btn.innerHTML = Svg.icon('stop');
+    btn.disabled = false;
+    btn.onclick = () => Actions.stopCurrent();
+  } else {
+    btn.classList.remove('stop-btn');
+    btn.innerHTML = Svg.icon('send');
+    btn.onclick = () => Actions.send();
+    updateSendState();
+  }
+}
+
+function updateSendState() {
+  const btn = document.getElementById('sendBtn');
+  const input = document.getElementById('chatInput');
+  if (!btn || !input) return;
+  if (btn.classList.contains('stop-btn')) return;
+  const has = (input.value || '').trim().length > 0 || state.attachments.length > 0;
+  btn.disabled = !has;
+}
+
+function openSheet({ title, subtitle, items }) {
+  const sheet = document.getElementById('actionSheet');
+  const ttl = document.getElementById('actionTitle');
+  const box = document.getElementById('actionItems');
+  const bd = document.getElementById('actionBackdrop');
+  if (!sheet || !box) return;
+  ttl.innerHTML = `<b>${U.esc(title)}</b>${subtitle ? `<small>${U.esc(subtitle)}</small>` : ''}`;
+  box.innerHTML = '';
+  items.forEach(it => {
+    if (it.divider) { const d = document.createElement('div'); d.className = 'divider'; box.appendChild(d); return; }
+    const b = document.createElement('button');
+    b.className = 'action-item' + (it.danger ? ' danger' : '');
+    b.innerHTML = `<div class="ai-icon">${Svg.icon(it.icon || 'hash', 'icon')}</div><div class="ai-text"><b>${U.esc(it.label)}</b>${it.desc ? `<small>${U.esc(it.desc)}</small>` : ''}</div>`;
+    b.onclick = () => { sheet.classList.remove('show'); bd.classList.remove('show'); setTimeout(() => it.onClick && it.onClick(), 180); };
+    box.appendChild(b);
+  });
+  sheet.classList.add('show');
+  bd.classList.add('show');
+}
+
+function navigate(pageId) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const target = document.getElementById('page-' + pageId);
+  if (!target) return;
+  target.classList.add('active');
+  const isChat = pageId === 'chats';
+
+  // إخفاء topbar في المحادثة
+  const topbar = document.getElementById('mainTopbar');
+  if (topbar) topbar.style.display = isChat ? 'none' : 'flex';
+
+  const pt = document.getElementById('pageTitle');
+  const ps = document.getElementById('pageSubtitle');
+  if (pt) pt.textContent = target.dataset.title || '';
+  if (ps) ps.textContent = target.dataset.subtitle || '';
+  document.querySelectorAll('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === pageId));
+  if (pageId === 'overview') Actions.loadOverview();
+  if (pageId === 'memory') Actions.loadMemory();
+  if (pageId === 'files') Actions.loadFiles();
+  if (pageId === 'experiments') {
+    api.getExperiments().then(r => { state.experiments = r.experiments || []; render.experimentsCard(); }).catch(() => {});
+  }
+  if (isChat) setTimeout(() => render.scroll(), 50);
+}
+
+function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 200) + 'px'; }
+
+function bindAll() {
+  const sendBtn = document.getElementById('sendBtn');
+  const chatInput = document.getElementById('chatInput');
+  if (sendBtn) sendBtn.onclick = () => Actions.send();
+  if (chatInput) {
+    chatInput.oninput = () => { updateSendState(); autoResize(chatInput); };
+    chatInput.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); Actions.send(); } };
+  }
+
+  // زر القائمة الجانبية (topbar + chat-bar)
+  const menuBtn = document.getElementById('menuBtn');
+  const chatMenuBtn = document.getElementById('chatMenuBtn');
+  const drawer = document.getElementById('drawer');
+  const drawerBd = document.getElementById('drawerBackdrop');
+  const openDrawer = () => { drawer?.classList.add('show'); drawerBd?.classList.add('show'); };
+  const closeDrawer = () => { drawer?.classList.remove('show'); drawerBd?.classList.remove('show'); };
+  if (menuBtn) menuBtn.onclick = openDrawer;
+  if (chatMenuBtn) chatMenuBtn.onclick = openDrawer;
+  if (drawerBd) drawerBd.onclick = closeDrawer;
+
+  // زر محادثة جديدة
+  const newBtn = document.getElementById('newConvBtn');
+  if (newBtn) newBtn.onclick = () => conv.create();
+
+  // Model button
+  const modelBtn = document.getElementById('modelBtn');
+  if (modelBtn) modelBtn.onclick = () => openModelSheet();
+
+  // Attach
+  const attachBtn = document.getElementById('attachBtn');
+  const fileInput = document.getElementById('fileInput');
+  if (attachBtn && fileInput) {
+    attachBtn.onclick = () => fileInput.click();
+    fileInput.onchange = e => { handleFiles(Array.from(e.target.files || [])); fileInput.value = ''; };
+  }
+  async function handleFiles(files) {
+    // ⭐ إصلاح: بعض موفري الملفات (خصوصاً اختيار "الملفات" العام على أندرويد، بعكس معرض
+    // الصور) لا يُرجعون f.type إطلاقاً (يصل فارغاً) — فيُصنَّف الملف كـ"ثنائي غير معروف"
+    // رغم كونه صورة فعلية، ولا تظهر معاينته. نتحقق أيضاً من امتداد الاسم كخط رجوع.
+    const guessImageExt = name => /\.(png|jpe?g|gif|webp|bmp|heic|heif|avif)$/i.test(String(name || ''));
+    const guessMimeFromExt = name => {
+      const m = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+      const map = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', heic: 'image/heic', heif: 'image/heif', avif: 'image/avif' };
+      return (m && map[m[1]]) || 'image/jpeg';
+    };
+
+    let runningTotal = state.attachments.reduce((s, a) => s + (a.size || 0), 0);
+    for (const f of files) {
+      if (state.attachments.length >= FOX.LIMITS.MAX_FILES_PER_MSG) { U.toast('وصلت للحد', 'warn'); break; }
+      if (f.size > FOX.LIMITS.MAX_FILE_SIZE) { U.toast(`كبير جداً: ${f.name}`, 'error'); continue; }
+      if (runningTotal + f.size > FOX.LIMITS.MAX_TOTAL_ATTACHMENTS) { U.toast('تجاوز الإجمالي', 'warn'); break; }
+      runningTotal += f.size;
+      const isImage = f.type.startsWith('image/') || (!f.type && guessImageExt(f.name));
+      const effectiveMime = f.type || (isImage ? guessMimeFromExt(f.name) : 'application/octet-stream');
+      const isText = f.type.startsWith('text/') || /\.(txt|md|json|csv|xml|js|ts|html|css|py|sh|yml|yaml)$/i.test(f.name);
+      const reader = new FileReader();
+      if (isImage) { reader.onload = () => { state.attachments.push({ name: f.name, mime: effectiveMime, size: f.size, data: reader.result }); render.attachments(); updateSendState(); }; reader.readAsDataURL(f); }
+      else if (isText) { reader.onload = () => { state.attachments.push({ name: f.name, mime: f.type, size: f.size, text: String(reader.result).slice(0, FOX.LIMITS.MAX_FILE_TEXT) }); render.attachments(); updateSendState(); }; reader.readAsText(f); }
+      else { reader.onload = () => { state.attachments.push({ name: f.name, mime: f.type || 'application/octet-stream', size: f.size, data: reader.result }); render.attachments(); updateSendState(); }; reader.readAsDataURL(f); }
+    }
+  }
+  render.attachments = () => {
+    const box = document.getElementById('attachPreview');
+    if (!box) return;
+    box.innerHTML = '';
+    state.attachments.forEach((a, i) => {
+      const chip = document.createElement('div');
+      chip.className = 'attach-chip';
+      const isImg = (a.mime || '').startsWith('image/') && a.data;
+      chip.innerHTML = `${isImg ? `<img src="${a.data}" alt="" />` : `<span class="ic">${Svg.icon('attach', 'icon')}</span>`}<div class="name-badge" title="${U.esc(a.name)}">${U.esc(a.name)}</div><button class="rm" type="button">${Svg.icon('x', 'icon sm')}</button>`;
+      chip.onclick = () => Attachments.openLocal(i);
+      chip.querySelector('.rm').onclick = e => { e.stopPropagation(); state.attachments.splice(i, 1); render.attachments(); updateSendState(); };
+      box.appendChild(chip);
+    });
+  };
+
+  // Voice
+  const voiceBtn = document.getElementById('voiceBtn');
+  if (voiceBtn) {
+    // ⭐ آلة حالة صريحة بدل الاعتماد على متغيّر boolean واحد — يمنع تداخل استدعاءات start()
+    // المتزامنة (سباق معروف يسبب أخطاء غير متوقعة على متصفحات أندرويد تحديداً).
+    let rec = null, voiceState = 'idle'; // idle | starting | listening
+    let manualStop = false; // ⭐ يُفرّق بين إيقاف مقصود من المستخدم وانقطاع غير متوقع
+    // ⭐ رسائل أوضح بحسب كود الخطأ الفعلي من SpeechRecognition، بدل عرض الكود الخام فقط
+    const VOICE_ERROR_MESSAGES = {
+      'not-allowed': 'صلاحية الميكروفون مرفوضة — تحقق من إعدادات التطبيق/المتصفح على جهازك (الإعدادات ← التطبيقات ← أذونات ← الميكروفون)',
+      'service-not-allowed': 'التعرف الصوتي غير متاح على هذا المتصفح/البيئة حالياً',
+      'no-speech': 'لم يُسمع أي صوت — حاول مجدداً',
+      'audio-capture': 'تعذّر الوصول إلى الميكروفون — تأكد أنه غير مستخدم من تطبيق آخر',
+      'network': 'مشكلة في الاتصال أثناء التعرف الصوتي',
+      // ⭐ 'aborted' يظهر غالباً بعد استدعاء stop() نفسه (سلوك موثّق في Chrome/أندرويد)،
+      // وليس بالضرورة عطلاً — لذا نعرضه بصيغة أهدأ فقط حين يحدث بلا إيقاف مقصود من المستخدم.
+      'aborted': 'انقطع التسجيل قبل اكتماله — حاول مجدداً',
+    };
+    const resetUI = () => { voiceBtn.classList.remove('recording'); voiceBtn.innerHTML = Svg.icon('mic'); };
+    voiceBtn.onclick = async () => {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) { U.toast('التعرف الصوتي غير مدعوم', 'warn'); return; }
+
+      if (voiceState === 'listening') {
+        manualStop = true;
+        voiceState = 'idle';
+        rec && rec.stop();
+        resetUI();
+        return;
+      }
+      if (voiceState === 'starting') return; // ⭐ يمنع الضغط المتكرر أثناء طلب الإذن (سباق تشغيل)
+
+      // ⭐ التعرف الصوتي يتطلب سياقاً آمناً (https أو localhost) — بدونه يفشل بـ not-allowed دائماً بلا فرصة لإذن حقيقي
+      if (!window.isSecureContext) {
+        U.toast('التعرف الصوتي يحتاج فتح الصفحة عبر https — الرابط الحالي غير آمن', 'error');
+        return;
+      }
+
+      voiceState = 'starting';
+      manualStop = false;
+
+      // ⭐ نطلب إذن الميكروفون صراحة أولاً — يعطي رسالة تشخيصية أوضح من انتظار فشل SpeechRecognition الصامت أحياناً
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop()); // كنا نحتاج الإذن فقط، لا التسجيل بأنفسنا
+      } catch (permErr) {
+        voiceState = 'idle';
+        U.toast('تم رفض إذن الميكروفون — فعّله من إعدادات التطبيق على جهازك', 'error');
+        return;
+      }
+
+      // ⭐ لا نترك نسخة سابقة قد تكون لا تزال نشطة (تسرّب/تداخل) قبل إنشاء نسخة جديدة
+      if (rec) { try { rec.onerror = null; rec.onend = null; rec.abort(); } catch {} }
+
+      rec = new SR();
+      rec.lang = 'ar-SA'; rec.continuous = true; rec.interimResults = true;
+      let finalText = '';
+      rec.onstart = () => { voiceState = 'listening'; voiceBtn.classList.add('recording'); voiceBtn.innerHTML = Svg.icon('stop'); };
+      rec.onresult = e => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) finalText += t + ' ';
+          else interim += t;
+        }
+        const inp = document.getElementById('chatInput');
+        if (inp) { inp.value = finalText + interim; autoResize(inp); updateSendState(); }
+      };
+      rec.onend = () => { voiceState = 'idle'; resetUI(); };
+      rec.onerror = e => {
+        voiceState = 'idle';
+        resetUI();
+        // ⭐ إيقاف مقصود من المستخدم قد يُطلق 'aborted' — لا نعرض خطأً على شيء طلبه المستخدم بنفسه
+        if (e.error === 'aborted' && manualStop) { manualStop = false; return; }
+        U.toast(VOICE_ERROR_MESSAGES[e.error] || ('خطأ صوتي: ' + e.error), 'error');
+      };
+      try { rec.start(); }
+      catch (e) { voiceState = 'idle'; resetUI(); U.toast('فشل بدء التسجيل', 'error'); }
+    };
+  }
+
+  document.querySelectorAll('[data-page]').forEach(b => {
+    b.onclick = () => { navigate(b.dataset.page); closeDrawer(); };
+  });
+
+  const chatOpts = document.getElementById('chatOptionsBtn');
+  if (chatOpts) chatOpts.onclick = () => { if (state.chatId) Actions.convMenu(state.chatId); };
+
+  const logout = document.getElementById('logoutItem');
+  if (logout) logout.onclick = () => auth.logout();
+
+  const clearMem = document.getElementById('clearMemoryLink');
+  if (clearMem) clearMem.onclick = async () => {
+    if (!state.chatId) return;
+    if (!confirm('مسح ذاكرة هذه المحادثة؟')) return;
+    try { await api.memoryUpdate(state.chatId, ''); state.memory = ''; render.memoryCard(); U.toast('تم المسح', 'success'); } catch { U.toast('فشل', 'error'); }
+  };
+
+  const newTaskLink = document.getElementById('newTaskLink');
+  if (newTaskLink) newTaskLink.onclick = () => Actions.newTask();
+  const runNewTaskBtn = document.getElementById('runNewTaskBtn');
+  if (runNewTaskBtn) runNewTaskBtn.onclick = () => Actions.newTask();
+
+  const actionBd = document.getElementById('actionBackdrop');
+  if (actionBd) actionBd.onclick = () => { document.getElementById('actionSheet')?.classList.remove('show'); actionBd.classList.remove('show'); };
+
+  // Modal close
+  const modalClose = document.getElementById('modalClose');
+  if (modalClose) modalClose.onclick = () => Attachments.close();
+  const modalBackdrop = document.getElementById('attachmentModal');
+  if (modalBackdrop) modalBackdrop.onclick = (e) => { if (e.target === modalBackdrop) Attachments.close(); };
+
+  const themePicker = document.getElementById('themePicker');
+  if (themePicker) {
+    const saved = localStorage.getItem('foxai_theme') || 'auto';
+    themePicker.querySelectorAll('[data-theme-opt]').forEach(b => {
+      b.classList.toggle('active', b.dataset.themeOpt === saved);
+      b.onclick = () => {
+        themePicker.querySelectorAll('[data-theme-opt]').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        applyTheme(b.dataset.themeOpt);
+        localStorage.setItem('foxai_theme', b.dataset.themeOpt);
+      };
+    });
+  }
+  const themeQuick = document.getElementById('themeQuickBtn');
+  if (themeQuick) themeQuick.onclick = () => {
+    const cur = localStorage.getItem('foxai_theme') || 'auto';
+    const order = ['auto', 'light', 'dark'];
+    const next = order[(order.indexOf(cur) + 1) % 3];
+    applyTheme(next);
+    localStorage.setItem('foxai_theme', next);
+    document.querySelectorAll('[data-theme-opt]').forEach(x => x.classList.toggle('active', x.dataset.themeOpt === next));
+  };
+
+  const chatBox = document.getElementById('chatScroll');
+  if (chatBox && !chatBox._mutationObs) {
+    chatBox._mutationObs = new MutationObserver(() => {
+      // ⭐ إصلاح: كان ظهور الزر يتحدّث فقط عند تمرير المستخدم يدوياً (حدث scroll)،
+      // فيبقى بحالة قديمة عندما يضاف محتوى جديد (رسالة/بطاقة) دون تمرير — نحدّثه هنا أيضاً.
+      updateScrollDownBtn();
+      const isNearBottom = chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 200;
+      if (isNearBottom) {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          chatBox.scrollTop = chatBox.scrollHeight;
+        }));
+      }
+    });
+    chatBox._mutationObs.observe(chatBox, { childList: true, subtree: true });
+  }
+
+  // Scroll-down button
+  const scroller = document.getElementById('chatScroll');
+  const scrollBtn = document.getElementById('scrollDownBtn');
+  if (scroller && scrollBtn) {
+    scroller.addEventListener('scroll', updateScrollDownBtn, { passive: true });
+    scrollBtn.onclick = () => scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+    setTimeout(updateScrollDownBtn, 300);
+  }
+}
+
+function applyTheme(mode) {
+  let eff = mode;
+  if (mode === 'auto') eff = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', eff);
+  const mt = document.getElementById('metaTheme');
+  if (mt) mt.setAttribute('content', eff === 'light' ? '#f4f7fc' : '#080b12');
+  const qb = document.getElementById('themeQuickBtn');
+  if (qb) qb.innerHTML = Svg.icon(mode === 'auto' ? 'auto' : mode === 'light' ? 'sun' : 'moon');
+}
+
+const foxApp = {
+  async boot() {
+    auth.init();
+    bindAll();
+    applyTheme(localStorage.getItem('foxai_theme') || 'auto');
+
+    // ⭐ تحميل النماذج أولاً — قبل اختيار النموذج المحفوظ
+    try {
+      const r = await api.models();
+      state.models = r.models || [];
+    } catch {}
+    if (!state.models.find(m => m.id === 'auto')) {
+      state.models.unshift({ id: 'auto', name: 'Auto · تلقائي', provider: '', description: 'التوجيه الذكي', kind: 'chat' });
+    }
+
+    // ⭐ اختيار النموذج: من localStorage مع تحقق
+    const savedModel = localStorage.getItem(FOX.MODEL_KEY);
+    const availableIds = state.models.map(m => m.id);
+    if (savedModel && (savedModel === 'auto' || availableIds.includes(savedModel))) {
+      state.currentModel = savedModel;
+    } else {
+      state.currentModel = 'auto';
+      if (savedModel) localStorage.removeItem(FOX.MODEL_KEY);
+    }
+    refreshModelLabel();
+
+    await Actions.refreshSidebar();
+    const saved = localStorage.getItem(FOX.CHAT_KEY);
+    if (saved) { state.setChat(saved); await conv.load(); startPolling(); }
+    else if (state.conversations[0]) { await conv.switch(state.conversations[0].id); }
+    else { conv.create(); }
+    Actions.loadOverview();
+    setStatus('idle', 'جاهز');
+    setSendButtonStop(false);
+    U.toast('متصل بـ FOX AI', 'success');
+  },
+  init() {
+    auth.init();
     applyTheme(localStorage.getItem('foxai_theme') || 'auto');
     auth.check().then(ok => { if (ok) this.boot(); else auth.showLogin(); });
   },
